@@ -16,8 +16,29 @@ export function isPublicAuthScreen(url: string): boolean {
   }
 }
 
-export function decideAuthGated(url: string, hasPassword: boolean, modelSays: boolean): boolean {
-  if (isPublicAuthScreen(url)) return false;
+const SETTINGS_URL = /(?:^|[/?#=&._-])(?:settings|profile|security|dashboard|billing)(?=$|[/?#=&._-])/i;
+const CREDENTIAL_LABEL = /\b(sign[\s-]*in|log[\s-]*in|login|sign[\s-]*up|register|create(?:\s+an?)?\s+account)\b/i;
+
+/** A sign-in or sign-up form, including one rendered at `/`, is a public screen. */
+export function isPublicCredentialForm(input: {
+  url?: string;
+  labels?: string[];
+  hasPassword?: boolean;
+  hasEmail?: boolean;
+}): boolean {
+  if (input.url && isPublicAuthScreen(input.url)) return true;
+  if (input.url && SETTINGS_URL.test(input.url)) return false;
+  const credential = CREDENTIAL_LABEL.test((input.labels || []).join(' '));
+  return credential && Boolean(input.hasPassword || input.hasEmail);
+}
+
+export function decideAuthGated(
+  url: string,
+  hasPassword: boolean,
+  modelSays: boolean,
+  hints?: { labels?: string[]; hasEmail?: boolean },
+): boolean {
+  if (isPublicCredentialForm({ url, labels: hints?.labels, hasPassword, hasEmail: hints?.hasEmail })) return false;
   return hasPassword || looksLikeAuthUrl(url) || modelSays;
 }
 

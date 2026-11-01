@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Page checks run before sign-up and model flows, and each check records its own `durationMs`. A check skipped because the run is out of time has `outcome_reason` `budget_exhausted`, not a 0ms couldn't-confirm.
 - Sign-in, sign-up, register, and password-reset URLs are public screens, not auth-gated. Two URLs that render the same title, heading, and fields (for example `/` and `/signin`) are one page.
 - An input placeholder is not visible text. A placeholder of "Success" does not satisfy a text assertion.
+- A wrong-password check passes when the page shows a sign-in error (including "correct login details", "not recognised", or an alert) or the auth request returns 400, 401, 403, or 422 and the URL stays on the login page. An empty field after the fill is an automation error, not a missing error message.
+- A sign-in or sign-up URL counts as a public screen even if an older flag still says it is auth-gated. A sign-in form rendered at `/` is a public screen too.
+- Page-check `durationMs` is the measured time. A check that finished in under a millisecond is 0.
 
 ### Added
 

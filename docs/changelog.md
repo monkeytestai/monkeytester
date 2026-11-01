@@ -11,6 +11,7 @@ The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/
 - Sign-up with an inbox is one flow. Password reset, OTP, newsletter, checkout, and account deletion are validation-only unless an inbox (reset and OTP) or `allowSensitive` allows the submit. OAuth clicks and `/auth/<provider>` navigations are inconclusive.
 - Sign-in and sign-up URLs are public screens. The same rendered screen is stored once.
 - A missing invented success sentence does not fail a flow. An empty field after fill is an automation error.
+- A wrong password that the site rejects with an auth HTTP 4xx, or with wording such as "correct login details", is not a bug. Page-check durations are the measured time, including 0.
 
 ## 0.7.0-beta.3
 

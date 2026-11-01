@@ -237,7 +237,15 @@ export async function explore(
         const outbound = selectOutboundLinks(linksOnCrawlSite(skeleton.links, startUrl));
         // Password field or auth URL is decisive. The model flag is only a
         // secondary signal when those two are absent.
-        const authGated = decideAuthGated(url, skeletonHasPassword(skeleton), summary.authGated);
+        const labels = [
+          ...skeleton.forms.map(form => form.submitLabel || ''),
+          ...skeleton.buttons,
+        ];
+        const hasEmail = skeleton.inputs.some(input => {
+          const type = (input.type || '').toLowerCase();
+          return type === 'email' || /email/i.test(`${input.name || ''} ${input.label || ''}`);
+        });
+        const authGated = decideAuthGated(url, skeletonHasPassword(skeleton), summary.authGated, { labels, hasEmail });
         const fingerprint = screenFingerprint({
           title: skeleton.title,
           heading: skeleton.headings[0],

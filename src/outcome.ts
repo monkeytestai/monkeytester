@@ -16,6 +16,7 @@ import {
   isRealSiteFailureText,
   matchesClientSoftExploratory,
 } from './automation/signatures.js';
+import { isPublicAuthScreen } from './explorer/screens.js';
 import type { BugText } from './automation/signatures.js';
 import { resolveFlowStatus } from './runner/flowStatus.js';
 import type {
@@ -40,8 +41,11 @@ export interface OutcomeContext {
   notes?: string;
 }
 
-export function countPublicScreens(pages: Array<{ authGated?: boolean }>): number {
-  return pages.reduce((count, page) => count + (page.authGated ? 0 : 1), 0);
+export function countPublicScreens(pages: Array<{ authGated?: boolean; url?: string }>): number {
+  return pages.reduce((count, page) => {
+    if (page.url && isPublicAuthScreen(page.url)) return count + 1;
+    return count + (page.authGated ? 0 : 1);
+  }, 0);
 }
 
 const UNREACHABLE = /net::err_(name_not_resolved|connection_refused|connection_reset|connection_timed_out|internet_disconnected|address_unreachable|network_changed|connection_closed|socket_not_connected|timed_out)|err_connection|dns_probe|enotfound|econnrefused|chrome-error:\/\/chromewebdata/i;

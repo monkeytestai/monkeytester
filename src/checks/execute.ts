@@ -223,7 +223,7 @@ export async function executePageChecks(
         budgetUsed = true;
         for (const flow of flows) {
           const started = Date.now();
-          await record(flow, url, skipped('budget_exhausted: the run finished its time budget before this check.'), opts, steps, traces, undefined, Math.max(1, Date.now() - started));
+          await record(flow, url, skipped('budget_exhausted: the run finished its time budget before this check.'), opts, steps, traces, undefined, Date.now() - started);
         }
         continue;
       }
@@ -249,14 +249,14 @@ export async function executePageChecks(
           : status && status >= 400 && kind !== 'http'
             ? skipped(`Page responded HTTP ${status}, so this check was not run.`)
             : await assessLoadedPage(desktopPage, kind, url, collected, linkBudget, status);
-        await record(flow, url, outcome, opts, steps, traces, desktopPage, Math.max(1, Date.now() - started));
+        await record(flow, url, outcome, opts, steps, traces, desktopPage, Date.now() - started);
       }
 
       const mobileFlow = flows.find(flow => kindOf(flow) === 'mobile');
       if (mobileFlow) {
         if (loadError || (status && status >= 400)) {
           const started = Date.now();
-          await record(mobileFlow, url, skipped('Page did not load, so the mobile check was not run.'), opts, steps, traces, undefined, Math.max(1, Date.now() - started));
+          await record(mobileFlow, url, skipped('Page did not load, so the mobile check was not run.'), opts, steps, traces, undefined, Date.now() - started);
         } else {
           let mobileError: unknown;
           const started = Date.now();
@@ -269,7 +269,7 @@ export async function executePageChecks(
           const outcome = mobileError
             ? skipped('Page did not load at 375px, so the mobile check was not run.')
             : await assessLoadedPage(mobilePage, 'mobile', url, bucket(mobilePage), linkBudget);
-          await record(mobileFlow, url, outcome, opts, steps, traces, mobilePage, Math.max(1, Date.now() - started));
+          await record(mobileFlow, url, outcome, opts, steps, traces, mobilePage, Date.now() - started);
         }
       }
     }
@@ -544,7 +544,7 @@ async function record(
   steps: Map<string, StepResult[]>,
   traces: Map<string, TraceStep[]>,
   page?: Page,
-  durationMs = 1,
+  durationMs = 0,
 ): Promise<void> {
   const list = steps.get(flow.id);
   if (!list) return;
@@ -561,7 +561,7 @@ async function record(
     tool: 'check',
     target: url,
     resolution: 'recorded',
-    durationMs: Math.max(1, durationMs),
+    durationMs: Math.max(0, Math.round(durationMs)),
     ...(outcome.error ? { error: outcome.error } : {}),
     ...(outcome.severity ? { severity: outcome.severity } : {}),
     ...(outcome.consoleErrors ? { consoleErrors: outcome.consoleErrors } : {}),

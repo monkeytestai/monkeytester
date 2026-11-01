@@ -41,6 +41,10 @@ export async function runAuthCheck(
     return { status: 'skipped', observation: 'Auth check id was missing.', tool: 'noop' };
   }
   const before = page.url();
+  const rejections: number[] = [];
+  const onAuthResponse = (response: Response) => {
+    noteAuthRejection(response, before, rejections);
+  };
   try {
     if (check === 'password_toggle') return await togglePassword(page);
     if (check === 'forgot_link') return await openLinkedPage(page, /forgot|reset/i, 'email');
@@ -54,7 +58,8 @@ export async function runAuthCheck(
     }
     if (check === 'invalid_email') {
       const filled = await fillEmail(page, step.value || INVALID_EMAIL);
-      if (!filled) return { status: 'failed', observation: 'No email field was found on the sign-in form.', error: 'no-email-field', tool: 'fill' };
+      if (filled === 'missing') return { status: 'failed', observation: 'No email field was found on the sign-in form.', error: 'no-email-field', tool: 'fill' };
+      if (filled === 'empty') return emptyFill(step.value || INVALID_EMAIL);
     }
     if (check === 'wrong_password') {
       const email = step.value || '';
@@ -67,9 +72,11 @@ export async function runAuthCheck(
       }
       const filledEmail = await fillEmail(page, email);
       const filledPassword = await fillPassword(page, SYNTHETIC_PASSWORD);
-      if (!filledEmail || !filledPassword) {
+      if (filledEmail === 'empty' || filledPassword === 'empty') return emptyFill(email);
+      if (filledEmail === 'missing' || filledPassword === 'missing') {
         return { status: 'failed', observation: 'The sign-in form did not expose both an email field and a password field.', error: 'no-auth-fields', tool: 'fill', value: email };
       }
+      page.on('response', onAuthResponse);
     }
     const clicked = await clickSubmit(page, flow, step, opts);
     if (!clicked.ok) return clicked.outcome;
@@ -94,15 +101,21 @@ export async function runAuthCheck(
     }
     const errorShown = await seesAuthError(page);
     const stayed = stayedOnAuth(before, after);
-    if (!errorShown) {
-      return { status: 'failed', observation: 'The wrong password did not produce an in-page error.', error: 'no-auth-error', tool: 'click', target: clicked.target, value: step.value };
-    }
+    const rejected = rejections.length > 0;
     if (!stayed) {
       return { status: 'failed', observation: `Wrong password left the auth page (${after}).`, error: 'navigated', tool: 'click', target: clicked.target, value: step.value };
     }
+    if (!errorShown && !rejected) {
+      return { status: 'failed', observation: 'The wrong password did not produce an in-page error.', error: 'no-auth-error', tool: 'click', target: clicked.target, value: step.value };
+    }
+    const how = errorShown && rejected
+      ? 'An in-page error was shown and the auth request was rejected'
+      : rejected
+        ? `The auth request was rejected with HTTP ${rejections[0]}`
+        : 'An in-page error was shown';
     return {
       status: 'passed',
-      observation: 'An in-page error was shown, the URL stayed on the auth page, and there was no HTTP 5xx or uncaught page error.',
+      observation: `${how}, the URL stayed on the auth page, and there was no HTTP 5xx or uncaught page error.`,
       tool: 'click',
       target: clicked.target,
       value: step.value,
@@ -110,6 +123,8 @@ export async function runAuthCheck(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { status: 'failed', observation: `Auth check could not finish: ${message}`, error: message, tool: 'click' };
+  } finally {
+    page.off('response', onAuthResponse);
   }
 }
 
@@ -199,18 +214,49 @@ async function openLinkedPage(page: Page, name: RegExp, expect: 'email' | 'form'
   return { status: 'passed', observation: 'The link returned HTTP 200 and the page has a form. The form was not submitted.', tool: 'click', target: href || undefined };
 }
 
-async function fillEmail(page: Page, value: string): Promise<boolean> {
+async function fillEmail(page: Page, value: string): Promise<'ok' | 'missing' | 'empty'> {
   const field = page.locator('input[type="email"], input[name="email" i], input[autocomplete="username"], input[autocomplete="email"]').first();
-  if (await field.count() === 0) return false;
-  await field.fill(value);
-  return true;
+  return fillConfirmed(field, value);
 }
 
-async function fillPassword(page: Page, value: string): Promise<boolean> {
+async function fillPassword(page: Page, value: string): Promise<'ok' | 'missing' | 'empty'> {
   const field = page.locator('input[type="password"]').first();
-  if (await field.count() === 0) return false;
-  await field.fill(value);
-  return true;
+  return fillConfirmed(field, value);
+}
+
+async function fillConfirmed(field: ReturnType<Page['locator']>, value: string): Promise<'ok' | 'missing' | 'empty'> {
+  if (await field.count() === 0) return 'missing';
+  await field.fill(value, { timeout: 5_000 });
+  const actual = await field.inputValue().catch(() => '');
+  return actual.trim() ? 'ok' : 'empty';
+}
+
+function emptyFill(value?: string): AuthCheckOutcome {
+  return {
+    status: 'skipped',
+    observation: 'Fill did not change the sign-in field. The field is still empty, so this is an automation error, not a site bug.',
+    error: 'automation_error',
+    tool: 'fill',
+    ...(value ? { value } : {}),
+  };
+}
+
+const AUTH_REJECTION = new Set([400, 401, 403, 422]);
+
+function noteAuthRejection(response: Response, pageUrl: string, sink: number[]): void {
+  try {
+    const request = response.request();
+    const method = request.method();
+    if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH') return;
+    const type = request.resourceType();
+    if (type !== 'document' && type !== 'xhr' && type !== 'fetch') return;
+    const status = response.status();
+    if (!AUTH_REJECTION.has(status)) return;
+    const origin = new URL(pageUrl).origin;
+    const target = new URL(response.url()).origin;
+    if (target !== origin) return;
+    sink.push(status);
+  } catch { /* a closing request is not a rejection */ }
 }
 
 async function clickSubmit(
@@ -285,10 +331,17 @@ async function seesValidation(page: Page): Promise<boolean> {
 export const AUTH_ERROR_PATTERN = [
   'incorrect',
   'not match',
+  'not recognis(?:e|ed)',
+  'not recogniz(?:e|ed)',
+  'unrecognis(?:e|ed)',
+  'unrecogniz(?:e|ed)',
   'wrong password',
   'invalid credentials',
-  'invalid (?:email|login|username|user|password)',
+  'invalid (?:email|login|username|user|password|details)',
   'email or password',
+  'login details',
+  'correct (?:login|credentials|password|details)',
+  '(?:in)?valid (?:login|credentials|password)',
   'couldn\'t (?:sign|log) in',
   'could not (?:sign|log) in',
   'try again',
@@ -303,10 +356,14 @@ export function textLooksLikeAuthError(text: string): boolean {
 }
 
 async function seesAuthError(page: Page): Promise<boolean> {
-  return page.evaluate((pattern) => {
-    const text = (document.body?.innerText || '').slice(0, 4000);
-    return new RegExp(pattern, 'i').test(text);
-  }, AUTH_ERROR_PATTERN);
+  const text = await page.evaluate(() => {
+    const alerts = Array.from(document.querySelectorAll('[role="alert"], [role="status"], [aria-live]'))
+      .map(el => (el.textContent || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    const body = (document.body?.innerText || '').slice(0, 4000);
+    return `${body}\n${alerts.join('\n')}`.slice(0, 6000);
+  }).catch(() => '');
+  return textLooksLikeAuthError(text);
 }
 
 function stayedOnAuth(before: string, after: string): boolean {
