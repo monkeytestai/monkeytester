@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 import { coerceEnum } from '../llm/coerce.js';
+import { parseOutcomeCheck, withRepairedCheck } from '../outcome/check.js';
 import type { FlowKind, TestFlow, TestStep } from '../types.js';
 
 const KINDS = ['happy_path', 'edge_case', 'auth_required', 'destructive', 'accessibility', 'visual'] as const;
@@ -48,8 +49,11 @@ export function salvageModelFlows(raw: unknown): SalvagedFlows {
 }
 
 function coerceFlow(raw: unknown, index: number): TestFlow | undefined {
+  const outcomeCheck = raw && typeof raw === 'object'
+    ? parseOutcomeCheck((raw as { outcomeCheck?: unknown }).outcomeCheck)
+    : undefined;
   const strict = StrictFlowSchema.safeParse(raw);
-  if (strict.success) return strict.data;
+  if (strict.success) return withRepairedCheck({ ...strict.data, ...(outcomeCheck ? { outcomeCheck } : {}) });
 
   if (!raw || typeof raw !== 'object') return undefined;
   const record = raw as Record<string, unknown>;
@@ -58,7 +62,7 @@ function coerceFlow(raw: unknown, index: number): TestFlow | undefined {
   const steps = usableSteps(record.steps);
   if (steps.length === 0) return undefined;
 
-  return {
+  return withRepairedCheck({
     id: text(record.id, 1) || `model-flow-${index + 1}`,
     name: text(record.name, 3) || `Flow ${index + 1}`,
     description: text(record.description, 3) || 'Kept from a partial planner response.',
@@ -71,7 +75,7 @@ function coerceFlow(raw: unknown, index: number): TestFlow | undefined {
     }) ?? 'happy_path',
     startUrl,
     steps,
-    expectation: text(record.expectation, 3) || 'The journey completes.',
+    expectation: text(record.expectation, 3) || text(record.name, 3),
     severityIfFails: coerceEnum(record.severityIfFails ?? record.severity, SEVERITIES, {
       high: 'major',
       medium: 'major',
@@ -80,7 +84,8 @@ function coerceFlow(raw: unknown, index: number): TestFlow | undefined {
       blocker: 'critical',
       severe: 'critical',
     }) ?? 'major',
-  };
+    ...(outcomeCheck ? { outcomeCheck } : {}),
+  });
 }
 
 function usableSteps(raw: unknown): TestStep[] {

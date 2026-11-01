@@ -105,6 +105,8 @@ const REASON_PRIORITY: OutcomeReason[] = [
   'all_flows_skipped',
   'not_attempted',
   'nothing_tested',
+  'no_assertion',
+  'assertion_unverifiable',
 ];
 
 function firstReason(reasons: Array<OutcomeReason | undefined>): OutcomeReason | undefined {
@@ -135,6 +137,10 @@ function flowDetail(reason: OutcomeReason, flow: FlowResult): string {
       return `Our test couldn't complete ${name} because that journey was not executed. Run a public page, or use the CLI for a login flow.`;
     case 'all_flows_skipped':
       return `Our test couldn't complete ${name} because every step was skipped. Pick a page with a form, search box, or primary button and run again.`;
+    case 'no_assertion':
+      return `Our test couldn't complete ${name} because the journey had no outcome to verify. A flow is not passed just because its steps ran.`;
+    case 'assertion_unverifiable':
+      return `Our test couldn't complete ${name} because the expected outcome could not be checked on the page.`;
     default:
       return `Our test couldn't complete ${name}. Check the URL and run again.`;
   }
@@ -179,7 +185,44 @@ function classifyFlow(flow: FlowResult): FlowResult {
     };
   }
 
-  const status = resolveFlowStatus(steps, false);
+  if (steps.some(step => step.status === 'failed')) {
+    return {
+      ...flow,
+      status: 'failed',
+      steps,
+      bugIds: [],
+      ...(trace ? { trace } : {}),
+      outcome_reason: undefined,
+      outcome_detail: undefined,
+    };
+  }
+
+  if (flow.assertion === 'blocked') {
+    return {
+      ...flow,
+      status: 'blocked',
+      steps,
+      bugIds: [],
+      ...(trace ? { trace } : {}),
+      outcome_reason: flow.outcome_reason || 'not_attempted',
+      outcome_detail: flowDetail(flow.outcome_reason || 'not_attempted', flow),
+    };
+  }
+
+  if (flow.assertion === 'missing' || flow.assertion === 'unverifiable') {
+    const reason = flow.assertion === 'missing' ? 'no_assertion' : 'assertion_unverifiable';
+    return {
+      ...flow,
+      status: 'inconclusive',
+      steps,
+      bugIds: [],
+      ...(trace ? { trace } : {}),
+      outcome_reason: reason,
+      outcome_detail: flowDetail(reason, flow),
+    };
+  }
+
+  const status = resolveFlowStatus(steps, false, flow.assertion);
   if (status === 'failed') {
     return {
       ...flow,
@@ -281,6 +324,10 @@ function runDetail(outcome: RunOutcome, reason: OutcomeReason | undefined, bugCo
       return 'Our test couldn\'t complete the planned journeys because they were not executed. Run a public page with a form or a primary button.';
     case 'all_flows_skipped':
       return 'Our test couldn\'t complete the planned journeys because every step was skipped. Pick a page with a form, search box, or primary button and run again.';
+    case 'no_assertion':
+      return 'Our test couldn\'t complete a journey because it had no outcome to verify. Steps running is not a pass.';
+    case 'assertion_unverifiable':
+      return 'Our test couldn\'t complete a journey because the expected outcome could not be checked on the page.';
     default:
       return 'Our test couldn\'t complete a visit because nothing was executed. Check the URL and run again.';
   }

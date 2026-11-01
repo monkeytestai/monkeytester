@@ -72,6 +72,11 @@ export type { DerivedOutcome, OutcomeContext, VerdictFacts } from './outcome.js'
 
 export { ENGINE_VERSION } from './version.js';
 
+export { createHttpInbox } from './inbox/http.js';
+export type { HttpInboxOptions } from './inbox/http.js';
+export { loadInboxProvider } from './inbox/load.js';
+export { SIGNUP_IDENTITY_NAME } from './signup/detect.js';
+
 export {
   BASIC_PRESET,
   DEPTH_PRESETS,
@@ -146,6 +151,11 @@ export type {
   OutcomeReason,
   SignupStatus,
   SignupReason,
+  SignupCheck,
+  OutcomeCheck,
+  OutcomeCheckKind,
+  FlowAssertion,
+  InboxProvider,
   AuthCheck,
   RunResult,
   BugReport,

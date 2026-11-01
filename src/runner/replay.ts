@@ -13,8 +13,10 @@ import { join, resolve } from 'node:path';
 import type { LLM } from '../llm/index.js';
 import { logModelDetail } from '../llm/coerce.js';
 import type {
+  FlowAssertion,
   FlowResult,
   FlowTrace,
+  InboxProvider,
   RunResult,
   StepResult,
   TestFlow,
@@ -37,6 +39,9 @@ import { applyPassedOracles, attachStepEvidence, flushStepEvents } from './evide
 import { collectOrigins, outcomeWithSameOrigin5xx, promoteRecordedSteps } from './http5xx.js';
 import { resolveFlowStatus } from './flowStatus.js';
 import { installPageNameHelper } from './locate.js';
+import { signupSubmitBlock } from '../signup/guard.js';
+import { emptySignupLedger, signupFields, type SignupLedger } from '../signup/ledger.js';
+import { evaluateOutcomeCheck, snapPage, type PageSnap } from '../outcome/check.js';
 
 export interface ReplayOptions {
   screenshotsDir: string;
@@ -66,6 +71,8 @@ export interface ReplayOptions {
    */
   heal?: boolean;
   llm?: LLM;
+  /** Same mailbox as a live run. Replay still refuses a second completed sign-up. */
+  inbox?: InboxProvider;
 }
 
 export async function replayTraces(
@@ -84,9 +91,10 @@ export async function replayTraces(
 
   const owned = !opts.browser;
   const browser = opts.browser ?? await chromium.launch({ headless: opts.headless ?? true });
+  const signup = emptySignupLedger();
   try {
     for (const trace of traces){
-      flows.push(await runOneTrace(browser, trace, { ...opts, screenshotsDir }));
+      flows.push(await runOneTrace(browser, trace, { ...opts, screenshotsDir, signup }));
     }
   } finally {
     if (owned) await browser.close().catch(() => {});
@@ -99,13 +107,14 @@ export async function replayTraces(
     flows,
     bugs: [],
     stats: aggregate(flows),
+    ...signupFields(signup),
   };
 }
 
 async function runOneTrace(
   browser: Browser,
   trace: FlowTrace,
-  opts: ReplayOptions & { screenshotsDir: string },
+  opts: ReplayOptions & { screenshotsDir: string; signup: SignupLedger },
 ): Promise<FlowResult> {
   const started = Date.now();
   const timeoutMs = opts.flowTimeoutMs ?? 180_000;
@@ -146,7 +155,7 @@ async function runOneTrace(
 async function replayFlow(
   browser: Browser,
   trace: FlowTrace,
-  opts: ReplayOptions & { screenshotsDir: string },
+  opts: ReplayOptions & { screenshotsDir: string; signup: SignupLedger },
   signal: AbortSignal,
 ): Promise<FlowResult> {
   const started = Date.now();
@@ -167,6 +176,9 @@ async function replayFlow(
   const traceSteps: TraceStep[] = [];
   let failed = false;
   let failureReason: string | undefined;
+  let halted = false;
+  let beforeLast: PageSnap | undefined;
+  let assertion: FlowAssertion = 'missing';
 
   try {
     for (const recorded of trace.steps){
@@ -183,7 +195,9 @@ async function replayFlow(
       const urlBefore = page.url();
       const startedAt = new Date().toISOString();
       const stepStart = Date.now();
+      if (!beforeLast && recorded.index > 0) beforeLast = await snapPage(page);
       const played = await playStep(page, trace, recorded, opts, stepTimeout);
+      if (played.halted) halted = true;
       if (recorded.tool !== 'check' && opts.strictOracles) {
         played.outcome = await applyPassedOracles(page, evidence, recorded.index, played.outcome);
       }
@@ -242,6 +256,20 @@ async function replayFlow(
       }
     }
     if (opts.failOn5xx) await flushStepEvents(page);
+    const judged = await replayAssertion(page, trace, steps, { halted, failed, beforeLast });
+    assertion = judged.assertion;
+    if (assertion === 'failed') {
+      failed = true;
+      failureReason = failureReason || judged.observation;
+      steps.push({
+        index: (steps[steps.length - 1]?.index ?? 0) + 1,
+        action: 'Check the expected outcome',
+        status: 'failed',
+        observation: judged.observation,
+        tool: 'assert_text',
+        error: judged.observation,
+      });
+    }
   } finally {
     signal.removeEventListener('abort', onAbort);
     await context.close().catch(() => {});
@@ -259,7 +287,9 @@ async function replayFlow(
     }
   }
 
-  const status = resolveFlowStatus(steps, failed);
+  const status = assertion === 'blocked'
+    ? 'blocked' as const
+    : resolveFlowStatus(steps, failed, assertion);
   return {
     flowId: trace.flowId,
     name: trace.name || trace.flowId,
@@ -267,6 +297,9 @@ async function replayFlow(
     kind: trace.kind || 'happy_path',
     startUrl: trace.startUrl,
     status,
+    assertion,
+    ...(status === 'inconclusive' && assertion === 'missing' ? { outcome_reason: 'no_assertion' as const } : {}),
+    ...(status === 'inconclusive' && assertion === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
     failureReason,
     ...(trace.severityIfFails ? { severityIfFails: trace.severityIfFails } : {}),
     steps,
@@ -280,6 +313,7 @@ async function replayFlow(
       kind: trace.kind,
       startUrl: trace.startUrl,
       expectation: trace.expectation,
+      ...(trace.outcomeCheck ? { outcomeCheck: trace.outcomeCheck } : {}),
       steps: traceSteps,
     },
   };
@@ -290,24 +324,29 @@ interface PlayedStep {
   locator: TraceStep['locator'];
   outcome: Awaited<ReturnType<typeof executeAction>>;
   resolution: 'recorded' | 'healed';
+  halted?: boolean;
 }
 
 async function playStep(
   page: Page,
   trace: FlowTrace,
   recorded: TraceStep,
-  opts: ReplayOptions,
+  opts: ReplayOptions & { signup: SignupLedger },
   timeoutMs: number,
 ): Promise<PlayedStep> {
   if (recorded.tool === 'check') return playRecordedCheck(page, recorded, timeoutMs);
   if (!needsElement(recorded)){
     const action = actionFromRecorded(recorded);
+    const blocked = await blockRecordedSubmit(page, action, opts);
+    if (blocked) return blocked;
     const outcome = await executeAction(page, action, timeoutMs, { strictOracles: opts.strictOracles });
     return { action, locator: recorded.locator, outcome, resolution: 'recorded' };
   }
 
   const matched = await firstMatch(page, recorded);
   if (matched){
+    const blocked = await blockRecordedSubmit(page, matched, opts);
+    if (blocked) return blocked;
     const outcome = await executeAction(page, matched, timeoutMs, { strictOracles: opts.strictOracles });
     const locator = await captureLocator(page, matched).catch(() => recorded.locator);
     return { action: matched, locator: locator || recorded.locator, outcome, resolution: 'recorded' };
@@ -331,6 +370,8 @@ async function playStep(
         },
       };
     }
+    const blocked = await blockRecordedSubmit(page, healed, opts);
+    if (blocked) return blocked;
     const outcome = await executeAction(page, healed, timeoutMs, { strictOracles: opts.strictOracles });
     const locator = await captureLocator(page, healed).catch(() => undefined);
     return {
@@ -430,6 +471,44 @@ function needsElement(step: TraceStep): boolean {
 
 function actionTool(step: TraceStep): Exclude<TraceTool, 'check'> {
   return step.tool === 'check' ? 'noop' : step.tool;
+}
+
+async function replayAssertion(
+  page: Page,
+  trace: FlowTrace,
+  steps: StepResult[],
+  flags: { halted: boolean; failed: boolean; beforeLast?: PageSnap },
+): Promise<{ assertion: FlowAssertion; observation: string }> {
+  if (flags.halted) return { assertion: 'blocked', observation: 'The sign-up submit was not run.' };
+  if (trace.steps.some(step => step.tool === 'check')) {
+    const ran = steps.some(step => step.status === 'passed' || step.status === 'failed');
+    return { assertion: ran ? 'verified' : 'unverifiable', observation: ran ? 'The page check ran.' : 'The page check did not run.' };
+  }
+  if (!trace.outcomeCheck) {
+    return { assertion: 'missing', observation: 'This replay has no outcome check, so it cannot pass.' };
+  }
+  if (flags.failed) return { assertion: 'unverifiable', observation: 'The outcome was not checked because an earlier step failed.' };
+  const verdict = await evaluateOutcomeCheck(page, trace.outcomeCheck, { startUrl: trace.startUrl, before: flags.beforeLast });
+  return {
+    assertion: verdict.state === 'verified' ? 'verified' : verdict.state === 'failed' ? 'failed' : verdict.state === 'missing' ? 'missing' : 'unverifiable',
+    observation: verdict.observation,
+  };
+}
+
+async function blockRecordedSubmit(
+  page: Page,
+  action: ResolvedAction,
+  opts: ReplayOptions & { signup: SignupLedger },
+): Promise<PlayedStep | undefined> {
+  const blocked = await signupSubmitBlock(page, action, { inbox: opts.inbox, ledger: opts.signup });
+  if (!blocked) return undefined;
+  return {
+    action,
+    locator: undefined,
+    resolution: 'recorded',
+    halted: true,
+    outcome: { status: 'skipped', observation: blocked.observation },
+  };
 }
 
 function actionFromRecorded(step: TraceStep): ResolvedAction {

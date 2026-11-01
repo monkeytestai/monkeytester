@@ -130,5 +130,33 @@ autoLLMConfig({
 | `OPENAI_COMPATIBLE_API_KEY` | API key for any OpenAI-compatible server |
 | `OPENAI_COMPATIBLE_BASE_URL` | URL for any OpenAI-compatible server (Ollama / vLLM / OpenRouter / …) |
 | `PLAYWRIGHT_BROWSERS_PATH` | Where Chromium binaries live; standard Playwright env. |
+| `MONKEYTEST_INBOX_TOKEN` | Bearer token for `--inbox-http`. Optional. |
+
+## Sign-up inbox
+
+The engine does not ship an inbox and it does not default to any host. A completed sign-up is submitted only when you pass an `InboxProvider`. Otherwise sign-up forms get validation checks (empty, invalid email, password mismatch) and the run reports `signup_status: "not_tested"`, `signup_reason: "no_inbox"`.
+
+```ts
+await monkey.executeAndTriage(url, {
+  run: {
+    screenshotsDir: '.monkeytest/shots',
+    inbox: myProvider, // { allocate, waitFor, release? }
+  },
+});
+```
+
+CLI, using a module you own (default export an `InboxProvider`, or a function that returns one):
+
+```bash
+monkeytest run https://example.com --inbox ./my-inbox.mjs
+```
+
+Or your own HTTP API. `POST /allocate`, `GET /messages?address=&since=`, `DELETE /messages?address=`. No base URL is built in:
+
+```bash
+MONKEYTEST_INBOX_TOKEN=… monkeytest run https://example.com --inbox-http https://inbox.example/v1
+```
+
+`createHttpInbox({ baseUrl, token })` is the same adapter. IMAP and anything else belong in the module you pass to `--inbox`. The name typed into the form is "MonkeyTest QA". At most one account is created per run.
 
 Next: [LLM providers →](/guide/llm-providers)

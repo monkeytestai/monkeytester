@@ -11,7 +11,7 @@
  * Wrong-password runs at most once per plan.
  */
 
-import type { SiteMap, SiteMapControl, SiteMapFormInput, SiteMapPage, TestFlow, TestStep } from '../types.js';
+import type { OutcomeCheck, SiteMap, SiteMapControl, SiteMapFormInput, SiteMapPage, TestFlow, TestStep } from '../types.js';
 import { looksLikeAuthUrl } from '../explorer/queue.js';
 
 export const AUTH_NEG_PREFIX = 'auth-neg-';
@@ -187,8 +187,17 @@ function flow(page: SiteMapPage, spec: {
     startUrl: page.url,
     steps: spec.steps,
     expectation: spec.expectation,
+    outcomeCheck: outcomeFor(spec.id),
     severityIfFails: spec.severityIfFails,
   };
+}
+
+function outcomeFor(id: string): OutcomeCheck {
+  if (id === 'auth-neg-wrong-password') return { kind: 'auth_error_visible', also: [{ kind: 'url_unchanged' }] };
+  if (id === 'auth-neg-password-toggle') return { kind: 'password_toggle' };
+  if (id === 'auth-neg-forgot-password') return { kind: 'email_field_present' };
+  if (id === 'auth-neg-signup-link') return { kind: 'form_present' };
+  return { kind: 'validation_visible', also: [{ kind: 'url_unchanged' }] };
 }
 
 function inputsOf(page: Pick<SiteMapPage, 'forms' | 'inputs'>): SiteMapFormInput[] {

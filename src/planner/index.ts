@@ -23,6 +23,8 @@ import { salvageModelFlows } from './salvage.js';
 import { buildAuthNegativeFlows, isAuthNegativeFlowId } from './authNegative.js';
 import { dedupePlannedFlows } from './dedupe.js';
 import { buildPageCheckFlows, isPageCheckFlowId } from '../checks/plan.js';
+import { buildSignupFlows } from '../signup/plan.js';
+import { plansCompleteSignup } from '../signup/detect.js';
 import { BASIC_PRESET, type PlanFocus } from '../depth.js';
 
 export interface PlannerOptions {
@@ -42,6 +44,11 @@ export interface PlannerOptions {
   pageChecks?: boolean;
   /** Slice page checks to this many crawled pages. Default: every page in the sitemap. */
   maxPages?: number;
+  /**
+   * When true, add one inbox sign-up flow. The runner still refuses to
+   * submit it unless an InboxProvider is passed. Default false.
+   */
+  signupInbox?: boolean;
   /**
    * When the model returns fewer journeys than this and `maxFlows` allows it,
    * ask once more for at least this many flows. `0` disables the follow-up.
@@ -120,10 +127,12 @@ Hard rules:
   - Do NOT repeat the same control label on the same page in two flows.
   - Do NOT assert exact document titles. Titles vary and are not user-critical.
   - Prefer visible labels from the crawl ("Apply now", "Check eligibility") over CSS selectors.
-  - Steps must be executable by a Playwright agent with no human, OTP, email inbox, or real password.
+  - Steps must be executable by a Playwright agent with no human, OTP, phone number, or payment card.
+  - Do NOT plan a completed sign-up or account-creation submit. Do not invent an email address (including @example.com) and do not submit a create-account, sign-up, or register form with a password. Empty, invalid-email, and password-mismatch checks are allowed and must not finish a valid form. The engine adds those itself.
   - One goal per flow. Do not duplicate the same journey with different wording.
   - Prefer 4–7 concrete steps. Skip "look at the page" filler.
-  - For each form journey, include a success check (valid values the crawled fields can accept) and an error or edge check (empty submit, invalid value, or a boundary) when the budget allows. Both use only crawled fields and the crawled submit control.
+  - Every flow MUST include outcomeCheck. A flow that only says the steps ran is invalid. outcomeCheck.kind is one of text_visible, text_absent, url_changed, url_includes, url_unchanged, element_visible, element_absent, validation_visible, observable_response. text_visible, text_absent, url_includes, element_visible, and element_absent require value.
+  - For each form journey, include a success check (valid values the crawled fields can accept) and an error or edge check (empty submit, invalid value, or a boundary) when the budget allows. Both use only crawled fields and the crawled submit control. Neither check is a completed account sign-up.
   - severityIfFails = critical only if a real user cannot complete a core job (apply, pay, submit, checkout). Visual polish is minor.
   - Do NOT emit kind "auth_required". The engine adds sign-in checks itself. If every crawled page is an auth wall, return "flows": [].
 
@@ -136,6 +145,7 @@ Each flow has the shape:
     "startUrl": absolute URL — usually one of the visited pages,
     "steps": array of { "action": "...", "expectation"?: "..." }, 1–8 items,
     "expectation": one-sentence success criterion for the whole flow,
+    "outcomeCheck": { "kind": "text_visible" | "text_absent" | "url_changed" | "url_includes" | "url_unchanged" | "element_visible" | "element_absent" | "validation_visible" | "observable_response", "value"?: "text, url fragment, or accessible name" },
     "severityIfFails": "critical" | "major" | "minor"
   }`;
 
@@ -203,6 +213,12 @@ Reply with JSON:
     });
     const salvaged = salvageModelFlows(result.flows);
     flows = dedupeFlowIds(salvaged.flows).filter(flow => !isAuthNegativeFlowId(flow.id) && !isPageCheckFlowId(flow.id));
+    const unsafeSignup = flows.filter(plansCompleteSignup);
+    if (unsafeSignup.length > 0) {
+      flows = flows.filter(flow => !plansCompleteSignup(flow));
+      const names = unsafeSignup.map(flow => flow.name).join(', ');
+      modelProblem = [modelProblem, `Dropped sign-up submit flow${unsafeSignup.length === 1 ? '' : 's'} that would create an account (${names}).`].filter(Boolean).join(' ');
+    }
     modelNotes = typeof result.notes === 'string' ? result.notes : undefined;
     const rawCount = Array.isArray(result.flows)
       ? result.flows.length
@@ -239,7 +255,8 @@ Reply with JSON:
         schema: LoosePlanSchema,
       });
       const extra = salvageModelFlows(more.flows).flows
-        .filter(flow => !isAuthNegativeFlowId(flow.id) && !isPageCheckFlowId(flow.id));
+        .filter(flow => !isAuthNegativeFlowId(flow.id) && !isPageCheckFlowId(flow.id))
+        .filter(flow => !plansCompleteSignup(flow));
       flows = mergeById(flows, extra);
     } catch {
       // The thin plan is still usable. Grounding adds the crawl floor.
@@ -249,7 +266,7 @@ Reply with JSON:
   const reconciled = reconcileModelFlows(flows, siteMap);
   flows = reconciled.flows;
 
-  const grounded = groundFlows(siteMap, flows, maxFlows, opts.focus, opts.pageChecks !== false, opts.maxPages);
+  const grounded = groundFlows(siteMap, flows, maxFlows, opts.focus, opts.pageChecks !== false, opts.maxPages, opts.signupInbox === true);
   flows = grounded.flows;
   if (discardedModel && modelProblem) {
     const kept = flows.length > 0
@@ -325,6 +342,7 @@ Each new flow must name a control or field that appears there.
 Do not invent a page, button, field, or URL.
 Do not repeat a journey already planned.
 For a form, prefer a success check and an error or edge check when both are still missing.
+Every new flow needs outcomeCheck. Do not plan a completed sign-up submit or invent an email address.
 Return the full list, including the flows already planned.
 
 Reply with JSON:
@@ -349,6 +367,7 @@ function groundFlows(
   focus?: PlanFocus,
   pageChecks = true,
   maxPages?: number,
+  signupInbox = false,
 ): { flows: TestFlow[]; note?: string } {
   const capped = modelFlows.slice(0, Math.max(0, maxFlows));
   const ensured = ensurePublicFormFlow(capped, siteMap, maxFlows);
@@ -359,8 +378,9 @@ function groundFlows(
   const budgeted = focused ? focused.flows : faults.flows;
   const auth = buildAuthNegativeFlows(siteMap);
   const authFlows = auth.flows.slice(0, BASIC_PRESET.engineFlowCaps.authNegative);
+  const signup = buildSignupFlows(siteMap, { inbox: signupInbox });
   const checks = pageChecks ? buildPageCheckFlows(siteMap, maxPages) : { flows: [], note: undefined as string | undefined };
-  const deduped = dedupePlannedFlows([...budgeted, ...authFlows, ...checks.flows], siteMap);
+  const deduped = dedupePlannedFlows([...budgeted, ...authFlows, ...signup.flows, ...checks.flows], siteMap);
   const added = focused
     ? faults.added.filter(label => deduped.flows.some(flow =>
       flow.steps.some(step => step.action.toLowerCase().includes(label.toLowerCase())),
@@ -373,6 +393,7 @@ function groundFlows(
       : '',
     focused?.note || '',
     auth.note || '',
+    signup.note || '',
     checks.note || '',
     deduped.dropped.length
       ? `Dropped duplicate or off-site flows (${deduped.dropped.join(', ')}).`

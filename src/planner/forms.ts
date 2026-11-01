@@ -15,6 +15,7 @@ import type { SiteMap, SiteMapForm, SiteMapPage, TestFlow } from '../types.js';
 import { isFormSurfaceLink, looksLikeAuthUrl, sameCrawlPage } from '../explorer/queue.js';
 import { isAuthNegativeFlowId } from './authNegative.js';
 import { isPageCheckFlowId } from '../checks/plan.js';
+import { isSignupFlowId } from '../signup/plan.js';
 
 export interface RankedForm {
   page: SiteMapPage;
@@ -77,7 +78,7 @@ export function flowCoversForm(flow: TestFlow, pageUrl: string): boolean {
 
 /** Form and fault flows stay. Shop flows are what a full quota gives up. */
 export function isReservedFlowId(id: string): boolean {
-  return id === 'public-form-submit' || id.startsWith('fault-') || isAuthNegativeFlowId(id) || isPageCheckFlowId(id);
+  return id === 'public-form-submit' || id.startsWith('fault-') || isAuthNegativeFlowId(id) || isPageCheckFlowId(id) || isSignupFlowId(id);
 }
 
 export function ensurePublicFormFlow(
@@ -169,6 +170,7 @@ function buildFormFlow(target: RankedForm): TestFlow {
     startUrl: page.url,
     steps,
     expectation: 'The public form submits without a server error.',
+    outcomeCheck: { kind: 'observable_response' },
     severityIfFails: 'critical',
   };
 }

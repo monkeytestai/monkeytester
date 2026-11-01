@@ -250,13 +250,16 @@ export async function executePageChecks(
     const flowSteps = steps.get(flow.id) ?? [];
     const traceSteps = traces.get(flow.id) ?? [];
     const failed = flowSteps.some(step => step.status === 'failed');
+    const ran = flowSteps.some(step => step.status === 'passed' || step.status === 'failed');
+    const assertion = ran ? 'verified' as const : 'unverifiable' as const;
     const result: FlowResult = {
       flowId: flow.id,
       name: flow.name,
       description: flow.description,
       kind: flow.kind,
       startUrl: flow.startUrl,
-      status: resolveFlowStatus(flowSteps, failed),
+      status: resolveFlowStatus(flowSteps, failed, assertion),
+      assertion,
       ...(failed ? { failureReason: flowSteps.find(step => step.status === 'failed')?.error } : {}),
       severityIfFails: flow.severityIfFails,
       steps: flowSteps,

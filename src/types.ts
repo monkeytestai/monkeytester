@@ -244,6 +244,76 @@ export type AuthCheck =
  */
 export type PageCheck = 'console' | 'http' | 'axe' | 'mobile' | 'meta';
 
+/**
+ * Machine-checkable outcome of a flow. The runner evaluates this after the
+ * last step. A flow with no concrete check is not `passed`.
+ * Additive in 0.7.0-beta.3.
+ */
+export type OutcomeCheckKind =
+  | 'text_visible'
+  | 'text_absent'
+  | 'url_changed'
+  | 'url_includes'
+  | 'url_unchanged'
+  | 'element_visible'
+  | 'element_absent'
+  | 'validation_visible'
+  | 'observable_response'
+  | 'auth_error_visible'
+  | 'password_toggle'
+  | 'email_field_present'
+  | 'form_present';
+
+export interface OutcomeCheck {
+  kind: OutcomeCheckKind;
+  /**
+   * Visible text, URL fragment, or accessible name.
+   * Required for text_*, url_includes, and element_*.
+   */
+  value?: string;
+  /** Further checks that must also hold. Additive. */
+  also?: OutcomeCheck[];
+}
+
+/**
+ * Engine sign-up step. The runner performs it. It never asks the model to
+ * invent an email address. Additive in 0.7.0-beta.3.
+ */
+export type SignupCheck = 'empty_submit' | 'invalid_email' | 'password_mismatch' | 'inbox_verify';
+
+/**
+ * Whether the runner verified the flow's outcome. Absent on runs saved
+ * before 0.7.0-beta.3; those keep the previous step-derived status.
+ * `verified` is the only value that may accompany status `passed`.
+ */
+export type FlowAssertion = 'verified' | 'failed' | 'missing' | 'unverifiable' | 'blocked';
+
+/**
+ * Throwaway mailbox for the single sign-up attempt in a run.
+ * The npm package does not ship a provider. Callers pass their own.
+ * `release` is optional. Additive in 0.7.0-beta.3.
+ */
+export interface InboxProvider {
+  allocate(opts: { runId: string; purpose: 'signup' | 'reset' }): Promise<{ address: string; expiresAt?: string }>;
+  waitFor(opts: {
+    address: string;
+    sinceMs: number;
+    timeoutMs: number;
+    kind: 'otp' | 'link' | 'any';
+    signal?: AbortSignal;
+  }): Promise<{
+    received: boolean;
+    otp?: string;
+    links?: string[];
+    subject?: string;
+    from?: string;
+    receivedAt?: string;
+    text?: string;
+    html?: string;
+  }>;
+  release?(opts: { address: string }): Promise<void>;
+}
+
 export interface TestStep {
   /** Human-readable instruction the runner / agent should perform. */
   action: string;
@@ -264,6 +334,11 @@ export interface TestStep {
   pageCheck?: PageCheck;
   /** Absolute URL a page-check step loads. Omitted on model steps. */
   url?: string;
+  /**
+   * Set on engine sign-up steps (`signup-val-*`, `signup-inbox`).
+   * Omitted on other flows. Additive in 0.7.0-beta.3.
+   */
+  signupCheck?: SignupCheck;
 }
 
 export interface TestFlow {
@@ -276,6 +351,11 @@ export interface TestFlow {
   steps: TestStep[];
   /** Single-sentence success criterion for the whole flow. */
   expectation: string;
+  /**
+   * What the runner checks after the last step. Required for a model flow
+   * to be kept. Omitted on plans saved before 0.7.0-beta.3. Additive.
+   */
+  outcomeCheck?: OutcomeCheck;
   /** Estimated risk if this fails for a real user. */
   severityIfFails: 'critical' | 'major' | 'minor';
 }
@@ -393,7 +473,18 @@ export type OutcomeReason =
   | 'timeout'
   | 'automation_error'
   | 'not_attempted'
-  | 'nothing_tested';
+  | 'nothing_tested'
+  /**
+   * The flow finished its steps but had no outcome check to evaluate.
+   * Additive in 0.7.0-beta.3. Never paired with flow status `passed`.
+   */
+  | 'no_assertion'
+  /**
+   * An outcome check was present but could not be decided (missing value,
+   * no before/after signal, or an ambiguous page). Additive in 0.7.0-beta.3.
+   * Never paired with flow status `passed`.
+   */
+  | 'assertion_unverifiable';
 
 /**
  * Phase 3 signup result. Reserved in 0.7.0-beta.1 and left unset.
@@ -440,6 +531,11 @@ export interface FlowResult {
   severityIfFails?: 'critical' | 'major' | 'minor';
   /** Wall-clock duration in milliseconds. */
   durationMs: number;
+  /**
+   * Outcome check result. `verified` is required for status `passed` on
+   * runs produced by 0.7.0-beta.3. Omitted on older runs. Additive.
+   */
+  assertion?: FlowAssertion;
   /** BugReport ids that were produced from this flow. */
   bugIds: string[];
   /**
@@ -599,6 +695,8 @@ export interface FlowTrace {
   expectation?: string;
   /** Plan severity, so a replay can rank a bug the same way. Additive. */
   severityIfFails?: 'critical' | 'major' | 'minor';
+  /** Outcome check to re-evaluate on replay. Omitted on older traces. Additive. */
+  outcomeCheck?: OutcomeCheck;
   steps: TraceStep[];
 }
 

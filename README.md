@@ -93,10 +93,11 @@ A finished run includes:
 | Field | Values |
 | ----- | ------ |
 | `outcome` | `bugs_found`, `clean`, `inconclusive`, `could_not_test` |
-| `outcome_reason` | Short code such as `automation_error`, `all_flows_skipped`, `site_unreachable`, `login_required`. `login_required` is also set on `clean` and `bugs_found` when `public_screens` is `0` |
+| `outcome_reason` | Short code such as `automation_error`, `all_flows_skipped`, `site_unreachable`, `login_required`, `no_assertion`, `assertion_unverifiable`. `login_required` is also set on `clean` and `bugs_found` when `public_screens` is `0`. `no_assertion` means the journey had no outcome to verify |
 | `outcome_detail` | A sentence that matches the confirmed bug count, plus a next step. On a login-only site it says deeper journeys need an account |
 | `public_screens` | Number of crawled pages that are not auth-gated. `0` is a login-only site |
-| `engine_version` | Engine that produced the run, for example `0.7.0-beta.1` (`ENGINE_VERSION`) |
+| `engine_version` | Engine that produced the run, for example `0.7.0-beta.3` (`ENGINE_VERSION`) |
+| `signup_attempted`, `signup_verified`, `signup_status`, `signup_reason` | Set when a sign-up form was seen. Without your inbox, status is `not_tested` and reason is `no_inbox`. The package does not include an inbox |
 
 `could_not_test` means nothing was tested. Playwright errors from the runner are `inconclusive`, not bugs. Map these three fields straight onto `audit_run`.
 

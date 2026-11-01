@@ -1,6 +1,6 @@
 # CLI reference
 
-The `monkeytest` binary ships in [`@monkeytestai/monkeytester`](https://www.npmjs.com/package/@monkeytestai/monkeytester) **0.6.1**:
+The `monkeytest` binary ships in [`@monkeytestai/monkeytester`](https://www.npmjs.com/package/@monkeytestai/monkeytester) **0.7.0-beta.3**:
 
 ```bash
 npm install @monkeytestai/monkeytester
@@ -141,6 +141,7 @@ Print the engine version.
 | `OPENAI_COMPATIBLE_BASE_URL`      | Self-hosted (Ollama, vLLM, LM Studio, OpenRouter) |
 | `OPENAI_COMPATIBLE_API_KEY`       | Optional key for the OpenAI-compatible endpoint   |
 | `MONKEYTEST_DEBUG`                | Print stack traces on failure                     |
+| `MONKEYTEST_INBOX_TOKEN`          | Bearer token for `--inbox-http` (your host)       |
 
 ## Exit codes
 

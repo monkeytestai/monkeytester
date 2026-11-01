@@ -5,12 +5,23 @@
  * pass `failed` when a step failed so a real product failure stays `failed`.
  */
 
-import type { FlowStatus, StepResult } from '../types.js';
+import type { FlowAssertion, FlowStatus, StepResult } from '../types.js';
 
-export function resolveFlowStatus(steps: StepResult[], failed = false): Extract<FlowStatus, 'passed' | 'failed' | 'inconclusive'> {
-  if (failed || steps.some(step => step.status === 'failed')) return 'failed';
+/**
+ * `passed` requires `assertion === 'verified'` on runs that record an
+ * assertion. `assertion === undefined` keeps the pre-0.7.0-beta.3 rule so a
+ * stored run is not rewritten when it is triaged again.
+ */
+export function resolveFlowStatus(
+  steps: StepResult[],
+  failed = false,
+  assertion?: FlowAssertion,
+): Extract<FlowStatus, 'passed' | 'failed' | 'inconclusive'> {
+  if (failed || steps.some(step => step.status === 'failed') || assertion === 'failed') return 'failed';
   const planned = steps.filter(step => step.index > 0);
   const body = planned.length > 0 ? planned : steps;
   if (body.length > 0 && body.every(step => step.status === 'skipped')) return 'inconclusive';
-  return 'passed';
+  if (assertion === 'missing' || assertion === 'unverifiable' || assertion === 'blocked') return 'inconclusive';
+  if (assertion === 'verified' || assertion === undefined) return 'passed';
+  return 'inconclusive';
 }

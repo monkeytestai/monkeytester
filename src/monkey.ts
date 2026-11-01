@@ -27,6 +27,7 @@ import type {
   TestPlan,
   RunResult,
   MonkeyEvent,
+  InboxProvider,
 } from './types.js';
 
 export interface MonkeyConfig {
@@ -56,6 +57,11 @@ export interface MonkeyConfig {
    * config uses the cheap preset.
    */
   plannerModel?: string;
+  /**
+   * Mailbox for the one sign-up in a run. Omit it and sign-up stays
+   * validation-only. A per-call `run.inbox` overrides this. Additive.
+   */
+  inbox?: InboxProvider;
 }
 
 /**
@@ -109,6 +115,7 @@ export class Monkey {
   private readonly strictOracles: boolean;
   /** Same-origin HTTP ≥500 promotion. On unless opted out. */
   private readonly failOn5xx: boolean;
+  private readonly inbox?: InboxProvider;
 
   constructor(config: MonkeyConfig){
 
@@ -128,6 +135,7 @@ export class Monkey {
     const oracles = resolveMonkeyOracles(config);
     this.strictOracles = oracles.strictOracles;
     this.failOn5xx = oracles.failOn5xx;
+    this.inbox = config.inbox;
 
   }
 
@@ -178,6 +186,7 @@ export class Monkey {
       testPlan = await plan(siteMap, this.plannerLLM, {
         ...opts.plan,
         maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
+        signupInbox: Boolean(opts.run.inbox ?? this.inbox),
         events,
       });
     } catch (err) {
@@ -226,6 +235,7 @@ export class Monkey {
         ...opts.run,
         events,
         deadlineAt,
+        inbox: opts.run.inbox ?? this.inbox,
         strictOracles: opts.run.strictOracles ?? this.strictOracles,
         failOn5xx: opts.run.failOn5xx ?? this.failOn5xx,
       });
@@ -335,6 +345,7 @@ export class Monkey {
       rawRun = await runPlan(testPlan, this.runnerLLM, {
         ...opts.run,
         events,
+        inbox: opts.run.inbox ?? this.inbox,
         strictOracles: opts.run.strictOracles ?? this.strictOracles,
         failOn5xx: opts.run.failOn5xx ?? this.failOn5xx,
       });
@@ -397,6 +408,7 @@ export class Monkey {
       ...opts,
       heal: opts.heal,
       llm: opts.heal ? (opts.llm ?? this.runnerLLM) : opts.llm,
+      inbox: opts.inbox ?? this.inbox,
       strictOracles: opts.strictOracles ?? this.strictOracles,
       failOn5xx: opts.failOn5xx ?? this.failOn5xx,
     });
