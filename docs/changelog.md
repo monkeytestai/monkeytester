@@ -2,6 +2,11 @@
 
 The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.6.1. Newer entries below are the pre-release on `main`, published under the npm `next` tag.
 
+## 0.7.0-beta.5
+
+- Analytics beacons (`sendBeacon`, keepalive, clarity, Google Analytics, `/cdn-cgi/rum`, and the other listed collectors) are not sensitive submits. A homepage visit is not inconclusive because a beacon body said "payment" or "reset". Real reset, OTP, newsletter, payment, and account-deletion submits stay blocked unless allowed.
+- A page visit that follows a same-origin redirect to sign-in or sign-up passes. The note is an info suggestion. The landing page counts as a public screen. Cross-origin redirects, error pages, loops, and 4xx/5xx still fail.
+
 ## 0.7.0-beta.4
 
 - `suggestions` are a separate list (autocomplete, viewport, description, overflow without a viewport, third-party and unattributed page errors). They are not bugs and they are not part of the verdict.

@@ -5,7 +5,8 @@
  * checkout/payment, and account deletion are not completed unless the host
  * opts in. An inbox allows OTP, reset, and the one sign-up. Empty
  * validation submits (no value in the email field) still run.
- * Matching POSTs are aborted before they leave the browser.
+ * Same-origin (or form-action) POST/PUT/PATCH submits are aborted before
+ * they leave the browser. Analytics beacons are not submits.
  */
 
 import type { Page, Route } from 'playwright';
@@ -31,6 +32,140 @@ export interface SubmissionPolicy {
 }
 
 const policies = new WeakMap<Page, SubmissionPolicy>();
+const formActions = new WeakMap<Page, string[]>();
+
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH']);
+
+/** Hosts and paths that carry analytics, RUM, and keepalive beacons. */
+const ANALYTICS_HOST_SUFFIXES = [
+  'clarity.ms',
+  'google-analytics.com',
+  'analytics.google.com',
+  'googletagmanager.com',
+  'segment.io',
+  'segment.com',
+  'mixpanel.com',
+  'hotjar.com',
+  'hotjar.io',
+  'plausible.io',
+  'posthog.com',
+  'doubleclick.net',
+  'googleadservices.com',
+  'googlesyndication.com',
+  'fullstory.com',
+  'amplitude.com',
+  'heapanalytics.com',
+  'nr-data.net',
+  'mouseflow.com',
+  'contentsquare.net',
+  'omtrdc.net',
+  '2o7.net',
+  'demdex.net',
+];
+
+const BEACON_RESOURCE = new Set(['ping', 'beacon', 'image', 'script', 'stylesheet', 'font', 'media', 'manifest', 'texttrack', 'eventsource', 'websocket', 'other']);
+
+export interface SubmissionScan {
+  url: string;
+  method: string;
+  resourceType?: string;
+  pageUrl?: string;
+  formActionUrls?: string[];
+  headers?: Record<string, string>;
+}
+
+function hostIs(hostname: string, suffix: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  const needle = suffix.toLowerCase();
+  return host === needle || host.endsWith(`.${needle}`);
+}
+
+/** True for known analytics, RUM, and ingest URLs, including `/cdn-cgi/rum`. */
+export function isAnalyticsBeaconUrl(url: string): boolean {
+  let parsed: URL;
+  try { parsed = new URL(url); }
+  catch { return /clarity\.ms|google-analytics|googletagmanager|cdn-cgi\/rum|segment\.(io|com)|mixpanel|hotjar|plausible\.io|posthog|ingest(?:\.[a-z0-9-]+)?\.sentry\.io/i.test(url); }
+  const host = parsed.hostname;
+  const path = parsed.pathname.toLowerCase();
+  if (path.includes('/cdn-cgi/rum') || path.includes('/cdn-cgi/beacon')) return true;
+  if (/(^|\.)ingest(?:\.[a-z0-9-]+)?\.sentry\.io$/i.test(host)) return true;
+  return ANALYTICS_HOST_SUFFIXES.some(suffix => hostIs(host, suffix));
+}
+
+function header(headers: Record<string, string> | undefined, name: string): string {
+  if (!headers) return '';
+  const wanted = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === wanted) return value.toLowerCase();
+  }
+  return '';
+}
+
+function isSendBeaconOrKeepalive(scan: SubmissionScan): boolean {
+  const type = (scan.resourceType || '').toLowerCase();
+  if (type === 'ping' || type === 'beacon') return true;
+  const mode = header(scan.headers, 'sec-fetch-mode');
+  const dest = header(scan.headers, 'sec-fetch-dest');
+  return mode === 'no-cors' && (dest === 'empty' || dest === '');
+}
+
+function sameOrigin(url: string, pageUrl: string | undefined): boolean {
+  if (!pageUrl) return false;
+  try { return new URL(url).origin === new URL(pageUrl).origin; }
+  catch { return false; }
+}
+
+function normalisePath(pathname: string): string {
+  if (pathname.length > 1 && pathname.endsWith('/')) return pathname.slice(0, -1);
+  return pathname;
+}
+
+function matchesFormAction(url: string, actions: string[] | undefined): boolean {
+  if (!actions?.length) return false;
+  let target: URL;
+  try { target = new URL(url); }
+  catch { return false; }
+  for (const action of actions) {
+    let parsed: URL;
+    try { parsed = new URL(action); }
+    catch { continue; }
+    if (parsed.origin !== target.origin) continue;
+    if (normalisePath(parsed.pathname) !== normalisePath(target.pathname)) continue;
+    if (parsed.search && parsed.search !== target.search) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Sensitive classification applies only to a form or user submit:
+ * POST, PUT, or PATCH, same-origin or the form's action URL.
+ * sendBeacon, keepalive, and analytics hosts are ignored.
+ */
+export function isUserFormSubmission(scan: SubmissionScan): boolean {
+  const method = (scan.method || '').toUpperCase();
+  if (!WRITE_METHODS.has(method)) return false;
+  if (isAnalyticsBeaconUrl(scan.url)) return false;
+  if (isSendBeaconOrKeepalive(scan)) return false;
+  if (matchesFormAction(scan.url, scan.formActionUrls)) return true;
+  if (!sameOrigin(scan.url, scan.pageUrl)) return false;
+  const type = (scan.resourceType || '').toLowerCase();
+  if (type && BEACON_RESOURCE.has(type)) return false;
+  return true;
+}
+
+/** Read form actions outside a route handler. `page.evaluate` inside a route can deadlock. */
+export async function refreshFormActions(page: Page): Promise<void> {
+  const actions = await page.evaluate(() =>
+    Array.from(document.forms).map(form => form.action).filter(action => /^https?:/i.test(action)),
+  ).catch(() => [] as string[]);
+  formActions.set(page, actions);
+}
+
+function pageUrlOf(page: Page): string {
+  try { return page.url(); }
+  catch { return ''; }
+}
 
 export function sensitiveKindFromText(text: string | undefined): SensitiveKind | undefined {
   const value = text || '';
@@ -61,9 +196,10 @@ export function submissionPolicy(page: Page): SubmissionPolicy | undefined {
   return policies.get(page);
 }
 
-/** Abort sensitive POSTs and navigations to an OAuth provider. */
+/** Abort sensitive form writes and navigations to an OAuth provider. */
 export async function installSubmissionGuards(page: Page, policy: SubmissionPolicy): Promise<void> {
   policies.set(page, policy);
+  page.on('domcontentloaded', () => { void refreshFormActions(page); });
   await page.route('**/*', async (route: Route) => {
     const request = route.request();
     const url = request.url();
@@ -72,7 +208,15 @@ export async function installSubmissionGuards(page: Page, policy: SubmissionPoli
       await route.abort('blockedbyclient').catch(() => {});
       return;
     }
-    if (request.method() === 'POST') {
+    const scan: SubmissionScan = {
+      url,
+      method: request.method(),
+      resourceType: request.resourceType(),
+      pageUrl: pageUrlOf(page),
+      formActionUrls: formActions.get(page),
+      headers: request.headers(),
+    };
+    if (isUserFormSubmission(scan)) {
       const body = request.postData();
       const kind = sensitiveKindFromText(`${url}\n${body || ''}`);
       const validation = kind ? isValidationPayload(body || '', kind) : false;

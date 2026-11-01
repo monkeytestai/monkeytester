@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0-beta.5] — 2026-11-01
+
+### Fixed
+
+- Analytics and RUM beacons are not sensitive submits. `sendBeacon` and keepalive requests, including `clarity.ms`, `google-analytics.com`, `googletagmanager.com`, `/cdn-cgi/rum`, Segment, Mixpanel, Hotjar, Plausible, PostHog, and Sentry ingest, no longer match words such as payment or reset. A homepage visit or a "Forgot your password?" link is not inconclusive because a third-party body contained those words. Same-origin and form-action `POST`, `PUT`, and `PATCH` submits are still blocked unless `allowSensitive` or an inbox allows them. OAuth navigations are still aborted.
+- The demo fixture's fixed pages set `lang="en"`. axe-core `html-has-lang` was still broken after the fixture flipped to fixed, so Live e2e exited 1 with `lingering=1` while the four seeded bugs were fixed. The buggy pages still omit `lang`, and verify clears that finding.
+- A page visit that lands on a same-origin login, sign-in, or sign-up URL is a pass. HTTP 3xx and client-side redirects both count. The note is an info suggestion (`auth-redirect`), and the landing page is a public screen. Cross-origin redirects, error pages, redirect loops, and HTTP 4xx/5xx are unchanged.
+
+### Added
+
+- `SuggestionKind` `auth-redirect`.
+
 ## [0.7.0-beta.4] — 2026-11-01
 
 ### Fixed

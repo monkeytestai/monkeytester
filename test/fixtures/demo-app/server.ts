@@ -10,6 +10,10 @@
  * hits the control after the fix. POST /__monkeytest/mode with the body
  * `buggy` or `fixed` flips the server without a restart.
  *
+ * Fixed pages set `<html lang="en">`. The buggy pages omit it, so axe-core
+ * reports `html-has-lang` and verify clears that finding when the mode flips.
+ * That rule is not one of the four seeded bugs.
+ *
  *   npx tsx test/fixtures/demo-app/server.ts --port 4173 --mode buggy
  */
 
@@ -94,15 +98,15 @@ function handle(
 
   if (req.method === 'POST' && url.pathname === '/api/contact') {
     if (mode === 'buggy') {
-      sendHtml(res, 500, 'Error', '<p>The contact form could not be saved. Please try again later today.</p>');
+      sendHtml(res, 500, 'Error', mode, '<p>The contact form could not be saved. Please try again later today.</p>');
     } else {
-      sendHtml(res, 200, 'Sent', '<p>Message sent. We will reply to the address you gave us.</p>');
+      sendHtml(res, 200, 'Sent', mode, '<p>Message sent. We will reply to the address you gave us.</p>');
     }
     return;
   }
 
   if (url.pathname === '/' ) {
-    sendHtml(res, 200, 'Shop', `
+    sendHtml(res, 200, 'Shop', mode, `
       <h1>Corner shop</h1>
       <p>${COPY}</p>
       <p><a href="/checkout">Checkout</a></p>
@@ -113,7 +117,7 @@ function handle(
 
   if (url.pathname === '/checkout') {
     const bugs = mode === 'buggy';
-    sendHtml(res, 200, 'Checkout', `
+    sendHtml(res, 200, 'Checkout', mode, `
       <h1>Checkout</h1>
       <p>${COPY}</p>
       <p id="status">Ready for the order.</p>
@@ -136,7 +140,7 @@ function handle(
   }
 
   if (url.pathname === '/contact') {
-    sendHtml(res, 200, 'Contact', `
+    sendHtml(res, 200, 'Contact', mode, `
       <h1>Contact</h1>
       <p>Send a note about an order. We read every message that reaches this desk.</p>
       <form method="post" action="/api/contact" novalidate>
@@ -150,21 +154,22 @@ function handle(
   }
 
   if (url.pathname === '/tracking') {
-    sendHtml(res, 200, 'Tracking', '<h1>Tracking</h1><p>Shipment is in transit and scanning at the local depot.</p>');
+    sendHtml(res, 200, 'Tracking', mode, '<h1>Tracking</h1><p>Shipment is in transit and scanning at the local depot.</p>');
     return;
   }
 
   if (url.pathname === '/missing') {
-    sendHtml(res, 404, 'Not found', '<h1>Not found</h1><p>That shipment page does not exist. The tracking link pointed here.</p>');
+    sendHtml(res, 404, 'Not found', mode, '<h1>Not found</h1><p>That shipment page does not exist. The tracking link pointed here.</p>');
     return;
   }
 
-  sendHtml(res, 404, 'Not found', '<h1>Not found</h1><p>This page is not part of the shop.</p>');
+  sendHtml(res, 404, 'Not found', mode, '<h1>Not found</h1><p>This page is not part of the shop.</p>');
 }
 
-function sendHtml(res: ServerResponse, status: number, title: string, body: string): void {
+function sendHtml(res: ServerResponse, status: number, title: string, mode: DemoMode, body: string): void {
+  const lang = mode === 'fixed' ? ' lang="en"' : '';
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
-  res.end(`<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`);
+  res.end(`<!doctype html><html${lang}><head><title>${title}</title></head><body>${body}</body></html>`);
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
