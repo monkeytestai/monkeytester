@@ -18,7 +18,8 @@ A flow is `passed` only when its outcome check verifies. These two reasons are n
 | `outcome_reason` | Meaning |
 | --- | --- |
 | `no_assertion` | The journey had no outcome to verify. Steps running is not a pass. |
-| `assertion_unverifiable` | A check was present and could not be decided. |
+| `assertion_unverifiable` | A check was present and could not be decided. A missing invented success sentence is this, not a failed flow. |
+| `budget_exhausted` | The run finished its time budget before this check. Not a failure to confirm the page. |
 
 When one confirmed bug is filed, `outcome_detail` is:
 
@@ -39,6 +40,8 @@ That sentence is the engine's text. A clean run says the completed journeys had 
 | `stats` | Flow and bug counts. `bugsCritical`, `bugsMajor`, `bugsMinor`. |
 | `bugs[]` | Confirmed site bugs. `minor` does not fail the CLI. |
 | `signup_status` | Set when a sign-up form was seen. Without your inbox: `not_tested` / `no_inbox`. |
+| `suggestions` | Separate from bugs. Missing autocomplete, viewport, or description, overflow on a page with no viewport, third-party page errors, and page errors with no script URL. Group by `pageUrl`. Not in the bug count or the verdict. |
+| `warnings` | Model errors, and a line when `plan.plannerFallback` replaced a failed planner call. A login wall that returns no journeys does not set the flag. |
 
 The field list is the [report reference](/reference/report). Blocking bugs are every severity except `minor`. That is also what makes `run` exit 1.
 

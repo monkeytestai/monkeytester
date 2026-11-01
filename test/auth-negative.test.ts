@@ -4,6 +4,7 @@
  * survives. No provider key is read.
  */
 
+import { createServer } from 'node:http';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +26,10 @@ import {
 import { explore } from '../src/explorer/index.js';
 import { plan } from '../src/planner/index.js';
 import { buildAuthNegativeFlows } from '../src/planner/authNegative.js';
-import { textLooksLikeAuthError } from '../src/runner/authNegative.js';
+import { runAuthCheck, textLooksLikeAuthError } from '../src/runner/authNegative.js';
+import { isOwnAutomationBug } from '../src/automation/signatures.js';
+import { decideAuthGated } from '../src/explorer/screens.js';
+import { chromium } from 'playwright';
 import { runPlan } from '../src/runner/index.js';
 import type { LLM } from '../src/llm/index.js';
 import type { RunResult, SiteMap, TestFlow, TestPlan } from '../src/types.js';
@@ -44,12 +48,13 @@ describe('auth URL detection and seeds', () => {
     expect(looksLikeAuthUrl('https://shop.example/help')).toBe(false);
   });
 
-  it('seeds the root and the query-less start URL, and keeps three auth links', () => {
+  it('seeds the query-less start URL and not an unlinked root, and keeps three auth links', () => {
     const start = 'https://shop.example/app/login?mode=signin';
     const seeded = seedCrawlQueue(start).map(item => item.url);
     expect(seeded[0]).toBe(start);
-    expect(seeded).toContain('https://shop.example/');
+    expect(seeded).not.toContain('https://shop.example/');
     expect(seeded).toContain('https://shop.example/app/login');
+    expect(seedCrawlQueue('https://shop.example/').map(item => item.url)).toContain('https://shop.example/');
 
     const order = planCrawlOrder({
       startUrl: 'https://shop.example/?mode=signin',
@@ -158,6 +163,8 @@ describe('in-page auth errors', () => {
   it('accepts the supabase wording and rejects a bare validation hint', () => {
     expect(textLooksLikeAuthError('Invalid email or password')).toBe(true);
     expect(textLooksLikeAuthError('Incorrect email or password')).toBe(true);
+    expect(textLooksLikeAuthError('Please enter the correct login details')).toBe(true);
+    expect(textLooksLikeAuthError('Those details are not recognised')).toBe(true);
     expect(textLooksLikeAuthError('Enter a valid email')).toBe(false);
   });
 });
@@ -167,6 +174,10 @@ describe('ENGINE_VERSION', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
     expect(ENGINE_VERSION).toBe(pkg.version);
     expect(countPublicScreens([{ authGated: true }, { authGated: false }, { authGated: true }])).toBe(1);
+    expect(countPublicScreens([
+      { url: 'https://app.example/signin', authGated: true },
+      { url: 'https://app.example/signup', authGated: false },
+    ])).toBe(2);
   });
 });
 
@@ -189,8 +200,8 @@ describe('sign-in-first fixture', () => {
     const siteMap = await explore(`${spa.url}/?mode=signin`, llm, { maxPages: 6, headless: true });
     expect(siteMap.pages.length).toBeGreaterThanOrEqual(3);
     expect(siteMap.pages.some(page => page.url.includes('accounts.google.com'))).toBe(false);
-    expect(countPublicScreens(siteMap.pages)).toBe(0);
-    expect(siteMap.pages.every(page => page.authGated)).toBe(true);
+    expect(countPublicScreens(siteMap.pages)).toBe(siteMap.pages.length);
+    expect(siteMap.pages.every(page => page.authGated)).toBe(false);
 
     const testPlan = await plan(siteMap, llm, { maxFlows: 4, focus: 'forms-search-cta' });
     const auth = testPlan.flows.filter(flow => flow.id.startsWith('auth-neg-'));
@@ -217,8 +228,8 @@ describe('sign-in-first fixture', () => {
 
     expect(spa.loginPosts()).toBe(1);
     expect(run.outcome).toBe('clean');
-    expect(run.outcome_reason).toBe('login_required');
-    expect(run.public_screens).toBe(0);
+    expect(run.outcome_reason).toBeUndefined();
+    expect(run.public_screens).toBe(siteMap.pages.length);
     expect(run.engine_version).toBe(ENGINE_VERSION);
     expect(run.signup_attempted).toBe(false);
     expect(run.signup_verified).toBe(false);
@@ -260,6 +271,100 @@ describe('sign-in-first fixture', () => {
     expect(run.outcome).not.toBe('inconclusive');
   }, 60_000);
 });
+
+describe('wrong password is a rejection, not a missing sentence', () => {
+  it('passes when the auth request is 401 and the page stays on login, with no error sentence', async () => {
+    const server = createServer((req, res) => {
+      if (req.method === 'POST') {
+        res.writeHead(401, { 'content-type': 'text/html' });
+        res.end('<!doctype html><title>Sign in</title><form><p>Sign in</p></form>');
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><title>Sign in</title><form method="post" action="/login">
+        <input type="email" name="email"><input type="password" name="password">
+        <button type="submit">Sign in</button></form>`);
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('auth fixture did not bind');
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.goto(`http://127.0.0.1:${address.port}/`);
+      const outcome = await runAuthCheck(page, authFlow(), authStep('wrong_password'), emptyEvidence(), 1, {
+        timeoutMs: 5_000,
+        llm: inventingLlm(),
+        fallbacks: { used: 0 },
+      });
+      expect(outcome.status).toBe('passed');
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.observation).toMatch(/401/);
+    } finally {
+      await browser.close();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it('reads a role=alert and treats an empty fill as an automation error', async () => {
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><form>
+        <input id="email" type="email" name="email" oninput="this.value=''">
+        <input id="password" type="password">
+        <p role="alert">Please enter the correct login details</p>
+        <button type="submit">Sign in</button>
+      </form>`);
+      const outcome = await runAuthCheck(page, authFlow(), authStep('wrong_password'), emptyEvidence(), 1, {
+        timeoutMs: 5_000,
+        llm: inventingLlm(),
+        fallbacks: { used: 0 },
+      });
+      expect(outcome.status).toBe('skipped');
+      expect(outcome.error).toBe('automation_error');
+      expect(isOwnAutomationBug({ title: outcome.observation, observed: outcome.observation, error: outcome.error })).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('counts a sign-in form at / as a public screen', () => {
+    expect(decideAuthGated('https://app.monkeytest.ai/', true, true, { labels: ['Sign in'], hasEmail: true })).toBe(false);
+    expect(decideAuthGated('https://app.example/settings', true, false, { labels: ['Save'], hasEmail: true })).toBe(true);
+  });
+});
+
+function authFlow(): TestFlow {
+  return {
+    id: 'auth-neg-wrong-password',
+    name: 'Wrong password',
+    description: 'Reject a synthetic password.',
+    kind: 'edge_case',
+    startUrl: 'http://127.0.0.1/',
+    steps: [authStep('wrong_password')],
+    expectation: 'The password is rejected.',
+    severityIfFails: 'major',
+  };
+}
+
+function authStep(check: 'wrong_password'): TestFlow['steps'][number] {
+  return {
+    action: 'Submit a wrong password',
+    expectation: 'The sign-in is rejected.',
+    check,
+    value: 'monkeytest+qa@example.invalid',
+  };
+}
+
+function emptyEvidence() {
+  return {
+    stepIndex: 1,
+    consoleByStep: new Map(),
+    networkByStep: new Map(),
+    pageErrorsByStep: new Map(),
+  };
+}
 
 function inventingLlm(calls: string[] = []): LLM {
   return {

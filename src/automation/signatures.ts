@@ -71,6 +71,16 @@ export const AUTOMATION_FAULT_SIGNATURES: readonly AutomationFaultSignature[] = 
     description: 'A selector the runner built matched nothing, or the wait was for that selector.',
   },
   {
+    id: 'non-interactable-field',
+    pattern: 'non-interactable sign-up field|honeypot',
+    description: 'The runner tried to fill a hidden or non-interactable field before submit. Not a site bug.',
+  },
+  {
+    id: 'fill-did-not-stick',
+    pattern: 'field is still empty|fill did not change',
+    description: 'The runner filled a control and the value did not change. That is an automation error, not a site bug.',
+  },
+  {
     id: 'selector-timeout',
     pattern: 'locator\\.(fill|click|press|waitfor)|timeout \\d+ms exceeded[\\s\\S]{0,160}locator|waiting for (getby|locator)',
     description: 'A timeout caused by our selector (locator.fill / locator.click / getBy*), not a server timeout.',

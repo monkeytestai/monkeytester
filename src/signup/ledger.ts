@@ -10,6 +10,8 @@ export interface SignupLedger {
   sawForm: boolean;
   attempted: boolean;
   verified: boolean;
+  /** True once a field fill has started. */
+  started: boolean;
   status?: SignupStatus;
   reason?: SignupReason;
   /** The one live submit this run is allowed to make. */
@@ -17,7 +19,7 @@ export interface SignupLedger {
 }
 
 export function emptySignupLedger(): SignupLedger {
-  return { sawForm: false, attempted: false, verified: false, usedLiveSubmit: false };
+  return { sawForm: false, attempted: false, verified: false, started: false, usedLiveSubmit: false };
 }
 
 function rank(status: SignupStatus | undefined, reason: SignupReason | undefined): number {
@@ -25,7 +27,9 @@ function rank(status: SignupStatus | undefined, reason: SignupReason | undefined
   if (status === 'unverified') return 40;
   if (status === 'blocked') return 30;
   if (reason === 'cap_reached') return 20;
+  if (reason === 'automation_error') return 15;
   if (reason === 'no_inbox') return 10;
+  if (reason === 'no_signup_form') return 4;
   if (status === 'not_tested') return 5;
   return 0;
 }
@@ -33,12 +37,14 @@ function rank(status: SignupStatus | undefined, reason: SignupReason | undefined
 export function noteSignup(ledger: SignupLedger, update: {
   saw?: boolean;
   attempted?: boolean;
+  started?: boolean;
   verified?: boolean;
   status?: SignupStatus;
   reason?: SignupReason;
   usedLiveSubmit?: boolean;
 }): void {
   if (update.saw) ledger.sawForm = true;
+  if (update.started) ledger.started = true;
   if (update.usedLiveSubmit) ledger.usedLiveSubmit = true;
   if (update.verified) {
     ledger.verified = true;
@@ -64,12 +70,20 @@ export function signupFields(ledger: SignupLedger): {
   signup_verified?: boolean;
   signup_status?: SignupStatus;
   signup_reason?: SignupReason;
+  signup_started?: boolean;
 } {
-  if (!ledger.sawForm && !ledger.status) return {};
+  if (!ledger.sawForm && !ledger.status && !ledger.started) {
+    return {
+      signup_attempted: false,
+      signup_status: 'not_tested',
+      signup_reason: 'no_signup_form',
+    };
+  }
   return {
     signup_attempted: ledger.attempted,
     signup_verified: ledger.verified,
-    ...(ledger.status ? { signup_status: ledger.status } : {}),
+    signup_status: ledger.status ?? 'not_tested',
     ...(ledger.reason ? { signup_reason: ledger.reason } : {}),
+    ...(ledger.started ? { signup_started: true } : {}),
   };
 }

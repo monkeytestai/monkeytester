@@ -27,7 +27,7 @@ autoLLMConfig({
 
 Omit `runner` and the planner model is reused for runner calls. Omit `triager` and triage stays deterministic. Model ids are on [LLM providers](/guides/llm-providers).
 
-`LLMConfig` is `{ provider, model?, apiKey?, baseURL?, temperature? }`. `temperature` defaults to 0.2 for JSON calls. `provider` is `openai`, `gemini`, `anthropic`, `mistral`, `groq`, or `openai_compatible`.
+`LLMConfig` is `{ provider, model?, apiKey?, baseURL?, temperature? }`. `temperature` defaults to 0.2 for JSON calls. Models that reject a custom temperature (`gpt-5*`, o-series) omit the field, and a 400 that says temperature is unsupported is retried once without it. `provider` is `openai`, `gemini`, `anthropic`, `mistral`, `groq`, or `openai_compatible`. Do not select `gpt-4.1-nano`. It is deprecated. `estimateCostUsd` prices each step at that step's model. `gpt-5-mini` and `gpt-5-nano` have price rows.
 
 ## `executeAndTriage`
 
@@ -56,6 +56,7 @@ const { siteMap, plan, run } = await monkey.executeAndTriage(url, {
 | `maxFlows` | 6 | LLM flow cap. Quick pass sets 5. |
 | `includeAuthFlows` | true | Keep flows the model tagged `auth_required` |
 | `focus` | | `forms-search-cta` on Quick pass |
+| `signupInbox` | false | Plan exactly one sign-up when a sign-up form was crawled. `true` on its own does not submit. Pass `inbox` as well. |
 
 ### Run
 
@@ -67,6 +68,8 @@ const { siteMap, plan, run } = await monkey.executeAndTriage(url, {
 | `headless` | true | |
 | `strictOracles` | on via `new Monkey()` | Page error, document HTTP 404, action HTTP ≥500, or a disabled control fails the step |
 | `failOn5xx` | on via `new Monkey()` | A same-origin HTTP ≥500 on document, xhr, or fetch fails the step |
+| `inbox` | | `InboxProvider`. Allows the one sign-up, plus OTP and password-reset submits. |
+| `allowSensitive` | | Extra final submits: `newsletter`, `payment`, `deletion`. `signup`, `reset`, and `otp` are already allowed when `inbox` is set. |
 
 `runPlan`, `replayTraces`, and a direct `triage(run)` leave `strictOracles` and `failOn5xx` off unless the caller passes them. `new Monkey()` turns both on and passes them through.
 

@@ -112,7 +112,8 @@ describe('explore survives a bad site summary', () => {
     expect(siteMap.siteType).toBe('ecommerce');
     expect(siteMap.summary).toContain('Corner shop homepage');
     expect(siteMap.summary).not.toMatch(/did not match schema|Zod/i);
-    expect(siteMap.warnings).toEqual([SITE_WARNING]);
+    expect(siteMap.warnings?.[0]).toBe(SITE_WARNING);
+    expect(siteMap.warnings?.some(warning => warning.includes('did not match schema'))).toBe(true);
     expect(warning?.message).toBe(SITE_WARNING);
     expect(warning?.message).not.toMatch(/schema|Zod|authSurfaces/i);
     expect(String(warning?.detail)).toContain('response did not match schema');
@@ -149,6 +150,8 @@ describe('explore survives a bad site summary', () => {
     expect(siteMap.summary).toBe('A corner shop.');
     expect(siteMap.warnings?.[0]).toContain(demo.url);
     expect(siteMap.warnings?.[0]).toContain('Page summary from the model was incomplete');
+    expect(siteMap.warnings?.some(warning => warning.includes('not valid JSON'))).toBe(true);
+    expect(siteMap.pages[0].warnings?.some(warning => warning.includes('not valid JSON'))).toBe(true);
     expect(events.some(event => event.message.includes('not valid JSON'))).toBe(false);
   });
 });

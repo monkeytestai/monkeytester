@@ -769,6 +769,20 @@ function cmdReport(runId: string | undefined, opts: CommonOpts){
     }
   }
 
+  if (run.suggestions?.length){
+    console.log(`\n  ${tty('Suggestions:', 'bold')} ${tty('(not bugs)', 'dim')}`);
+    const byPage = new Map<string, typeof run.suggestions>();
+    for (const item of run.suggestions) {
+      const list = byPage.get(item.pageUrl) ?? [];
+      list.push(item);
+      byPage.set(item.pageUrl, list);
+    }
+    for (const [pageUrl, items] of byPage) {
+      console.log(`    ${pageUrl}`);
+      for (const item of items) console.log(`      [${item.kind}] ${truncate(item.detail, 120)}`);
+    }
+  }
+
   if (run.bugs.length){
     console.log(`\n  ${tty('Bugs:', 'bold')}`);
     for (const b of run.bugs){
@@ -796,21 +810,30 @@ function summariseSiteMap(siteMap: { startUrl: string; siteType: string; summary
   pages:    ${siteMap.pages.length} visited, ${siteMap.pendingUrls.length} pending, ${siteMap.failedUrls.length} failed${warnings}`;
 }
 
-function summarisePlan(plan: { flows: { name: string; kind: string; steps: unknown[] }[]; notes?: string }): string {
-  if (plan.flows.length === 0) return `\n${tty('Plan', 'bold')}\n  (no flows)`;
+function summarisePlan(plan: { flows: { name: string; kind: string; steps: unknown[] }[]; notes?: string; plannerFallback?: boolean; plannerFallbackReason?: string }): string {
+  if (plan.flows.length === 0 && !plan.plannerFallback) return `\n${tty('Plan', 'bold')}\n  (no flows)`;
   const lines = plan.flows.map((f, i) => `  ${i + 1}. [${f.kind}] ${f.name}  (${f.steps.length} steps)`);
-  return `\n${tty('Plan', 'bold')}\n${lines.join('\n')}${plan.notes ? `\n  notes: ${plan.notes}` : ''}`;
+  const fallback = plan.plannerFallback
+    ? `\n  ${tty('fallback:', 'yellow')} ${plan.plannerFallbackReason || 'grounded plan'}`
+    : '';
+  return `\n${tty('Plan', 'bold')}\n${lines.join('\n') || '  (no flows)'}${fallback}${plan.notes ? `\n  notes: ${plan.notes}` : ''}`;
 }
 
-function summariseRun(run: { outcome?: string; outcome_reason?: string; outcome_detail?: string; stats: { flowsTotal: number; flowsPassed: number; flowsFailed: number; bugsCritical: number; bugsMajor: number; bugsMinor: number } }): string {
+function summariseRun(run: { outcome?: string; outcome_reason?: string; outcome_detail?: string; suggestions?: unknown[]; warnings?: string[]; stats: { flowsTotal: number; flowsPassed: number; flowsFailed: number; bugsCritical: number; bugsMajor: number; bugsMinor: number } }): string {
   const { flowsTotal, flowsPassed, flowsFailed, bugsCritical, bugsMajor, bugsMinor } = run.stats;
   const outcome = run.outcome
     ? `\n  outcome:  ${tty(run.outcome, run.outcome === 'bugs_found' ? 'red' : run.outcome === 'clean' ? 'green' : 'yellow')}${run.outcome_reason ? ` (${run.outcome_reason})` : ''}`
     : '';
   const detail = run.outcome_detail ? `\n  ${truncate(run.outcome_detail, 220)}` : '';
+  const suggestions = run.suggestions?.length
+    ? `\n  suggestions: ${run.suggestions.length} (not counted as bugs)`
+    : '';
+  const warnings = run.warnings?.length
+    ? `\n${run.warnings.map(warning => `  ${tty('warning:', 'yellow')} ${truncate(warning, 180)}`).join('\n')}`
+    : '';
   return `\n${tty('Run', 'bold')}
   flows:    ${tty(`${flowsPassed}/${flowsTotal}`, flowsFailed === 0 ? 'green' : 'yellow')} passed, ${flowsFailed} failed
-  bugs:     ${tty(String(bugsCritical), bugsCritical ? 'red' : 'dim')} critical, ${tty(String(bugsMajor), bugsMajor ? 'yellow' : 'dim')} major, ${tty(String(bugsMinor), 'dim')} minor${outcome}${detail}`;
+  bugs:     ${tty(String(bugsCritical), bugsCritical ? 'red' : 'dim')} critical, ${tty(String(bugsMajor), bugsMajor ? 'yellow' : 'dim')} major, ${tty(String(bugsMinor), 'dim')} minor${suggestions}${outcome}${detail}${warnings}`;
 }
 
 function printDiffSection(title: string, entries: { fingerprint: string; bug: BugReport }[], colour: keyof typeof c){

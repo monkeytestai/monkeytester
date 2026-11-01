@@ -34,9 +34,14 @@ import type {
   BugReport,
   BugEvidence,
   BugElement,
+  Suggestion,
+  AxeRuleFinding,
 } from '../types.js';
 import { type EventBus, noopBus } from '../events.js';
-import { failureLocation, fingerprintFailure, legacyFingerprint } from '../trace/fingerprint.js';
+import { failureLocation, fingerprintFailure, fingerprintFromParts, legacyFingerprint } from '../trace/fingerprint.js';
+import { httpFailureIdentity, httpFailureKey } from '../trace/httpIdentity.js';
+import { humanStepLabel } from '../trace/stepLabel.js';
+import { axeBugSeverity } from '../checks/axe.js';
 import { bugTracePrefix } from '../trace/serialize.js';
 import { applySameOrigin5xxToRun } from '../runner/http5xx.js';
 import { attachRunOutcome, classifyRunFlows, type OutcomeContext } from '../outcome.js';
@@ -167,8 +172,14 @@ function collapseAndScore(run: RunResult): RunResult {
 
   const bugs: BugReport[] = [];
   const byFingerprint = new Map<string, BugReport>();
+  const byHttp = new Map<string, BugReport>();
+  const byAxe = new Map<string, BugReport>();
 
   for (const flow of run.flows){
+    flow.steps = flow.steps.map(step => ({
+      ...step,
+      label: humanStepLabel(step),
+    }));
 
     for (const step of flow.steps){
 
@@ -181,24 +192,59 @@ function collapseAndScore(run: RunResult): RunResult {
         error: step.error,
       })) continue;
 
+      if (step.axeRules && step.axeRules.length > 0) {
+        for (const rule of step.axeRules) {
+          const bug = axeBug(flow, step, rule);
+          const existing = byAxe.get(rule.id);
+          if (existing) {
+            mergeEvidence(existing, step);
+            rememberFlow(existing, flow);
+            rememberPage(existing, rule.pageUrl || step.target || flow.startUrl);
+            flow.bugIds.push(existing.id);
+          } else {
+            byAxe.set(rule.id, bug);
+            bugs.push(bug);
+            flow.bugIds.push(bug.id);
+          }
+        }
+        continue;
+      }
+
       const bug = bugFromStep(flow, step);
-      const existing = byFingerprint.get(bug.fingerprint);
+      const http = httpFailureIdentity(
+        `${step.error || ''}\n${step.observation || ''}`,
+        step.networkFailures,
+      );
+      const httpKey = http ? httpFailureKey(http) : undefined;
+      const existing = (httpKey && byHttp.get(httpKey)) || byFingerprint.get(bug.fingerprint);
 
       if (existing){
-        if (step.screenshotPath){
-          existing.evidence.screenshots.push(step.screenshotPath);
-        }
-        if (step.consoleErrors){
-          existing.evidence.consoleErrors.push(...step.consoleErrors);
-        }
-        if (step.networkFailures){
-          existing.evidence.networkFailures.push(...step.networkFailures);
-        }
-        if (!existing.affectedFlow.includes(flow.name)){
-          existing.affectedFlow = `${existing.affectedFlow}, ${flow.name}`;
-        }
+        mergeEvidence(existing, step);
+        if (httpKey) rememberSeen(existing, flow);
+        rememberFlow(existing, flow);
         flow.bugIds.push(existing.id);
       } else {
+        if (http && httpKey) {
+          const errorSignal = http.status >= 500 ? 'http-5xx' : 'http-4xx';
+          const category = http.status >= 500 ? 'network' : 'navigation';
+          bug.fingerprintV2 = fingerprintFromParts({
+            version: 2,
+            category,
+            location: http.path,
+            role: http.method,
+            name: '',
+            errorSignal,
+          });
+          bug.fingerprintParts = {
+            version: 2,
+            category,
+            location: http.path,
+            role: http.method,
+            name: '',
+            errorSignal,
+          };
+          byHttp.set(httpKey, bug);
+        }
         byFingerprint.set(bug.fingerprint, bug);
         bugs.push(bug);
         flow.bugIds.push(bug.id);
@@ -215,8 +261,36 @@ function collapseAndScore(run: RunResult): RunResult {
     else stats.bugsMinor++;
   }
 
-  return { ...run, bugs, stats };
+  const suggestions = collectSuggestions(run);
+  return {
+    ...run,
+    bugs,
+    stats,
+    ...(suggestions.length ? { suggestions } : {}),
+  };
 
+}
+
+/**
+ * Style notes from steps and flows. Deduped. Never added to `bugs` or `stats`.
+ */
+export function collectSuggestions(run: RunResult): Suggestion[] {
+  const out: Suggestion[] = [];
+  const seen = new Set<string>();
+  const push = (item: Suggestion) => {
+    const key = `${item.kind}|${item.pageUrl}|${item.detail}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(item);
+  };
+  for (const flow of run.flows) {
+    for (const item of flow.suggestions ?? []) push(item);
+    for (const step of flow.steps) {
+      for (const item of step.suggestions ?? []) push(item);
+    }
+  }
+  for (const item of run.suggestions ?? []) push(item);
+  return out;
 }
 
 /* ── BugReport synthesis ──────────────────────────────────────────────── */
@@ -291,6 +365,64 @@ function bugFromStep(flow: FlowResult, step: StepResult): BugReport {
     ...(element ? { element } : {}),
   };
 
+}
+
+function mergeEvidence(existing: BugReport, step: StepResult): void {
+  if (step.screenshotPath) existing.evidence.screenshots.push(step.screenshotPath);
+  if (step.consoleErrors) existing.evidence.consoleErrors.push(...step.consoleErrors);
+  if (step.networkFailures) existing.evidence.networkFailures.push(...step.networkFailures);
+}
+
+function rememberFlow(existing: BugReport, flow: FlowResult): void {
+  if (!existing.affectedFlow.includes(flow.name)) {
+    existing.affectedFlow = `${existing.affectedFlow}, ${flow.name}`;
+  }
+}
+
+function rememberSeen(existing: BugReport, flow: FlowResult): void {
+  const seen = existing.seenInFlows ?? [{ flowId: existing.flow_id || '', name: existing.affectedFlow.split(',')[0]?.trim() || flow.name }];
+  if (!seen.some(item => item.flowId === flow.flowId)) {
+    seen.push({ flowId: flow.flowId, name: flow.name });
+  }
+  existing.seenInFlows = seen.filter(item => item.flowId);
+}
+
+function rememberPage(existing: BugReport, pageUrl: string | undefined): void {
+  if (!pageUrl) return;
+  const pages = existing.affectedPages ?? [];
+  if (!pages.includes(pageUrl)) pages.push(pageUrl);
+  existing.affectedPages = pages;
+}
+
+function axeBug(flow: FlowResult, step: StepResult, rule: AxeRuleFinding): BugReport {
+  const pageUrl = rule.pageUrl || step.target || flow.startUrl;
+  const severity = axeBugSeverity(rule.id, rule.impact);
+  const base = bugFromStep(flow, {
+    ...step,
+    error: `axe:${rule.id}`,
+    observation: `${rule.impact} ${rule.id}: ${rule.help}`,
+    severity,
+  });
+  const parts = {
+    version: 2 as const,
+    category: 'assertion',
+    location: `axe:${rule.id}`,
+    role: '',
+    name: rule.id,
+    errorSignal: `axe-${rule.id}`,
+  };
+  return {
+    ...base,
+    title: `WCAG: ${rule.id}`,
+    severity,
+    fingerprintV2: fingerprintFromParts(parts),
+    fingerprintParts: parts,
+    page_url: pageUrl,
+    affectedPages: pageUrl ? [pageUrl] : [],
+    impact: severity === 'minor'
+      ? `${rule.help} This is a minor accessibility note.`
+      : rule.help,
+  };
 }
 
 function pageUrlFor(flow: FlowResult, urlAfter?: string, urlBefore?: string): string {

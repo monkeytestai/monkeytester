@@ -91,7 +91,7 @@ export function ensurePublicFormFlow(
   if (!target) return { flows: fitModelFlows(flows, maxFlows), injected: false };
 
   const grounded = buildFormFlow(target);
-  const rest = flows.filter(flow => flow.id !== grounded.id && !flowCoversForm(flow, target.page.url));
+  const rest = flows.filter(flow => flow.id !== grounded.id && !flowCoversForm(flow, target.page.url) && !sameFormTarget(flow, target.form));
   return {
     flows: [grounded, ...fitModelFlows(rest, maxFlows - 1)].slice(0, maxFlows),
     injected: true,
@@ -173,6 +173,15 @@ function buildFormFlow(target: RankedForm): TestFlow {
     outcomeCheck: { kind: 'observable_response' },
     severityIfFails: 'critical',
   };
+}
+
+/** A second "submit this form" journey for the same action URL is the same test. */
+function sameFormTarget(flow: TestFlow, form: SiteMapForm): boolean {
+  const path = pathOf(form.action);
+  if (!path || path === '/') return false;
+  const blob = `${flow.id} ${flow.name} ${flow.description} ${flow.steps.map(step => step.action).join(' ')}`;
+  if (blob.includes(path)) return true;
+  return /form-submit/.test(flow.id) && path.length > 1 && blob.toLowerCase().includes('submit');
 }
 
 function pathOf(value: string | undefined): string {

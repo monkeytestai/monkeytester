@@ -70,6 +70,7 @@ import {
   type CrawlQueueItem,
   type DiscoveredLink,
 } from './queue.js';
+import { decideAuthGated, screenFingerprint } from './screens.js';
 
 export interface ExploreOptions {
   /** Hard cap on how many pages the explorer visits. Default 8. */
@@ -105,7 +106,8 @@ export async function explore(
   const visited = new Set<string>();
   const start = canonicalPageUrl(startUrl);
   const queue: CrawlQueueItem[] = seedCrawlQueue(startUrl);
-  const pages: SiteMapPage[] = [];
+    const pages: SiteMapPage[] = [];
+    const seenScreens = new Set<string>();
   const failures: { url: string; reason: string }[] = [];
   const warnings: string[] = [];
   let authUrlsQueued = 0;
@@ -208,13 +210,16 @@ export async function explore(
         // skeleton we already scraped — losing a screenshot + the entire page
         // because the LLM returned malformed JSON is overkill.
         let summary: { summary: string; interactive: SiteMapInteractive[]; authGated: boolean };
+        let pageWarnings: string[] | undefined;
         try {
           summary = await summarisePageWithLLM(llm, url, skeleton);
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           logModelDetail(`explorer.summarisePage ${url}`, detail);
           const message = `Page summary from the model was incomplete for ${url}; continuing with the page title.`;
-          warnings.push(message);
+          const modelError = modelErrorWarning(detail);
+          warnings.push(message, modelError);
+          pageWarnings = [message, modelError];
           events.emit({
             phase: 'explorer', type: 'explore.warning',
             message,
@@ -232,7 +237,24 @@ export async function explore(
         const outbound = selectOutboundLinks(linksOnCrawlSite(skeleton.links, startUrl));
         // Password field or auth URL is decisive. The model flag is only a
         // secondary signal when those two are absent.
-        const authGated = skeletonHasPassword(skeleton) || looksLikeAuthUrl(url) || summary.authGated;
+        const labels = [
+          ...skeleton.forms.map(form => form.submitLabel || ''),
+          ...skeleton.buttons,
+        ];
+        const hasEmail = skeleton.inputs.some(input => {
+          const type = (input.type || '').toLowerCase();
+          return type === 'email' || /email/i.test(`${input.name || ''} ${input.label || ''}`);
+        });
+        const authGated = decideAuthGated(url, skeletonHasPassword(skeleton), summary.authGated, { labels, hasEmail });
+        const fingerprint = screenFingerprint({
+          title: skeleton.title,
+          heading: skeleton.headings[0],
+          fields: skeleton.inputs
+            .map(input => [input.type || '', input.name || '', input.id || '', input.label || ''].join(':'))
+            .filter(field => field.replace(/:/g, '').trim().length > 0),
+        });
+        if (fingerprint && seenScreens.has(fingerprint)) continue;
+        if (fingerprint) seenScreens.add(fingerprint);
 
         const sm: SiteMapPage = {
           url,
@@ -245,6 +267,7 @@ export async function explore(
           ...(controls.length ? { controls } : {}),
           authGated,
           ...(screenshotPath ? { screenshotPath } : {}),
+          ...(pageWarnings?.length ? { warnings: pageWarnings } : {}),
         };
 
         pages.push(sm);
@@ -282,7 +305,7 @@ export async function explore(
     }
 
     const overall = await summariseSiteBestEffort(llm, startUrl, pages, (message, detail) => {
-      warnings.push(message);
+      warnings.push(message, modelErrorWarning(detail));
       events.emit({
         phase: 'explorer', type: 'explore.warning',
         message,
@@ -297,6 +320,7 @@ export async function explore(
       data: {
         siteType: overall.siteType,
         pagesVisited: pages.length,
+        pagesExplored: pages.length,
         pagesFailed: failures.length,
         ...(warnings.length ? { warnings } : {}),
       },
@@ -310,6 +334,7 @@ export async function explore(
       publicJourneys: overall.publicJourneys ?? undefined,
       authSurfaces: overall.authSurfaces ?? undefined,
       pages,
+      pagesExplored: pages.length,
       pendingUrls: queue.map(item => item.url),
       failedUrls: failures,
       ...(warnings.length ? { warnings } : {}),
@@ -780,6 +805,11 @@ Reply with JSON only.
 
 const SITE_SUMMARY_FALLBACK_WARNING =
   'Site summary from the model was incomplete; continuing with a basic map of the site.';
+
+function modelErrorWarning(detail: string): string {
+  const clipped = detail.replace(/\s+/g, ' ').trim().slice(0, 400);
+  return `Model error: ${clipped}`;
+}
 
 function llmProseField(min: number, max: number) {
   return z.preprocess((value) => {

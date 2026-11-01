@@ -11,15 +11,19 @@ The file under `.monkeytest/runs/` is a stored run: `{ schema, id, createdAt, en
 | Field | Values |
 | --- | --- |
 | `outcome` | `bugs_found`, `clean`, `inconclusive`, `could_not_test` |
-| `outcome_reason` | `login_required`, `blocked_by_bot_protection`, `site_unreachable`, `invalid_url`, `llm_error`, `all_flows_skipped`, `timeout`, `automation_error`, `not_attempted`, `nothing_tested`, `no_assertion`, `assertion_unverifiable` |
+| `outcome_reason` | `login_required`, `blocked_by_bot_protection`, `site_unreachable`, `invalid_url`, `llm_error`, `all_flows_skipped`, `timeout`, `automation_error`, `not_attempted`, `nothing_tested`, `no_assertion`, `assertion_unverifiable`, `budget_exhausted` |
 | `outcome_detail` | One or two sentences that match the bug count, plus a next step |
 | `public_screens` | Crawled pages that are not auth-gated. Omitted when the run did not crawl. |
 | `engine_version` | `ENGINE_VERSION`, for example the package version |
 | `signup_attempted`, `signup_verified` | Booleans from the one sign-up attempt |
+| `signup_started` | `true` once filling a sign-up form begins. Omitted otherwise. |
 | `signup_status` | `verified`, `unverified`, `not_tested`, `blocked` |
-| `signup_reason` | `no_inbox`, `captcha`, `phone`, `payment`, `timeout`, `cap_reached`, `no_signup_form` |
+| `signup_reason` | `no_inbox`, `captcha`, `phone`, `payment`, `timeout`, `cap_reached`, `no_signup_form`, `automation_error` |
+| `pagesExplored` | Unique pages that loaded. The same screen at two URLs counts once. |
+| `suggestions` | `Suggestion[]`. Style notes and page errors that are not site bugs. Omitted when empty. Not in `stats` or the verdict. |
+| `warnings` | Model errors and a planner-fallback line. Not bugs. |
 | `flows` | `FlowResult[]` |
-| `bugs` | `BugReport[]`. Confirmed site bugs only. |
+| `bugs` | `BugReport[]`. Confirmed site bugs only. Suggestions are not in this list. |
 | `stats` | `flowsTotal`, `flowsPassed`, `flowsFailed`, `flowsBlocked`, `flowsInconclusive`, step counts, `bugsCritical`, `bugsMajor`, `bugsMinor` |
 
 `could_not_test` means nothing was tested. `inconclusive` means the site was reached and a real check did not finish. `login_required` is also set when `outcome` is `clean` or `bugs_found` and `public_screens` is `0`.
@@ -37,7 +41,7 @@ Found 1 confirmed bug. Open the top one and confirm it on the site before treati
 | `status` | `passed`, `failed`, `blocked`, `error`, `inconclusive` |
 | `outcome_reason`, `outcome_detail` | Set when this flow did not produce a confirmed site bug |
 | `assertion` | Outcome-check result. `verified` is required for `passed` on runs from 0.7.0-beta.3. |
-| `steps` | Each step has `status`, `observation`, `screenshotPath`, console and network evidence |
+| `steps` | Each step has `status`, `observation`, `label`, `durationMs`, `screenshotPath`, console and network evidence |
 | `trace` | What `rerun` replays. Absent on runs recorded before traces existed. |
 | `videoPath` | WebM for the flow |
 | `bugIds` | Bugs produced from this flow |
@@ -60,6 +64,27 @@ Found 1 confirmed bug. Open the top one and confirm it on the site before treati
 | `step_index` | 0-based index of the failing step. Omitted before 0.6.1. |
 | `flow_id` | `FlowResult.flowId`. Omitted before 0.6.1. |
 | `element` | Optional `selector` and `bounding_box` (`x`, `y`, `width`, `height`) for a ring on the screenshot. A miss omits the field. |
+| `affectedPages` | Pages where the same axe rule fired. One bug per rule. |
+| `seenInFlows` | `{ flowId, name }[]` when more than one flow hit the same HTTP failure (method + path + status). |
+| `axeRules` | On the step, not the bug. The rule id, impact, and page. |
+
+## `Suggestion`
+
+| Field | Meaning |
+| --- | --- |
+| `pageUrl` | Page the note is about. Group by this for a per-page list. |
+| `title`, `detail` | What was observed |
+| `kind` | `autocomplete`, `viewport`, `description`, `overflow`, `third-party-error`, `unattributed-error` |
+| `severity` | Always `info` |
+
+`color-contrast` and `scrollable-region-focusable` are bugs of severity `minor` at most, rolled up by rule id. Other serious axe rules stay bugs, also one per rule.
+
+## `TestPlan`
+
+| Field | Meaning |
+| --- | --- |
+| `plannerFallback` | `true` only when the grounded plan replaced a failed model call. A login wall that correctly returns no journeys leaves this unset. |
+| `plannerFallbackReason` | Short reason. Safe to show next to the flag. |
 
 `fingerprint` and `fingerprintV2` do not include `impact`, `page_url`, `step_index`, `flow_id`, or `element`. The CLI treats every severity except `minor` as blocking.
 

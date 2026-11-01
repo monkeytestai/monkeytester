@@ -64,7 +64,9 @@ npx monkeytest report --json
 | `--inbox <module>` | | Your `InboxProvider` module. No hosted inbox. |
 | `--inbox-http <url>` | | Your HTTP inbox. Token: `MONKEYTEST_INBOX_TOKEN`. |
 
-`--depth basic` is 6 pages, 5 LLM flows, up to 5 page checks and 6 auth-negative flows outside that budget, and a 120 second cap. See [Your first run](/getting-started/first-run).
+`--depth basic` is 6 pages, 5 LLM flows, up to 5 page checks and 6 auth-negative flows outside that budget, and a 120 second cap. Page checks run before sign-up and model flows. Suggestions (missing autocomplete, viewport, or description, overflow without a viewport, third-party and unattributed page errors) are not bugs and do not change the exit code. See [Your first run](/getting-started/first-run).
+
+`--inbox` and `--inbox-http` also allow one password-reset or OTP send. Newsletter, checkout, and account deletion stay validation-only. There is no CLI flag for those. The library option is `run.allowSensitive`.
 
 ## Environment
 

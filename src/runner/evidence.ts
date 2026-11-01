@@ -9,16 +9,23 @@
  */
 
 import type { ConsoleMessage, Page, Request, Response } from 'playwright';
-import type { ConsoleErrorEvidence, NetworkFailureEvidence } from '../types.js';
+import { isDifferentRegistrableDomain, scriptUrlFromError } from '../checks/party.js';
+import type { ConsoleErrorEvidence, NetworkFailureEvidence, Suggestion } from '../types.js';
 import type { ActionOutcome } from './actions.js';
 
 const ACTION_RESOURCE_TYPES = new Set(['document', 'xhr', 'fetch']);
+
+export interface PageErrorHit {
+  message: string;
+  /** Script URL from the stack, when the browser included one. */
+  sourceUrl?: string;
+}
 
 export interface StepEvidence {
   stepIndex: number;
   consoleByStep: Map<number, ConsoleErrorEvidence[]>;
   networkByStep: Map<number, NetworkFailureEvidence[]>;
-  pageErrorsByStep: Map<number, string[]>;
+  pageErrorsByStep: Map<number, PageErrorHit[]>;
 }
 
 export interface StepOracle {
@@ -46,8 +53,13 @@ export function attachStepEvidence(page: Page): StepEvidence {
 
   page.on('pageerror', (err: Error) => {
     const message = (err?.message || String(err)).slice(0, 500);
-    push(state.pageErrorsByStep, state.stepIndex, message);
-    push(state.consoleByStep, state.stepIndex, { message, level: 'error' });
+    const sourceUrl = scriptUrlFromError(err);
+    push(state.pageErrorsByStep, state.stepIndex, sourceUrl ? { message, sourceUrl } : { message });
+    push(state.consoleByStep, state.stepIndex, {
+      message,
+      level: 'error',
+      ...(sourceUrl ? { url: sourceUrl } : {}),
+    });
   });
 
   page.on('requestfailed', (req: Request) => {
@@ -85,19 +97,79 @@ export async function flushStepEvents(page: Page): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 50));
 }
 
+function asPageError(value: string | PageErrorHit): PageErrorHit {
+  return typeof value === 'string' ? { message: value } : value;
+}
+
+/** Stack URL, or a script URL named in the message when the stack has none. */
+export function resolvePageErrorSource(hit: PageErrorHit): string | undefined {
+  if (hit.sourceUrl) return hit.sourceUrl;
+  return scriptUrlFromError({ message: hit.message });
+}
+
 /**
- * Priority: uncaught page error, then an action HTTP 5xx, then a document
- * 404. Image, font, and other non-action 5xx responses stay evidence only.
- * A 404 that is not the document (favicon, for example) is ignored.
+ * True when the throwing script is on a different registrable domain
+ * (ads, analytics, tag managers).
+ */
+export function isThirdPartyPageError(hit: PageErrorHit, pageUrl: string): boolean {
+  const source = resolvePageErrorSource(hit);
+  if (!source) return false;
+  return isDifferentRegistrableDomain(source, pageUrl);
+}
+
+/** No script URL in the stack or the message. Not a first-party bug. */
+export function isUnattributedPageError(hit: PageErrorHit): boolean {
+  return !resolvePageErrorSource(hit);
+}
+
+export function suggestionForThirdPartyError(hit: PageErrorHit, pageUrl: string): Suggestion {
+  const source = resolvePageErrorSource(hit);
+  const where = source ? ` from ${source}` : '';
+  return {
+    pageUrl,
+    title: 'Third-party page error',
+    detail: `Uncaught error${where}: ${truncate(hit.message, 240)}`,
+    kind: 'third-party-error',
+    severity: 'info',
+  };
+}
+
+export function suggestionForUnattributedError(hit: PageErrorHit, pageUrl: string): Suggestion {
+  return {
+    pageUrl,
+    title: 'Unattributed page error',
+    detail: `Uncaught error with no script URL: ${truncate(hit.message, 240)}`,
+    kind: 'unattributed-error',
+    severity: 'info',
+  };
+}
+
+/**
+ * Priority: uncaught first-party page error, then an action HTTP 5xx, then
+ * a document 404. A page error whose script is on another registrable
+ * domain is not a failure. Image, font, and other non-action 5xx responses
+ * stay evidence only. A 404 that is not the document (favicon, for example)
+ * is ignored.
+ *
+ * `pageUrl` is optional so existing callers that pass bare strings keep the
+ * previous "any page error fails the step" behaviour.
  */
 export function oracleFromEvidence(
-  pageErrors: string[],
+  pageErrors: Array<string | PageErrorHit>,
   network: NetworkFailureEvidence[],
+  pageUrl?: string,
 ): StepOracle | null {
-  if (pageErrors.length > 0) {
+  const blocking = pageErrors
+    .map(asPageError)
+    .filter(hit => {
+      if (!pageUrl) return true;
+      if (isUnattributedPageError(hit)) return false;
+      return !isThirdPartyPageError(hit, pageUrl);
+    });
+  if (blocking.length > 0) {
     return {
       error: 'pageerror',
-      observation: `Uncaught page error: ${truncate(pageErrors[0], 160)}`,
+      observation: `Uncaught page error: ${truncate(blocking[0].message, 160)}`,
     };
   }
 
@@ -128,12 +200,24 @@ export async function applyPassedOracles(
 ): Promise<ActionOutcome> {
   if (outcome.status !== 'passed') return outcome;
   await flushStepEvents(page);
+  const pageUrl = page.url();
+  const errors = evidence.pageErrorsByStep.get(stepIndex) ?? [];
+  const suggestions = errors.flatMap(hit => {
+    if (isThirdPartyPageError(hit, pageUrl)) return [suggestionForThirdPartyError(hit, pageUrl)];
+    if (isUnattributedPageError(hit)) return [suggestionForUnattributedError(hit, pageUrl)];
+    return [];
+  });
+  const withNotes = suggestions.length
+    ? { ...outcome, suggestions: [...(outcome.suggestions ?? []), ...suggestions] }
+    : outcome;
   const hit = oracleFromEvidence(
-    evidence.pageErrorsByStep.get(stepIndex) ?? [],
+    errors,
     evidence.networkByStep.get(stepIndex) ?? [],
+    pageUrl,
   );
-  if (!hit) return outcome;
+  if (!hit) return withNotes;
   return {
+    ...withNotes,
     status: 'failed',
     observation: `${outcome.observation} ${hit.observation}`.trim(),
     error: hit.error,

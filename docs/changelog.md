@@ -2,6 +2,17 @@
 
 The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.6.1. Newer entries below are the pre-release on `main`, published under the npm `next` tag.
 
+## 0.7.0-beta.4
+
+- `suggestions` are a separate list (autocomplete, viewport, description, overflow without a viewport, third-party and unattributed page errors). They are not bugs and they are not part of the verdict.
+- `warnings` carries model errors. `plan.plannerFallback` is set only when the grounded plan replaced a failed model call.
+- Models that reject `temperature` (`gpt-5*`, o-series) omit it. `estimateCostUsd` prices each step at its own model.
+- Page checks run before sign-up, each with a real `durationMs`. A skipped check is `budget_exhausted`, not a 0ms failure.
+- Sign-up with an inbox is one flow. Password reset, OTP, newsletter, checkout, and account deletion are validation-only unless an inbox (reset and OTP) or `allowSensitive` allows the submit. OAuth clicks and `/auth/<provider>` navigations are inconclusive.
+- Sign-in and sign-up URLs are public screens. The same rendered screen is stored once.
+- A missing invented success sentence does not fail a flow. An empty field after fill is an automation error.
+- A wrong password that the site rejects with an auth HTTP 4xx, or with wording such as "correct login details", is not a bug. Page-check durations are the measured time, including 0.
+
 ## 0.7.0-beta.3
 
 - A flow is `passed` only when its outcome check verifies. No check is `inconclusive` with `no_assertion`. A check that cannot be decided is `assertion_unverifiable`.

@@ -148,6 +148,8 @@ describe('plan survives a bad model response', () => {
     expect(result.notes).toContain('flows[5].steps');
     expect(result.notes).toContain('public form');
     expect(events).toContain('engine.error');
+    expect(result.plannerFallback).toBe(true);
+    expect(result.plannerFallbackReason).toContain('flows[5].steps');
     expect(events).toContain('plan.complete');
   });
 

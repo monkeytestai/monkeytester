@@ -36,6 +36,7 @@ export function serializeTraceStep(step: TraceStep): TraceStep {
     status: step.status,
   };
   if (step.action) out.action = step.action;
+  if (step.label) out.label = step.label;
   if (step.expectation) out.expectation = step.expectation;
   if (step.locator) out.locator = serializeLocator(step.locator);
   if (step.value !== undefined) out.value = step.value;
