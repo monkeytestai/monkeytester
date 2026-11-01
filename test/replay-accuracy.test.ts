@@ -104,6 +104,7 @@ describe('stored-plan replay', () => {
     expect(replayed.bugs).toEqual([]);
     expect(replayed.flows[0].status).toBe('passed');
     expect(replayed.flows[0].suggestions?.filter(item => item.kind === 'auth-redirect')).toHaveLength(1);
+    expect(replayed.flows[0].steps.flatMap(step => step.suggestions ?? []).filter(item => item.kind === 'auth-redirect')).toHaveLength(1);
     expect(replayed.suggestions?.filter(item => item.kind === 'auth-redirect')).toHaveLength(1);
 
     const stored = triage(await replayTraces([beta4Visit(site.url)], replayOpts(shots)));

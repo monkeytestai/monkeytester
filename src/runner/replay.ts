@@ -20,10 +20,13 @@ import { join, resolve } from 'node:path';
 import type { LLM } from '../llm/index.js';
 import { logModelDetail } from '../llm/coerce.js';
 import type {
+  AxeRuleFinding,
+  ConsoleErrorEvidence,
   FlowAssertion,
   FlowResult,
   FlowTrace,
   InboxProvider,
+  NetworkFailureEvidence,
   RunResult,
   StepResult,
   StepStatus,
@@ -204,6 +207,7 @@ async function replayFlow(
   const steps: StepResult[] = [];
   const traceSteps: TraceStep[] = [];
   const flowSuggestions: Suggestion[] = [];
+  const stepSuggestionPages = new Set<string>();
   let failed = false;
   let failureReason: string | undefined;
   let halted = false;
@@ -252,9 +256,7 @@ async function replayFlow(
         );
       }
       const notes = suggestionsForReplay(trace, played.outcome.suggestions);
-      if (notes && notes !== played.outcome.suggestions) {
-        played.outcome = { ...played.outcome, ...(notes.length ? { suggestions: notes } : { suggestions: undefined }) };
-      }
+      const stepNotes = suggestionsForStep(stepSuggestionPages, notes);
       appendSuggestions(flowSuggestions, notes);
       const urlAfter = safeUrl(page);
 
@@ -270,10 +272,16 @@ async function replayFlow(
         resolution: played.resolution,
         durationMs: Date.now() - stepStart,
         screenshotPath: await shot(page, opts.screenshotsDir, trace.flowId, recorded.index, played.outcome.status),
-        consoleErrors: evidence.consoleByStep.get(recorded.index),
-        networkFailures: evidence.networkByStep.get(recorded.index),
+        consoleErrors: played.outcome.consoleErrors?.length
+          ? played.outcome.consoleErrors
+          : evidence.consoleByStep.get(recorded.index),
+        networkFailures: played.outcome.networkFailures?.length
+          ? played.outcome.networkFailures
+          : evidence.networkByStep.get(recorded.index),
         ...(played.outcome.error ? { error: played.outcome.error } : {}),
-        ...(played.outcome.suggestions?.length ? { suggestions: played.outcome.suggestions } : {}),
+        ...(played.outcome.severity ? { severity: played.outcome.severity } : {}),
+        ...(played.outcome.axeRules?.length ? { axeRules: played.outcome.axeRules } : {}),
+        ...(stepNotes?.length ? { suggestions: stepNotes } : {}),
       };
       steps.push(result);
       traceSteps.push({
@@ -381,7 +389,12 @@ async function replayFlow(
 interface PlayedStep {
   action: { tool: string; target?: string; value?: string; locator?: ResolvedAction['locator']; rationale?: string };
   locator: TraceStep['locator'];
-  outcome: Awaited<ReturnType<typeof executeAction>>;
+  outcome: Awaited<ReturnType<typeof executeAction>> & {
+    severity?: 'critical' | 'major' | 'minor';
+    axeRules?: AxeRuleFinding[];
+    consoleErrors?: ConsoleErrorEvidence[];
+    networkFailures?: NetworkFailureEvidence[];
+  };
   resolution: 'recorded' | 'healed';
   halted?: boolean;
   /** Engine auth or sign-up check. Oracles inside that check already ran. */
@@ -396,6 +409,20 @@ const silentLlm: LLM = {
     throw new Error('replay has no model');
   },
 };
+
+/** One auth-redirect note per landing page across the steps of a flow. */
+function suggestionsForStep(seen: Set<string>, notes: Suggestion[] | undefined): Suggestion[] | undefined {
+  if (!notes?.length) return undefined;
+  const kept: Suggestion[] = [];
+  for (const item of notes) {
+    if (item.kind === 'auth-redirect') {
+      if (seen.has(item.pageUrl)) continue;
+      seen.add(item.pageUrl);
+    }
+    kept.push(item);
+  }
+  return kept.length ? kept : undefined;
+}
 
 function suggestionsForReplay(
   trace: FlowTrace,
@@ -699,6 +726,11 @@ async function playRecordedCheck(page: Page, recorded: TraceStep, timeoutMs: num
       status: outcome.status,
       observation: outcome.observation,
       ...(outcome.error ? { error: outcome.error } : {}),
+      ...(outcome.severity ? { severity: outcome.severity } : {}),
+      ...(outcome.axeRules?.length ? { axeRules: outcome.axeRules } : {}),
+      ...(outcome.suggestions?.length ? { suggestions: outcome.suggestions } : {}),
+      ...(outcome.consoleErrors?.length ? { consoleErrors: outcome.consoleErrors } : {}),
+      ...(outcome.networkFailures?.length ? { networkFailures: outcome.networkFailures } : {}),
     },
   };
 }

@@ -5,7 +5,8 @@ The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/
 ## 0.7.1
 
 - Replay of a stored plan uses the same sign-in redirect, sign-in check, sign-up check, and sensitive-submit rules as a live run. A locator that no longer matches is inconclusive (`automation_error`), not a site bug.
-- The `auth-redirect` note is listed once on the flow.
+- The `auth-redirect` note is listed once on the flow and once across its steps.
+- Replay page checks use the same paint wait as a live check, and axe findings roll up with the same severity and fingerprints.
 
 ## 0.7.0-beta.5
 

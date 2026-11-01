@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stored-plan replay (`monkeytest rerun` and `replayTraces`) uses the same outcome rules as a live run. A page visit that lands on a same-origin sign-in URL passes, and the `auth-redirect` note is recorded once. Sign-in checks (`auth-neg-*`, including a wrong password) and sign-up validation (`signup-val-*`) are executed by the same checks as a live run. Sensitive submits stay blocked, and OAuth is not clicked.
 - A recorded locator that no longer matches is inconclusive. The step error stays `locator_mismatch` and the flow's `outcome_reason` is `automation_error`. It is not a confirmed site bug. Replay tries the step's quoted label, role, or text before giving up. `verify` still reports that miss as blocked, so a later bug is not treated as reproduced.
-- A live run no longer lists the `auth-redirect` suggestion twice on the flow. The opening navigation and the planned goto both observe it; the flow keeps one. The run-level list was already deduped.
+- A live run no longer lists the `auth-redirect` suggestion twice on the flow. The opening navigation and the planned goto both observe it; the flow keeps one, and so does the step list. The run-level list was already deduped.
+- Replay page checks wait for paint the same way a live check does. A 200ms pause judged `/signup` before it rendered and marked a real color-contrast failure as passed.
+- Replay keeps each page check's axe findings. Triage rolls them up by rule and applies the same minor caps and fingerprints as a live run, instead of one major bug per page.
 
 ## [0.7.0] — 2026-11-01
 

@@ -8,6 +8,17 @@
 
 import type { Page } from 'playwright';
 
+/**
+ * How long a page check waits for paint, live and on replay.
+ * A shorter replay wait judged `/signup` before it rendered.
+ */
+export const PAGE_CHECK_SETTLE_MS = 800;
+
+/** Same settle a live page check uses before axe, HTTP, console, meta, or mobile. */
+export function settlePageCheck(page: Page): Promise<boolean> {
+  return waitForDocumentReady(page, PAGE_CHECK_SETTLE_MS);
+}
+
 export async function waitForDocumentReady(page: Page, capMs = 6_000): Promise<boolean> {
   const started = Date.now();
   const idle = Math.min(2_500, Math.max(300, capMs));

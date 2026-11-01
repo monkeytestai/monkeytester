@@ -38,7 +38,7 @@ import {
 import { axeBugSeverity, readMissingLoginAutocomplete, runAxe } from './axe.js';
 import { judgeMeta, readMetaInPage } from './meta.js';
 import { judgeMobile, MOBILE_VIEWPORT, readMobileInPage } from './mobile.js';
-import { waitForDocumentReady } from './ready.js';
+import { settlePageCheck } from './ready.js';
 
 export interface CheckStepOutcome {
   status: 'passed' | 'failed' | 'skipped';
@@ -189,7 +189,7 @@ export async function replayPageCheck(
   } catch (err) {
     return loadFailure(kind, url, err);
   }
-  await page.waitForTimeout(200).catch(() => {});
+  await settlePageCheck(page);
   return assessLoadedPage(page, kind, url, collected, { remaining: BROKEN_LINK_CAP }, response?.status());
 }
 
@@ -237,7 +237,7 @@ export async function executePageChecks(
       } catch (err) {
         loadError = err;
       }
-      if (!loadError) await waitForDocumentReady(desktopPage, 800);
+      if (!loadError) await settlePageCheck(desktopPage);
       const status = response?.status();
 
       for (const flow of flows) {
@@ -262,7 +262,7 @@ export async function executePageChecks(
           const started = Date.now();
           try {
             await mobilePage.goto(url, { waitUntil: 'domcontentloaded', timeout: opts.stepTimeoutMs });
-            await waitForDocumentReady(mobilePage, 800);
+            await settlePageCheck(mobilePage);
           } catch (err) {
             mobileError = err;
           }
