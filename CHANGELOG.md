@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-01
+
+First stable 0.7.0. It bundles 0.7.0-beta.1 through beta.5 with no code changes since beta.5. Highlights:
+
+- Accuracy: on live sites the false-positive rate fell from 56% (beta.3) to 11% (beta.4) to 0 of 12 bugs (beta.5), with no real bugs lost.
+- Outcome checks: a flow passes only if its outcome is verified, otherwise it is inconclusive (`no_assertion`, `assertion_unverifiable`).
+- Pluggable inbox for email signup (`--inbox`, `--inbox-http`). The engine never defaults to a monkeytest.ai address.
+- Safety guards: sensitive submits (reset, OTP, newsletter, payment, account deletion) are blocked unless `allowSensitive` or an inbox allows them. OAuth buttons are never clicked.
+- Per-page checks (HTTP, accessibility rolled up per rule, mobile, metadata, console) with real durations, plus `RunResult.suggestions`.
+- A wrong-password rejection and a signed-out redirect to sign-in are passes, not bugs.
+
+All API changes since 0.6.1 are additive. See the beta sections below.
+
 ## [0.7.0-beta.5] — 2026-11-01
 
 ### Fixed
