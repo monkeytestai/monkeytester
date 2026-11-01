@@ -34,6 +34,7 @@ import type {
   BugReport,
   BugEvidence,
   BugElement,
+  Suggestion,
 } from '../types.js';
 import { type EventBus, noopBus } from '../events.js';
 import { failureLocation, fingerprintFailure, legacyFingerprint } from '../trace/fingerprint.js';
@@ -215,8 +216,36 @@ function collapseAndScore(run: RunResult): RunResult {
     else stats.bugsMinor++;
   }
 
-  return { ...run, bugs, stats };
+  const suggestions = collectSuggestions(run);
+  return {
+    ...run,
+    bugs,
+    stats,
+    ...(suggestions.length ? { suggestions } : {}),
+  };
 
+}
+
+/**
+ * Style notes from steps and flows. Deduped. Never added to `bugs` or `stats`.
+ */
+export function collectSuggestions(run: RunResult): Suggestion[] {
+  const out: Suggestion[] = [];
+  const seen = new Set<string>();
+  const push = (item: Suggestion) => {
+    const key = `${item.kind}|${item.pageUrl}|${item.detail}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(item);
+  };
+  for (const flow of run.flows) {
+    for (const item of flow.suggestions ?? []) push(item);
+    for (const step of flow.steps) {
+      for (const item of step.suggestions ?? []) push(item);
+    }
+  }
+  for (const item of run.suggestions ?? []) push(item);
+  return out;
 }
 
 /* ── BugReport synthesis ──────────────────────────────────────────────── */

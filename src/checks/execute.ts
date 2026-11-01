@@ -16,9 +16,11 @@ import type {
   NetworkFailureEvidence,
   PageCheck,
   StepResult,
+  Suggestion,
   TestFlow,
   TraceStep,
 } from '../types.js';
+import { scriptUrlFromError } from './party.js';
 import { resolveFlowStatus } from '../runner/flowStatus.js';
 import { serializeTrace, serializeTraceStep } from '../trace/serialize.js';
 import { isPageCheck, pageCheckSpec } from './plan.js';
@@ -43,6 +45,15 @@ export interface CheckStepOutcome {
   severity?: 'critical' | 'major' | 'minor';
   consoleErrors?: ConsoleErrorEvidence[];
   networkFailures?: NetworkFailureEvidence[];
+  /** Style notes. The step can still pass. Not bugs. */
+  suggestions?: Suggestion[];
+}
+
+export interface AxeFindingInput {
+  pageUrl: string;
+  serious: { impact: string; id: string; help: string }[];
+  autocomplete: string[];
+  info: string[];
 }
 
 interface Collected {
@@ -81,7 +92,12 @@ function bucket(page: Page): Collected {
       });
     });
     page.on('pageerror', error => {
-      target.hits.push({ kind: 'pageerror', message: error.message });
+      const sourceUrl = scriptUrlFromError(error);
+      target.hits.push({
+        kind: 'pageerror',
+        message: error.message,
+        ...(sourceUrl ? { sourceUrl } : {}),
+      });
     });
     page.on('response', response => {
       const status = response.status();
@@ -126,8 +142,16 @@ function skipped(observation: string): CheckStepOutcome {
   return { status: 'skipped', observation };
 }
 
-function passed(observation: string, info: string[] = []): CheckStepOutcome {
-  return { status: 'passed', observation: withInfo(observation, info) };
+function passed(observation: string, info: string[] = [], suggestions: Suggestion[] = []): CheckStepOutcome {
+  return {
+    status: 'passed',
+    observation: withInfo(observation, info),
+    ...(suggestions.length ? { suggestions } : {}),
+  };
+}
+
+function note(kind: Suggestion['kind'], pageUrl: string, title: string, detail: string): Suggestion {
+  return { kind, pageUrl, title, detail, severity: 'info' };
 }
 
 function failed(
@@ -299,9 +323,17 @@ async function assessLoadedPage(
 
 function judgeConsoleStep(collected: Collected, url: string): CheckStepOutcome {
   const judged = judgeConsole(collected.hits, url);
+  const suggestions = judged.thirdParty.map(hit => note(
+    'third-party-error',
+    url,
+    'Third-party page error',
+    hit.sourceUrl
+      ? `Uncaught error from ${hit.sourceUrl}: ${hit.message}`
+      : `Uncaught error: ${hit.message}`,
+  ));
   if (judged.bugs.length === 0) {
-    const note = judged.ignored ? [`Ignored ${judged.ignored} third-party or automation message${judged.ignored === 1 ? '' : 's'}.`] : [];
-    return passed('No first-party console error or uncaught exception on load.', note);
+    const ignored = judged.ignored ? [`Ignored ${judged.ignored} third-party or automation message${judged.ignored === 1 ? '' : 's'}.`] : [];
+    return passed('No first-party console error or uncaught exception on load.', ignored, suggestions);
   }
   const lines = judged.bugs.slice(0, 4).map(hit =>
     hit.kind === 'pageerror' ? `Uncaught page error: ${hit.message}` : `Console error: ${hit.message}`,
@@ -310,7 +342,10 @@ function judgeConsoleStep(collected: Collected, url: string): CheckStepOutcome {
   const error = first.kind === 'pageerror'
     ? `pageerror: ${first.message}`
     : `console-error: ${first.message}`;
-  return failed(lines.join(' '), error, { consoleErrors: consoleEvidence(judged.bugs) });
+  return failed(lines.join(' '), error, {
+    consoleErrors: consoleEvidence(judged.bugs),
+    ...(suggestions.length ? { suggestions } : {}),
+  });
 }
 
 async function judgeHttpStep(
@@ -369,6 +404,22 @@ async function probeLinks(
   return broken;
 }
 
+/** Serious axe violations stay bugs. Missing autocomplete is a suggestion. */
+export function outcomeForAxe(input: AxeFindingInput): CheckStepOutcome {
+  const suggestions = input.autocomplete.slice(0, 4).map(line => note('autocomplete', input.pageUrl, 'Missing autocomplete', line));
+  const info = input.info.slice(0, 4);
+  if (input.serious.length > 0) {
+    const lines = input.serious.slice(0, 4).map(item => `${item.impact} ${item.id}: ${item.help}`);
+    const first = input.serious[0];
+    return failed(lines.join(' '), `axe:${first.id}`, suggestions.length ? { suggestions } : {}, info);
+  }
+  return passed(
+    input.info.length ? 'No serious or critical WCAG A/AA violation.' : 'No WCAG A/AA violation.',
+    info,
+    suggestions,
+  );
+}
+
 async function judgeAxeStep(page: Page): Promise<CheckStepOutcome> {
   let judgement;
   try {
@@ -381,42 +432,38 @@ async function judgeAxeStep(page: Page): Promise<CheckStepOutcome> {
     ...judgement.autocomplete,
     ...missing.slice(0, 4).map(name => `Login field "${name}" has no autocomplete attribute.`),
   ];
-  const info = judgement.info.slice(0, 4);
-  if (judgement.serious.length > 0) {
-    const lines = judgement.serious.slice(0, 4).map(item => `${item.impact} ${item.id}: ${item.help}`);
-    const first = judgement.serious[0];
-    return failed(lines.join(' '), `axe:${first.id}`, {}, [...info, ...autocomplete.map(line => `Minor: ${line}`)]);
-  }
-  if (autocomplete.length > 0) {
-    return failed(
-      autocomplete.slice(0, 3).join(' '),
-      'autocomplete-missing',
-      { severity: 'minor' },
-      info,
-    );
-  }
-  return passed(
-    judgement.info.length ? 'No serious or critical WCAG A/AA violation.' : 'No WCAG A/AA violation.',
-    info,
-  );
+  return outcomeForAxe({
+    pageUrl: page.url(),
+    serious: judgement.serious,
+    autocomplete,
+    info: judgement.info,
+  });
 }
 
 async function judgeMobileStep(page: Page): Promise<CheckStepOutcome> {
   const snapshot = await page.evaluate(readMobileInPage);
   const judged = judgeMobile(snapshot);
-  if (judged.bugs.length === 0) return passed('No horizontal overflow and no undersized tap target at 375px.', judged.info);
+  const suggestions = judged.suggestions.map(line => note('overflow', page.url(), 'Desktop layout overflow', line));
+  if (judged.bugs.length === 0) {
+    return passed('No horizontal overflow and no undersized tap target at 375px.', judged.info, suggestions);
+  }
   const error = judged.bugs[0].startsWith('The page is') ? 'overflow' : 'tap-target';
-  return failed(judged.bugs.join(' '), error, { severity: 'minor' }, judged.info);
+  return failed(judged.bugs.join(' '), error, { severity: 'minor', ...(suggestions.length ? { suggestions } : {}) }, judged.info);
 }
 
 async function judgeMetaStep(page: Page): Promise<CheckStepOutcome> {
   const snapshot = await page.evaluate(readMetaInPage);
   const judged = judgeMeta(snapshot);
-  if (judged.bugs.length === 0) return passed('Title and viewport are present.', judged.info);
-  const error = judged.bugs.some(line => /viewport/i.test(line)) && !snapshot.title.trim()
-    ? 'missing-title'
-    : snapshot.title.trim() ? 'missing-viewport' : 'missing-title';
-  return failed(judged.bugs.join(' '), error, { severity: 'minor' }, judged.info);
+  const url = page.url();
+  const suggestions = [
+    ...judged.suggestions.filter(line => /viewport/i.test(line)).map(line => note('viewport', url, 'Missing viewport', line)),
+    ...judged.suggestions.filter(line => /description/i.test(line)).map(line => note('description', url, 'Missing description', line)),
+  ];
+  if (judged.bugs.length === 0) return passed('The page has a title.', judged.info, suggestions);
+  return failed(judged.bugs.join(' '), 'missing-title', {
+    severity: 'minor',
+    ...(suggestions.length ? { suggestions } : {}),
+  }, judged.info);
 }
 
 function loadFailure(kind: PageCheck, url: string, err: unknown): CheckStepOutcome {
@@ -489,6 +536,7 @@ async function record(
     ...(outcome.severity ? { severity: outcome.severity } : {}),
     ...(outcome.consoleErrors ? { consoleErrors: outcome.consoleErrors } : {}),
     ...(outcome.networkFailures ? { networkFailures: outcome.networkFailures } : {}),
+    ...(outcome.suggestions?.length ? { suggestions: outcome.suggestions } : {}),
   };
   if (outcome.status === 'failed' && page) {
     const path = shotPath(opts.screenshotsDir, flow.id, index, outcome.status);

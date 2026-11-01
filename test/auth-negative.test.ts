@@ -44,12 +44,13 @@ describe('auth URL detection and seeds', () => {
     expect(looksLikeAuthUrl('https://shop.example/help')).toBe(false);
   });
 
-  it('seeds the root and the query-less start URL, and keeps three auth links', () => {
+  it('seeds the query-less start URL and not an unlinked root, and keeps three auth links', () => {
     const start = 'https://shop.example/app/login?mode=signin';
     const seeded = seedCrawlQueue(start).map(item => item.url);
     expect(seeded[0]).toBe(start);
-    expect(seeded).toContain('https://shop.example/');
+    expect(seeded).not.toContain('https://shop.example/');
     expect(seeded).toContain('https://shop.example/app/login');
+    expect(seedCrawlQueue('https://shop.example/').map(item => item.url)).toContain('https://shop.example/');
 
     const order = planCrawlOrder({
       startUrl: 'https://shop.example/?mode=signin',

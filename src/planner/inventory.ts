@@ -26,6 +26,54 @@ export interface ReconciledFlows {
 
 const GENERIC = new Set(['input', 'inputs', 'field', 'fields', 'box', 'the', 'a', 'an', 'control', 'element', 'form']);
 
+const ABSOLUTE_URL = /https?:\/\/[^\s"'<>)\]}]+/gi;
+
+/**
+ * Absolute URLs a flow would open. A URL is allowed when the crawl saw it:
+ * a visited page, an outbound link, a control href, or a form action, on
+ * any host. Anything else is invented, including a URL on another host.
+ */
+export function uncrawledNavigationUrls(flow: TestFlow, siteMap: SiteMap): string[] {
+  const inventory = inventoryUrls(siteMap);
+  const found: string[] = [];
+  const texts = flow.steps.flatMap(step => [step.action, step.url || '']);
+  for (const text of texts) {
+    const matches = text.match(ABSOLUTE_URL) ?? [];
+    for (const raw of matches) {
+      const url = raw.replace(/[.,;]+$/, '');
+      if (seenInInventory(url, inventory) || found.some(item => sameCrawlPage(item, url))) continue;
+      found.push(url);
+    }
+  }
+  return found;
+}
+
+function inventoryUrls(siteMap: SiteMap): string[] {
+  const urls = [siteMap.startUrl];
+  for (const page of siteMap.pages) {
+    urls.push(page.url, ...page.outboundLinks);
+    for (const control of page.controls ?? []) {
+      if (control.href) urls.push(control.href);
+    }
+    for (const form of page.forms ?? []) {
+      if (form.action) urls.push(form.action);
+    }
+  }
+  return urls;
+}
+
+function seenInInventory(target: string, inventory: string[]): boolean {
+  return inventory.some(item => {
+    if (!item) return false;
+    if (sameCrawlPage(item, target)) return true;
+    try {
+      return new URL(item).href === new URL(target).href;
+    } catch {
+      return item === target;
+    }
+  });
+}
+
 /**
  * Kept model flows that still name a page or control the crawl did not see.
  * Engine flows are ignored. Used by the bake-off harness on top of the
@@ -48,6 +96,15 @@ export function reconcileModelFlows(flows: TestFlow[], siteMap: SiteMap): Reconc
   const repairs: string[] = [];
 
   for (const flow of flows) {
+    const invented = uncrawledNavigationUrls(flow, siteMap);
+    if (invented.length > 0) {
+      dropped.push({
+        id: flow.id,
+        name: flow.name,
+        reason: `navigates to ${invented[0]} which is not in the crawled inventory`,
+      });
+      continue;
+    }
     const page = siteMap.pages.find(item => sameCrawlPage(item.url, flow.startUrl));
     if (!page) {
       dropped.push({

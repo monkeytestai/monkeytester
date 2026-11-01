@@ -88,7 +88,7 @@ for await (const evt of monkey.run(url, { explore: { maxPages: 4 } })) {
 | ------- | ------------------ |
 | Some pages fail to load | The `SiteMap` with whatever pages did succeed |
 | The site-summary model returns JSON that does not match the schema | The `SiteMap` for the pages already crawled, with `siteType` / `summary` filled from page titles and URLs. `warnings` and an `explore.warning` event carry a short user-facing sentence. The audit continues into planning. |
-| The planner LLM throws, returns invalid JSON, or returns a valid shopping-only plan | The `SiteMap` and a `plan` that still reserves the crawled public form (including a help-page contact action) and the fault-surface flows. A schema failure also emits `engine.error`, and `notes` include the model error. An empty plan remains only when there is nothing on the sitemap to ground. |
+| The planner LLM throws, returns invalid JSON, times out, or returns a valid shopping-only plan | The `SiteMap` and a `plan` that still reserves the crawled public form (including a help-page contact action) and the fault-surface flows. A model failure sets `plannerFallback`, logs `planner fallback`, emits `engine.error`, and `notes` include the model error. An empty plan on a login wall is not a failure. An empty plan remains only when there is nothing on the sitemap to ground. |
 | A flow blows up mid-execution | All steps that ran, their screenshots, and a `failed` `FlowResult` |
 
 The engine never throws out of `executeAndTriage` for these cases — it always resolves with structured data. Real exceptions only escape for unrecoverable problems (no `screenshotsDir` writable, missing API key, etc.).

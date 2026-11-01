@@ -44,13 +44,15 @@ const AUTH_TOKEN = /(?:^|[/?#=&._-])(?:log[-_]?in|sign[-_]?in|sign[-_]?up|regist
  */
 export const AUTH_LINK_BUDGET = 3;
 
+/**
+ * URL the crawler navigates to. The hash is dropped. The trailing slash is
+ * kept: some hosts 404 the same path without it. Dedup uses `crawlPathKey`,
+ * which ignores the slash.
+ */
 export function canonicalPageUrl(value: string): string {
   try {
     const url = new URL(value);
     url.hash = '';
-    if (url.pathname.endsWith('/') && url.pathname.length > 1) {
-      url.pathname = url.pathname.slice(0, -1);
-    }
     return url.toString();
   } catch {
     return value;
@@ -174,20 +176,19 @@ export function looksLikeAuthUrl(value: string): boolean {
 }
 
 /**
- * Queue the start URL, the site root, and the start URL with its query
- * removed. Duplicates (a root start URL) are not repeated. Nothing else
- * is invented.
+ * Queue the start URL, and the same path with its query removed.
+ * The origin root is included only when the start URL is that root.
+ * A root that nothing links to is not invented, so a 404 there is not
+ * reported as a broken link. A page that actually links the root still
+ * enqueues it later.
  */
 export function seedCrawlQueue(startUrl: string): CrawlQueueItem[] {
   const start = canonicalPageUrl(startUrl);
   const urls = [start];
   try {
     const parsed = new URL(start);
-    const root = canonicalPageUrl(`${parsed.origin}/`);
     const bare = canonicalPageUrl(`${parsed.origin}${parsed.pathname}`);
-    for (const extra of [root, bare]) {
-      if (!urls.some(existing => sameCrawlPage(existing, extra))) urls.push(extra);
-    }
+    if (!urls.some(existing => sameCrawlPage(existing, bare))) urls.push(bare);
   } catch { /* keep the start URL */ }
   return urls.map(url => ({ url, surface: isFormSurfaceLink({ url }) }));
 }

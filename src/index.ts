@@ -93,7 +93,9 @@ export {
 export type { PageCheckPlan, PageCheckSpec } from './checks/plan.js';
 
 export { MODEL_PRICES, estimateCostUsd, priceForModel } from './llm/prices.js';
-export type { ModelPrice } from './llm/prices.js';
+export type { ModelPrice, TokenCostStep } from './llm/prices.js';
+
+export { plannerBudgetMs, executionReserveMs, CHECK_EXECUTION_RESERVE_MS } from './budget.js';
 
 export { valueForInput, numericText } from './runner/actions.js';
 
@@ -158,6 +160,8 @@ export type {
   InboxProvider,
   AuthCheck,
   RunResult,
+  Suggestion,
+  SuggestionKind,
   BugReport,
   BugEvidence,
   BugTrace,

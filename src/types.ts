@@ -181,6 +181,11 @@ export interface SiteMapPage {
   authGated: boolean;
   /** Absolute path to the screenshot taken of this page, if requested. */
   screenshotPath?: string;
+  /**
+   * Model errors for this page. Not site bugs. Omitted when the page
+   * summary parsed. Additive in 0.7.0-beta.4.
+   */
+  warnings?: string[];
 }
 
 export interface SiteMapInteractive {
@@ -373,6 +378,17 @@ export interface TestPlan {
   droppedFlows?: { id: string; name: string; reason: string }[];
   /** Wall time of the planner model calls, in milliseconds. Additive. */
   plannerLatencyMs?: number;
+  /**
+   * True when the model plan was discarded and the grounded plan was used.
+   * Omitted when the model plan was kept, including a login wall that
+   * correctly returned no journeys. Additive in 0.7.0-beta.4.
+   */
+  plannerFallback?: boolean;
+  /**
+   * Why `plannerFallback` is set. Safe to show next to the flag.
+   * Omitted when the model plan was kept. Additive in 0.7.0-beta.4.
+   */
+  plannerFallbackReason?: string;
 }
 
 /* ── Run results (output of Runner) ───────────────────────────────────── */
@@ -429,9 +445,15 @@ export interface StepResult {
   element?: BugElement;
   /**
    * Rank for this step when it should not inherit the flow severity.
-   * A missing autocomplete on a login field is `minor`. Omitted otherwise.
+   * Omitted when the flow severity applies.
    */
   severity?: 'critical' | 'major' | 'minor';
+  /**
+   * Style notes found while this step ran. Not bugs. Triage copies them
+   * onto `RunResult.suggestions`. Omitted when there are none.
+   * Additive in 0.7.0-beta.4.
+   */
+  suggestions?: Suggestion[];
 }
 
 export type FlowStatus = 'passed' | 'failed' | 'blocked' | 'error' | 'inconclusive';
@@ -551,6 +573,12 @@ export interface FlowResult {
    * Absent on runs recorded before trace capture existed.
    */
   trace?: FlowTrace;
+  /**
+   * Style notes for this flow that are not attached to a step (for example
+   * a third-party error during the opening navigation). Not bugs.
+   * Additive in 0.7.0-beta.4.
+   */
+  suggestions?: Suggestion[];
 }
 
 export interface RunResult {
@@ -611,6 +639,41 @@ export interface RunResult {
     bugsMajor: number;
     bugsMinor: number;
   };
+  /**
+   * Low-severity style notes (missing autocomplete, missing viewport or
+   * description, overflow on a desktop-only page) and informational
+   * third-party page errors. Not bugs. Omitted from `bugs`, `stats`, and
+   * the verdict. Group by `pageUrl` for a per-page list. Additive in
+   * 0.7.0-beta.4.
+   */
+  suggestions?: Suggestion[];
+  /**
+   * Model errors and other engine warnings that are not site bugs.
+   * Includes explorer summary failures. Additive in 0.7.0-beta.4.
+   */
+  warnings?: string[];
+}
+
+/**
+ * A note a report can show without counting it as a bug or a failure.
+ * `severity` is always `info`.
+ */
+export type SuggestionKind =
+  | 'autocomplete'
+  | 'viewport'
+  | 'description'
+  | 'overflow'
+  | 'third-party-error';
+
+export interface Suggestion {
+  /** Page the note is about. */
+  pageUrl: string;
+  /** Short label, for example "Missing autocomplete". */
+  title: string;
+  /** What was observed. */
+  detail: string;
+  kind: SuggestionKind;
+  severity: 'info';
 }
 
 /* ── BugReport (output of Triager) ────────────────────────────────────── */

@@ -202,7 +202,9 @@ Reply with JSON:
   let modelNotes: string | undefined;
   let modelProblem: string | undefined;
   let discardedModel = false;
+  let plannerFallback = false;
   let flows: TestFlow[] = [];
+  const loginWall = isLoginWall(siteMap);
   try {
     const result = await llm.generateJSON({
       label: 'planner.generate',
@@ -223,17 +225,21 @@ Reply with JSON:
     const rawCount = Array.isArray(result.flows)
       ? result.flows.length
       : (result.flows && typeof result.flows === 'object' ? 1 : 0);
-    if (rawCount === 0 || salvaged.flows.length === 0) {
+    if (rawCount === 0 && loginWall) {
+      modelNotes = [modelNotes, 'Every crawled page is a login wall, so the planner returned no journeys.'].filter(Boolean).join(' ');
+    } else if (rawCount === 0 || salvaged.flows.length === 0) {
       modelProblem = rawCount > 0
         ? `Planner model returned ${rawCount} flow${rawCount === 1 ? '' : 's'} and none had a usable step.`
         : 'Planner model returned no flow list.';
       discardedModel = true;
+      plannerFallback = true;
     } else if (salvaged.dropped > 0) {
       modelProblem = `Dropped ${salvaged.dropped} planner flow${salvaged.dropped === 1 ? '' : 's'} that had no usable steps.`;
     }
   } catch (err) {
     modelProblem = err instanceof Error ? err.message : String(err);
     discardedModel = true;
+    plannerFallback = true;
     flows = [];
   }
 
@@ -245,7 +251,7 @@ Reply with JSON:
   const floor = opts.minFlows === 0
     ? 0
     : (opts.minFlows ?? (maxFlows >= 5 ? Math.min(5, maxFlows) : 0));
-  if (!discardedModel && floor > flows.length) {
+  if (!discardedModel && !loginWall && floor > flows.length) {
     try {
       const more = await llm.generateJSON({
         label: 'planner.expand',
@@ -268,14 +274,16 @@ Reply with JSON:
 
   const grounded = groundFlows(siteMap, flows, maxFlows, opts.focus, opts.pageChecks !== false, opts.maxPages, opts.signupInbox === true);
   flows = grounded.flows;
-  if (discardedModel && modelProblem) {
+  if (plannerFallback && modelProblem) {
     const kept = flows.length > 0
       ? 'grounded flows were kept'
       : 'the crawl had no public form or fault control to keep';
+    const reason = truncate(modelProblem, 400);
+    console.warn(`[monkeytester] planner fallback: ${reason}`);
     events.emit({
       phase: 'planner', type: 'engine.error',
       message: `Planner model response was unusable; ${kept}.`,
-      data: { error: modelProblem },
+      data: { error: modelProblem, plannerFallback: true },
     });
   }
   const notes = [
@@ -308,6 +316,10 @@ Reply with JSON:
     notes,
     ...(reconciled.dropped.length ? { droppedFlows: reconciled.dropped } : {}),
     plannerLatencyMs: Date.now() - started,
+    ...(plannerFallback ? {
+      plannerFallback: true,
+      plannerFallbackReason: truncate(modelProblem || 'Planner model response could not be used.', 400),
+    } : {}),
   };
 
 }
@@ -434,6 +446,10 @@ function formatInputs(page: Pick<SiteMapPage, 'inputs' | 'forms'>): string {
 
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function isLoginWall(siteMap: SiteMap): boolean {
+  return siteMap.pages.length > 0 && siteMap.pages.every(page => page.authGated);
 }
 
 function looksLikeLoginFlow(f: { kind: string; name: string; description: string; steps: { action: string }[] }): boolean {

@@ -470,6 +470,8 @@ export interface ActionOutcome {
   /** Set when a fallback locator replaced the model's target. */
   resolved?: ResolvedAction;
   element?: import('../types.js').BugElement;
+  /** Informational notes. Not a failure. Additive in 0.7.0-beta.4. */
+  suggestions?: import('../types.js').Suggestion[];
 }
 
 export async function executeAction(

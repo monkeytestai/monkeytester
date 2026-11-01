@@ -46,26 +46,30 @@ const { siteMap, plan, run } = await monkey.executeAndTriage(url, opts);
 | Field | Type (sketch) | Notes |
 | ----- | ------------- | ----- |
 | `siteMap` | `{ startUrl, siteType, summary, pages[], pendingUrls[], failedUrls[] }` | Always returned, even if no pages succeeded. |
-| `plan` | `{ startUrl, siteType, flows: TestFlow[], notes? }` | `flows` may be empty if the planner failed; check `notes`. |
-| `run` | `{ outcome, outcome_reason?, outcome_detail?, public_screens?, engine_version?, signup_attempted?, signup_verified?, signup_status?, signup_reason?, flows: FlowResult[], bugs: BugReport[], stats }` | `outcome` is `bugs_found` \| `clean` \| `inconclusive` \| `could_not_test`. `bugs` are deduplicated confirmed site bugs. Signup fields are reserved and unset in 0.7.0-beta.1. |
+| `plan` | `{ startUrl, siteType, flows: TestFlow[], notes?, plannerFallback?, plannerFallbackReason? }` | `flows` may be empty if the planner failed; check `notes`. `plannerFallback` is set only when the grounded plan replaced a failed model call. |
+| `run` | `{ outcome, outcome_reason?, outcome_detail?, public_screens?, engine_version?, suggestions?, warnings?, signup_attempted?, signup_verified?, signup_status?, signup_reason?, flows: FlowResult[], bugs: BugReport[], stats }` | `outcome` is `bugs_found` \| `clean` \| `inconclusive` \| `could_not_test`. `bugs` are deduplicated confirmed site bugs. `suggestions` are not bugs and are not part of the verdict. Signup fields are reserved and unset in 0.7.0-beta.1. |
 
 ## Type tree (high level)
 
 ```
 SiteMap
  ├─ pages: SiteMapPage[]              { url, title, summary, interactive[], outboundLinks[], authGated, screenshotPath? }
- ├─ warnings?: string[]               user-facing notes when a model summary fell back
+ ├─ warnings?: string[]               model-summary fallback, including the model error
  └─ failedUrls: { url, reason }[]
 
 TestPlan
- └─ flows: TestFlow[]                 { id, name, kind, startUrl, steps: TestStep[], severityIfFails, expectation }
+ ├─ flows: TestFlow[]                 { id, name, kind, startUrl, steps: TestStep[], severityIfFails, expectation }
+ ├─ plannerFallback?                  true when the grounded plan replaced a failed model call
+ └─ plannerFallbackReason?            short reason, safe to show next to the flag
 
 RunResult
  ├─ outcome                           bugs_found | clean | inconclusive | could_not_test
  ├─ outcome_reason?                   login_required | site_unreachable | automation_error | all_flows_skipped | …
  ├─ outcome_detail?                   sentence that matches bugs.length, plus a next step
  ├─ public_screens?                   number of crawled pages that are not auth-gated
- ├─ engine_version?                   string, for example "0.7.0-beta.1"
+ ├─ engine_version?                   string, for example "0.7.0-beta.4"
+ ├─ suggestions?                      style notes and third-party page errors; group by pageUrl; not bugs
+ ├─ warnings?                         model errors and a planner-fallback line; not bugs
  ├─ signup_attempted?                 boolean, unset in 0.7.0-beta.1
  ├─ signup_verified?                  boolean, unset in 0.7.0-beta.1
  ├─ signup_status?                    verified | unverified | not_tested | blocked, unset in 0.7.0-beta.1
@@ -78,7 +82,7 @@ RunResult
 
 `status` on a flow is `passed`, `failed`, `blocked`, `error`, or `inconclusive`. `inconclusive` means every planned step was skipped, or the only failures belonged to the runner. `login_required` is set when a password field or login form was seen, and also on `clean` or `bugs_found` when `public_screens` is `0` (every crawled page was auth-gated). There is no second reason code for that case. `ENGINE_VERSION` is the `package.json` version.
 
-Import `AUTOMATION_FAULT_SIGNATURES`, `isOwnAutomationBug`, and `matchesClientSoftExploratory` to share the "not a confirmed bug" rule with mtaiserver. `isOwnAutomationBug` is a superset of mtaiclient `src/utils/confirmedBugs.js`. HTTP 5xx, uncaught page errors, disabled controls, and document HTTP 404 stay bugs.
+Import `AUTOMATION_FAULT_SIGNATURES`, `isOwnAutomationBug`, and `matchesClientSoftExploratory` to share the "not a confirmed bug" rule with mtaiserver. `isOwnAutomationBug` is a superset of mtaiclient `src/utils/confirmedBugs.js`. HTTP 5xx, first-party uncaught page errors, disabled controls, and document HTTP 404 stay bugs. Third-party page errors and style notes are `suggestions`.
 
 The full `.d.ts` ships next to `dist/index.js` and is the source of truth.
 

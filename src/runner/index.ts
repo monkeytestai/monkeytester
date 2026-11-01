@@ -37,6 +37,7 @@ import type {
   FlowAssertion,
   InboxProvider,
   StepResult,
+  Suggestion,
   StepStatus,
   RunResult,
   TraceStep,
@@ -370,6 +371,7 @@ async function runFlow(
   let firstFailureReason: string | undefined;
   let halted: string | undefined;
   let beforeLast: PageSnap | undefined;
+  const flowSuggestions: Suggestion[] = [];
   const authNeg = isAuthNegativeFlowId(flow.id);
   const signupFlow = isSignupFlowId(flow.id);
   const llmFallbacks = { used: 0 };
@@ -389,6 +391,7 @@ async function runFlow(
     return finaliseFlow(
       flow, steps, flowFailed, firstFailureReason, flowStarted, videoPath, traceSteps,
       assertion ?? (halted ? 'blocked' : undefined),
+      flowSuggestions,
     );
   };
 
@@ -412,6 +415,7 @@ async function runFlow(
       if (!opts.strictOracles) await flushStepEvents(page);
       nav = outcomeWithSameOrigin5xx(nav, evidence.networkByStep.get(0), origins);
     }
+    if (nav.suggestions?.length) flowSuggestions.push(...nav.suggestions);
     if (nav.status === 'failed') {
       navOracleError = nav.error || nav.observation;
       throw new Error(navOracleError);
@@ -788,7 +792,9 @@ async function runFlow(
       networkFailures: evidence.networkByStep.get(stepIndex),
       ...(exec.error ? { error: exec.error } : {}),
       ...(ring ? { element: ring } : {}),
+      ...(exec.suggestions?.length ? { suggestions: exec.suggestions } : {}),
     };
+    if (exec.suggestions?.length) flowSuggestions.push(...exec.suggestions);
     steps.push(result);
     traceSteps.push(serializeTraceStep({
       index: stepIndex,
@@ -1003,6 +1009,7 @@ function finaliseFlow(
   videoPath: string | undefined,
   traceSteps: TraceStep[],
   assertion?: FlowAssertion,
+  suggestions: Suggestion[] = [],
 ): FlowResult {
 
   const decided = assertion ?? (flow.outcomeCheck ? 'missing' : 'missing');
@@ -1042,6 +1049,7 @@ function finaliseFlow(
     bugIds: [],                                  // populated by triager
     ...(videoPath ? { videoPath } : {}),
     trace,
+    ...(suggestions.length ? { suggestions } : {}),
   };
 
 }

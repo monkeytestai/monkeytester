@@ -70,7 +70,7 @@ It returns a strict JSON object:
 
 `outcome_detail` is a deterministic sentence plus a next step. It agrees with `bugs.length`. An optional planner verdict is kept only when `alignVerdict` says it does not contradict that count. When the cause is the runner, the sentence says "Our test couldn't complete".
 
-The signature list is `AUTOMATION_FAULT_SIGNATURES`. `isOwnAutomationBug` is the check mtaiserver can call. It includes every miss mtaiclient `confirmedBugs.js` drops, plus `Cannot type text into input`, `not an <input>`, InvalidSelector, strict mode, detached nodes, and selector timeouts. HTTP 5xx, uncaught page errors, disabled controls, and document HTTP 404 are still bugs, and their fingerprints are unchanged.
+The signature list is `AUTOMATION_FAULT_SIGNATURES`. `isOwnAutomationBug` is the check mtaiserver can call. It includes every miss mtaiclient `confirmedBugs.js` drops, plus `Cannot type text into input`, `not an <input>`, InvalidSelector, strict mode, detached nodes, and selector timeouts. HTTP 5xx, first-party uncaught page errors, disabled controls, and document HTTP 404 are still bugs, and their fingerprints are unchanged. An uncaught error whose script is on a different registrable domain is a `suggestions` entry, not a bug. Missing autocomplete, a missing viewport or description, and overflow on a page with no viewport meta are suggestions too. `suggestions` is not added to `bugs`, `stats`, or the verdict. Show it on its own, grouped by `pageUrl`.
 
 A flow whose every step was skipped has status `inconclusive`, not `passed`.
 

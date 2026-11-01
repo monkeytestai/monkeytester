@@ -34,6 +34,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Mistral } from '@mistralai/mistralai';
 import { z } from 'zod';
 import type { LLMConfig, LLMUsageSink } from '../types.js';
+import { temperatureForRequest, withTemperatureRetry } from './temperature.js';
 
 export interface GenerateJSONOptions<T> {
   /** System-level guidance prepended to every prompt. */
@@ -139,11 +140,12 @@ class GeminiLLM implements LLM {
     // to reach a working model.
     const modelName = config.model || 'gemini-flash-lite-latest';
     this.providerLabel = `gemini:${modelName}`;
+    const temperature = temperatureForRequest(modelName, config.temperature);
     this.model = new GoogleGenerativeAI(apiKey).getGenerativeModel({
       model: modelName,
       generationConfig: {
         responseMimeType: 'application/json',
-        temperature: config.temperature ?? 0.2,
+        ...(temperature !== undefined ? { temperature } : {}),
       },
     });
 
@@ -197,7 +199,8 @@ class OpenAILLM implements LLM {
   lastUsage?: LLMUsage;
   private readonly client: OpenAI;
   private readonly model: string;
-  private readonly temperature: number;
+  /** Omitted for models that reject a custom temperature (gpt-5*, o-series). */
+  private readonly temperature: number | undefined;
   /** Some OpenAI-compatible servers don't accept response_format. */
   private readonly useJsonMode: boolean;
 
@@ -226,7 +229,7 @@ class OpenAILLM implements LLM {
     const modelName = config.model || opts.defaultModel;
     this.providerLabel = `${opts.providerName}:${modelName}`;
     this.model = modelName;
-    this.temperature = config.temperature ?? 0.2;
+    this.temperature = temperatureForRequest(modelName, config.temperature);
     this.useJsonMode = opts.useJsonMode ?? true;
 
     this.client = new OpenAI({
@@ -255,12 +258,12 @@ class OpenAILLM implements LLM {
 
     let raw: string;
     try {
-      const res = await this.client.chat.completions.create({
+      const res = await withTemperatureRetry(this.temperature, temperature => this.client.chat.completions.create({
         model: this.model,
         messages,
-        temperature: this.temperature,
+        ...(temperature !== undefined ? { temperature } : {}),
         ...(this.useJsonMode ? { response_format: { type: 'json_object' } } : {}),
-      });
+      }));
       raw = res.choices[0]?.message?.content ?? '';
 
       const usage = res.usage as
@@ -301,7 +304,7 @@ class AnthropicLLM implements LLM {
   lastUsage?: LLMUsage;
   private readonly client: Anthropic;
   private readonly model: string;
-  private readonly temperature: number;
+  private readonly temperature: number | undefined;
 
   constructor(config: LLMConfig){
 
@@ -318,7 +321,7 @@ class AnthropicLLM implements LLM {
     const modelName = config.model || 'claude-haiku-4-5';
     this.providerLabel = `anthropic:${modelName}`;
     this.model = modelName;
-    this.temperature = config.temperature ?? 0.2;
+    this.temperature = temperatureForRequest(modelName, config.temperature);
     this.client = new Anthropic({ apiKey });
 
   }
@@ -357,13 +360,13 @@ class AnthropicLLM implements LLM {
 
     let raw: string;
     try {
-      const res = await this.client.messages.create({
+      const res = await withTemperatureRetry(this.temperature, temperature => this.client.messages.create({
         model: this.model,
         max_tokens: 4096,
-        temperature: this.temperature,
+        ...(temperature !== undefined ? { temperature } : {}),
         system: systemBlocks,
         messages: [{ role: 'user', content: userBlocks }],
-      });
+      }));
       raw = res.content
         .filter((c): c is Anthropic.TextBlock => c.type === 'text')
         .map(c => c.text)
@@ -411,7 +414,7 @@ class MistralLLM implements LLM {
   lastUsage?: LLMUsage;
   private readonly client: Mistral;
   private readonly model: string;
-  private readonly temperature: number;
+  private readonly temperature: number | undefined;
 
   constructor(config: LLMConfig){
 
@@ -428,7 +431,7 @@ class MistralLLM implements LLM {
     const modelName = config.model || 'mistral-small-latest';
     this.providerLabel = `mistral:${modelName}`;
     this.model = modelName;
-    this.temperature = config.temperature ?? 0.2;
+    this.temperature = temperatureForRequest(modelName, config.temperature);
     this.client = new Mistral({ apiKey });
 
   }
@@ -442,15 +445,15 @@ class MistralLLM implements LLM {
 
     let raw: string;
     try {
-      const res = await this.client.chat.complete({
+      const res = await withTemperatureRetry(this.temperature, temperature => this.client.chat.complete({
         model: this.model,
-        temperature: this.temperature,
+        ...(temperature !== undefined ? { temperature } : {}),
         responseFormat: { type: 'json_object' },
         messages: [
           ...(system?.trim() ? [{ role: 'system' as const, content: system.trim() }] : []),
           { role: 'user' as const, content: userBody },
         ],
-      });
+      }));
       const choice = res.choices?.[0]?.message?.content;
       raw = typeof choice === 'string' ? choice : Array.isArray(choice)
         ? choice.map(c => (typeof c === 'string' ? c : (c as { text?: string }).text || '')).join('')

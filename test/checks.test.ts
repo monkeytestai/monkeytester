@@ -42,19 +42,28 @@ describe('page check classifiers', () => {
     expect(judged.ignored).toBe(1);
   });
 
-  it('treats title and viewport as minor bugs and description, lang, and h1 as info', () => {
+  it('treats a missing title as a bug and viewport or description as suggestions', () => {
     const bare = judgeMeta({ title: '', description: '', lang: '', viewport: '', h1: 2 });
     expect(bare.bugs.join(' ')).toMatch(/title/);
-    expect(bare.bugs.join(' ')).toMatch(/viewport/);
-    expect(bare.info.join(' ')).toMatch(/meta description/);
+    expect(bare.bugs.join(' ')).not.toMatch(/viewport/);
+    expect(bare.suggestions.join(' ')).toMatch(/viewport/);
+    expect(bare.suggestions.join(' ')).toMatch(/meta description/);
+    expect(bare.info.join(' ')).not.toMatch(/meta description/);
     expect(bare.info.join(' ')).toMatch(/lang/);
     expect(bare.info.join(' ')).toMatch(/h1/);
+    const titled = judgeMeta({ title: 'Shop', description: '', lang: 'en', viewport: '', h1: 1 });
+    expect(titled.bugs).toEqual([]);
+    expect(titled.suggestions.join(' ')).toMatch(/viewport/);
     expect(judgeMeta({ title: 'Shop', description: '', lang: 'en', viewport: 'width=device-width', h1: 1 }).bugs).toEqual([]);
   });
 
   it('flags real overflow and tiny named controls, and ignores a scrollbar', () => {
     expect(judgeMobile({ overflow: 15, targets: [] }).bugs).toEqual([]);
     expect(judgeMobile({ overflow: 80, targets: [] }).bugs[0]).toMatch(/80px/);
+    const desktopOnly = judgeMobile({ overflow: 501, targets: [], hasViewport: false });
+    expect(desktopOnly.bugs).toEqual([]);
+    expect(desktopOnly.suggestions[0]).toMatch(/501px/);
+    expect(judgeMobile({ overflow: 80, targets: [], hasViewport: true }).bugs[0]).toMatch(/80px/);
     const tiny = judgeMobile({
       overflow: 0,
       targets: [{ name: 'Go', width: 10, height: 10, tag: 'button' }],
@@ -187,19 +196,22 @@ describe('check fixtures', () => {
     expect(step('check-axe', '/axe')?.status).toBe('failed');
     expect(step('check-axe', '/axe')?.severity).toBeUndefined();
     const login = step('check-axe', '/axe-login');
-    expect(login?.status).toBe('failed');
-    expect(login?.severity).toBe('minor');
-    expect(login?.error).toBe('autocomplete-missing');
+    expect(login?.status).toBe('passed');
+    expect(login?.suggestions?.some(item => item.kind === 'autocomplete')).toBe(true);
     expect(step('check-mobile', '/mobile')?.status).toBe('failed');
     expect(step('check-meta', '/meta')?.status).toBe('failed');
     expect(step('check-meta', '/meta')?.severity).toBe('minor');
+    expect(step('check-meta', '/meta')?.error).toBe('missing-title');
+    expect(step('check-meta', '/meta')?.suggestions?.some(item => item.kind === 'viewport')).toBe(true);
     expect(step('check-meta', '/meta')?.observation).toMatch(/Info:/);
     for (const id of ['check-console', 'check-http', 'check-axe', 'check-mobile', 'check-meta']) {
       expect(step(id, '/clean')?.status).toBe('passed');
     }
 
     const loginBug = run.bugs.find(bug => bug.flow_id === 'check-axe' && bug.page_url?.endsWith('/axe-login'));
-    expect(loginBug?.severity).toBe('minor');
+    expect(loginBug).toBeUndefined();
+    expect(run.suggestions?.some(item => item.kind === 'autocomplete' && item.pageUrl.endsWith('/axe-login'))).toBe(true);
+    expect(run.stats.bugsMinor).toBeGreaterThan(0);
     const axeBug = run.bugs.find(bug => bug.flow_id === 'check-axe' && bug.page_url?.endsWith('/axe'));
     expect(axeBug?.severity).toBe('major');
   }, 90_000);

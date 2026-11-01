@@ -75,6 +75,7 @@ export function outcomeWithSameOrigin5xx(
     status: 'failed',
     observation: `${outcome.observation} ${describeServerError(hit)}`.trim(),
     error: `http-${hit.status}`,
+    ...(outcome.suggestions?.length ? { suggestions: outcome.suggestions } : {}),
   };
 }
 

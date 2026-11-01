@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0-beta.4] — 2026-11-01
+
+### Fixed
+
+- OpenAI, Anthropic, and Mistral calls omit `temperature` for models that reject it (`gpt-5*`, o-series). A 400 that says temperature is unsupported is retried once without the field. Other models still default to 0.2.
+- A planner failure is visible. `TestPlan.plannerFallback` and `plannerFallbackReason` are set, and the process logs `planner fallback`. A model that correctly returns no journeys on a login wall is not a failure. The run stays `login_required`.
+- Planning has its own budget. On a timed run the checks keep a reserve (45s of the 120s Quick pass, or 40% of a shorter budget). A planner that would eat that reserve is skipped and the grounded plan runs, so the checks are not starved.
+- The crawler keeps the trailing slash on the URL it visits. Dedup still ignores the slash. `https://the-internet.herokuapp.com/add_remove_elements/` is no longer requested without the slash (that URL 404s).
+- The crawl does not invent the origin root. A root 404 is reported only when the start URL is the root or a page links to it.
+- An uncaught page error from a script on a different registrable domain (ads, analytics, tag managers) is a suggestion, not a major or critical bug, and it does not fail navigation. A first-party page error keeps its current severity.
+- Missing autocomplete, a missing viewport or meta description, and horizontal overflow on a page with no viewport meta are suggestions. They are not bugs, not failures, and not part of the verdict. Serious accessibility failures (missing labels, contrast, and the rest of axe) stay bugs. A missing title stays a bug. Tiny tap targets stay bugs.
+- The planner drops a journey that navigates to any URL the crawl did not see, including a URL on another host.
+- `estimateCostUsd` prices each step at that step's model. `gpt-5-mini` and `gpt-5-nano` have price rows. `gpt-4.1-nano` is marked deprecated.
+- Explorer model errors are on `SiteMap.warnings` and on the page (`SiteMapPage.warnings`), as well as in the server log. `RunResult.warnings` copies them, plus a line when the planner used the grounded fallback.
+
+### Added
+
+- `RunResult.suggestions` and `Suggestion` (`pageUrl`, `title`, `detail`, `kind`, `severity: 'info'`). Group by `pageUrl` for a per-page list. Omitted when empty.
+- `scripts/bakeoff.ts --runs N`. Each row reports suggestions separately from real bugs, records `plannerFallback`, and prices tokens per step.
+
 ## [0.7.0-beta.3] — 2026-11-01
 
 ### Fixed

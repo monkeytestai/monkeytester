@@ -19,6 +19,7 @@ import { triage, triagePolished } from './triager/index.js';
 import { applyPlannerVerdict } from './planner/verdict.js';
 import { attachRunOutcome, countPublicScreens } from './outcome.js';
 import { BASIC_PRESET } from './depth.js';
+import { plannerBudgetMs } from './budget.js';
 import { verifyBugs, type VerifyOptions, type VerifyReport } from './verify/index.js';
 import { EventBus, noopBus } from './events.js';
 import type {
@@ -29,6 +30,8 @@ import type {
   MonkeyEvent,
   InboxProvider,
 } from './types.js';
+
+export { plannerBudgetMs, executionReserveMs, CHECK_EXECUTION_RESERVE_MS } from './budget.js';
 
 export interface MonkeyConfig {
   llm: MonkeyLLMConfig;
@@ -182,31 +185,33 @@ export class Monkey {
     });
 
     let testPlan: TestPlan;
+    const planLimit = plannerBudgetMs({ totalBudgetMs: budgetMs, deadlineAt });
     try {
-      testPlan = await plan(siteMap, this.plannerLLM, {
+      testPlan = await planWithinBudget(planLimit, () => plan(siteMap, this.plannerLLM, {
         ...opts.plan,
         maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
         signupInbox: Boolean(opts.run.inbox ?? this.inbox),
         events,
-      });
+      }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[monkeytester] planner fallback: ${truncate(msg, 300)}`);
       events.emit({
         phase: 'planner', type: 'engine.error',
         message: `Planner failed: ${truncate(msg, 160)}`,
-        data: { error: msg },
+        data: { error: msg, plannerFallback: true },
       });
-      const fallback = groundedTestPlan(
+      const fallback = markPlannerFallback(groundedTestPlan(
         siteMap,
         opts.plan?.maxFlows ?? 6,
         `Planner failed after exploration: ${msg}`,
         opts.plan?.focus,
-      );
+      ), msg);
       if (fallback.flows.length === 0) {
         return {
           siteMap,
           plan: fallback,
-          run: finishEmpty(startUrl, siteMap.pages.length, fallback.notes, countPublicScreens(siteMap.pages)),
+          run: withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, fallback.notes, countPublicScreens(siteMap.pages)), siteMap, fallback),
         };
       }
       testPlan = fallback;
@@ -220,7 +225,7 @@ export class Monkey {
       return {
         siteMap,
         plan: testPlan,
-        run: finishEmpty(startUrl, siteMap.pages.length, testPlan.notes, countPublicScreens(siteMap.pages)),
+        run: withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, testPlan.notes, countPublicScreens(siteMap.pages)), siteMap, testPlan),
       };
     }
 
@@ -257,7 +262,7 @@ export class Monkey {
           ...testPlan,
           notes: [testPlan.notes, `Runner failed before executing flows: ${msg}`].filter(Boolean).join('\n'),
         },
-        run: finishEmpty(startUrl, siteMap.pages.length, `Runner failed before executing flows: ${msg}`, countPublicScreens(siteMap.pages)),
+        run: withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, `Runner failed before executing flows: ${msg}`, countPublicScreens(siteMap.pages)), siteMap, testPlan),
       };
     }
 
@@ -294,7 +299,7 @@ export class Monkey {
       notes: testPlan.notes,
     });
 
-    return { siteMap, plan: testPlan, run };
+    return { siteMap, plan: testPlan, run: withRunWarnings(run, siteMap, testPlan) };
 
   }
 
@@ -461,12 +466,13 @@ export class Monkey {
       testPlan = await plan(siteMap, this.plannerLLM, opts.plan);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const fallback = groundedTestPlan(
+      const fallback = markPlannerFallback(groundedTestPlan(
         siteMap,
         opts.plan?.maxFlows ?? 6,
         `Planner failed after exploration: ${msg}`,
         opts.plan?.focus,
-      );
+      ), msg);
+      console.warn(`[monkeytester] planner fallback: ${truncate(msg, 300)}`);
       yield { type: 'error', phase: 'planner', message: msg };
       if (fallback.flows.length === 0) return;
       testPlan = fallback;
@@ -500,4 +506,47 @@ function finishEmpty(startUrl: string, pagesVisited: number | undefined, notes?:
 
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+function markPlannerFallback(plan: TestPlan, reason: string): TestPlan {
+  return {
+    ...plan,
+    plannerFallback: true,
+    plannerFallbackReason: truncate(reason, 400),
+  };
+}
+
+function withRunWarnings(run: RunResult, siteMap: SiteMap, plan: TestPlan): RunResult {
+  const warnings = [...(siteMap.warnings ?? [])];
+  if (plan.plannerFallback) {
+    const line = plan.plannerFallbackReason
+      ? `Planner used the grounded fallback. ${plan.plannerFallbackReason}`
+      : 'Planner used the grounded fallback.';
+    warnings.push(line);
+  }
+  if (warnings.length === 0) return run;
+  return { ...run, warnings };
+}
+
+/**
+ * Planning has its own budget. `undefined` waits for the model. `0` skips
+ * it so the checks keep the reserve. A slow model rejects into the caller's
+ * grounded fallback instead of holding the run until the checks are starved.
+ */
+async function planWithinBudget(limitMs: number | undefined, work: () => Promise<TestPlan>): Promise<TestPlan> {
+  if (limitMs === undefined) return work();
+  if (limitMs <= 0) {
+    throw new Error('Planner skipped: no time left before the checks.');
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`Planner exceeded its ${limitMs}ms budget. Checks kept the remaining time.`));
+    }, limitMs);
+  });
+  try {
+    return await Promise.race([work(), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

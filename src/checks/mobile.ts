@@ -19,10 +19,18 @@ export interface TapTarget {
 export interface MobileSnapshot {
   overflow: number;
   targets: TapTarget[];
+  /**
+   * False when the page has no viewport meta (a desktop layout on purpose).
+   * Overflow is then a suggestion, not a bug. Omitted keeps the previous
+   * "overflow is a bug" rule for callers that have not read the tag.
+   */
+  hasViewport?: boolean;
 }
 
 export interface MobileJudgement {
   bugs: string[];
+  /** Overflow on a page with no viewport meta. Not a bug. */
+  suggestions: string[];
   info: string[];
 }
 
@@ -31,9 +39,12 @@ const TAP_MIN_PX = 24;
 
 export function judgeMobile(snapshot: MobileSnapshot): MobileJudgement {
   const bugs: string[] = [];
+  const suggestions: string[] = [];
   const info: string[] = [];
   if (snapshot.overflow > OVERFLOW_BUG_PX) {
-    bugs.push(`The page is ${Math.round(snapshot.overflow)}px wider than the 375px screen.`);
+    const line = `The page is ${Math.round(snapshot.overflow)}px wider than the 375px screen.`;
+    if (snapshot.hasViewport === false) suggestions.push(line);
+    else bugs.push(line);
   } else if (snapshot.overflow > 8) {
     info.push(`Horizontal overflow is ${Math.round(snapshot.overflow)}px, within the scrollbar allowance.`);
   }
@@ -51,13 +62,15 @@ export function judgeMobile(snapshot: MobileSnapshot): MobileJudgement {
     const sample = tiny.slice(0, 3).map(target => `"${target.name}" (${Math.round(target.width)}×${Math.round(target.height)})`).join(', ');
     bugs.push(`Tap targets under ${TAP_MIN_PX}px: ${sample}.`);
   }
-  return { bugs, info };
+  return { bugs, suggestions, info };
 }
 
 /** Read in the page. Must not close over Node values; Playwright serializes it. */
 export function readMobileInPage(): MobileSnapshot {
   const doc = document.documentElement;
   const overflow = Math.max(0, doc.scrollWidth - doc.clientWidth);
+  const viewport = document.querySelector('meta[name="viewport"]');
+  const hasViewport = Boolean((viewport?.getAttribute('content') || '').trim());
   const nodes = document.querySelectorAll('a, button, input, select, textarea, [role="button"]');
   const targets: TapTarget[] = [];
   for (const node of Array.from(nodes)) {
@@ -74,5 +87,5 @@ export function readMobileInPage(): MobileSnapshot {
       .slice(0, 80);
     targets.push({ name, width: rect.width, height: rect.height, tag: el.tagName.toLowerCase() });
   }
-  return { overflow, targets };
+  return { overflow, targets, hasViewport };
 }

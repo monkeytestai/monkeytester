@@ -78,7 +78,7 @@ export async function runAuthCheck(
       await page.locator('[role="alert"]').filter({ hasText: /\S/ }).first().waitFor({ timeout: 3_000 }).catch(() => {});
     }
     await flushStepEvents(page);
-    const fault = hardFault(evidence, stepIndex);
+    const fault = hardFault(evidence, stepIndex, page.url());
     if (fault) return fault;
     const after = page.url();
     if (check === 'empty_submit' || check === 'invalid_email') {
@@ -261,10 +261,11 @@ async function blockedControl(page: Page): Promise<boolean> {
   return count > 0;
 }
 
-function hardFault(evidence: StepEvidence, stepIndex: number): AuthCheckOutcome | undefined {
+function hardFault(evidence: StepEvidence, stepIndex: number, pageUrl: string): AuthCheckOutcome | undefined {
   const oracle = oracleFromEvidence(
     evidence.pageErrorsByStep.get(stepIndex) || [],
     evidence.networkByStep.get(stepIndex) || [],
+    pageUrl,
   );
   if (!oracle) return undefined;
   if (oracle.error === 'http-404') return undefined;
