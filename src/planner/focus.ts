@@ -12,6 +12,9 @@ import { isSearchBox } from './forms.js';
 
 const CTA_RE = /\b(get started|sign up|signup|apply|buy now|contact|book|subscribe|try|start free|shop now|add to|search|send|continue|checkout|donate|join)\b/i;
 
+/** Non-submit controls on an auth page that Quick pass may still exercise. */
+const AUTH_CTA_RE = /\b(sign[\s-]*up|signup|register|create an account|create account|forgot|reset password)\b/i;
+
 export function applyFormsSearchCtaFocus(
   flows: TestFlow[],
   siteMap: SiteMap,
@@ -107,18 +110,25 @@ function primaryCtas(siteMap: SiteMap, flows: TestFlow[]): TestFlow[] {
   const found: { page: SiteMapPage; label: string; score: number }[] = [];
   const seen = new Set<string>();
   for (const page of siteMap.pages) {
-    if (page.authGated || looksLikeAuthUrl(page.url)) continue;
+    const authPage = page.authGated || looksLikeAuthUrl(page.url);
     const submits = new Set(
       (page.forms ?? []).map(form => (form.submitLabel || '').trim().toLowerCase()).filter(Boolean),
     );
     for (const control of page.controls ?? []) {
-      if (control.kind !== 'button' || control.disabled) continue;
+      if (control.disabled) continue;
       const label = control.label.trim();
       if (!label || submits.has(label.toLowerCase())) continue;
-      const key = label.toLowerCase();
+      if (authPage) {
+        if (control.kind === 'button' && /\b(sign[\s-]*in|log[\s-]*in|submit)\b/i.test(label)) continue;
+        if (!AUTH_CTA_RE.test(label)) continue;
+      } else if (control.kind !== 'button') {
+        continue;
+      }
+      const key = `${page.url}|${label.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      found.push({ page, label, score: CTA_RE.test(label) ? 2 : 1 });
+      const score = authPage ? 3 : (CTA_RE.test(label) ? 2 : 1);
+      found.push({ page, label, score });
     }
   }
   found.sort((a, b) => b.score - a.score);

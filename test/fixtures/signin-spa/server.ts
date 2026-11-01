@@ -99,7 +99,7 @@ function handle(req: IncomingMessage, res: ServerResponse, countLogin: () => voi
       <p>Tell us the email on the account and we will send a reset link. This form is not submitted by the test.</p>
       <form id="forgot">
         <label for="reset-email">Email</label>
-        <input id="reset-email" name="email" type="email" />
+        <input id="reset-email" name="email" type="email" autocomplete="email" />
         <button type="button">Send reset link</button>
       </form>
     `);
@@ -112,7 +112,7 @@ function handle(req: IncomingMessage, res: ServerResponse, countLogin: () => voi
       <p>Sign up for a casting account. The test must not submit this form.</p>
       <form id="signup">
         <label for="signup-email">Email</label>
-        <input id="signup-email" name="email" type="email" />
+        <input id="signup-email" name="email" type="email" autocomplete="email" />
         <button type="button">Create account</button>
       </form>
       <p><a href="/?mode=signin">Sign in</a></p>
@@ -180,5 +180,5 @@ function handle(req: IncomingMessage, res: ServerResponse, countLogin: () => voi
 
 function sendHtml(res: ServerResponse, title: string, body: string, status = 200): void {
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
-  res.end(`<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`);
+  res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="${title}"><title>${title}</title><style>body{font:16px/1.4 sans-serif;margin:16px;max-width:100%}a,button,input,[role=link]{min-height:40px;min-width:44px;display:inline-block}</style></head><body>${body}</body></html>`);
 }

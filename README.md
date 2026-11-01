@@ -86,7 +86,7 @@ export GEMINI_API_KEY="paste-your-key"
 npx monkeytest run https://example.com --depth basic
 ```
 
-`--depth basic` is the free **Quick pass**: at most 6 pages and 4 flows, biased toward forms, search, and primary buttons. `standard` and `deep` are the broader presets. `--max` and `--flows` still override the preset.
+`--depth basic` is the free **Quick pass**: 6 pages, 5 LLM flows, and deterministic page checks outside that budget, with a 120 second cap. `standard` and `deep` are the broader presets. `--max` and `--flows` still override the page and flow caps. Import `BASIC_PRESET` from the package for the same numbers.
 
 A finished run includes:
 

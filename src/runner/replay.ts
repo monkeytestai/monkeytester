@@ -20,6 +20,7 @@ import type {
   TestFlow,
   TestStep,
   TraceStep,
+  TraceTool,
 } from '../types.js';
 import {
   buildLocator,
@@ -30,6 +31,8 @@ import {
   type ResolvedAction,
 } from './actions.js';
 import { createFlowTimeout } from './timeout.js';
+import { isPageCheck } from '../checks/plan.js';
+import { replayPageCheck } from '../checks/execute.js';
 import { applyPassedOracles, attachStepEvidence, flushStepEvents } from './evidence.js';
 import { collectOrigins, outcomeWithSameOrigin5xx, promoteRecordedSteps } from './http5xx.js';
 import { resolveFlowStatus } from './flowStatus.js';
@@ -170,7 +173,7 @@ async function replayFlow(
       if (signal.aborted) throw new Error('flow aborted');
       evidence.stepIndex = recorded.index;
 
-      if (failed){
+      if (failed && recorded.tool !== 'check'){
         const blocked = blockedResult(recorded, 'Earlier step failed; not attempted.');
         blocked.screenshotPath = await shot(page, opts.screenshotsDir, trace.flowId, recorded.index, 'blocked');
         steps.push(blocked);
@@ -181,10 +184,10 @@ async function replayFlow(
       const startedAt = new Date().toISOString();
       const stepStart = Date.now();
       const played = await playStep(page, trace, recorded, opts, stepTimeout);
-      if (opts.strictOracles) {
+      if (recorded.tool !== 'check' && opts.strictOracles) {
         played.outcome = await applyPassedOracles(page, evidence, recorded.index, played.outcome);
       }
-      if (opts.failOn5xx) {
+      if (recorded.tool !== 'check' && opts.failOn5xx) {
         if (!opts.strictOracles) await flushStepEvents(page);
         played.outcome = outcomeWithSameOrigin5xx(
           played.outcome,
@@ -231,8 +234,10 @@ async function replayFlow(
         resolution: played.resolution,
       });
 
-      if (result.status === 'failed'){
+      if (result.status === 'failed' && recorded.tool !== 'check'){
         failed = true;
+        failureReason = result.error || result.observation;
+      } else if (result.status === 'failed' && !failureReason) {
         failureReason = result.error || result.observation;
       }
     }
@@ -263,6 +268,7 @@ async function replayFlow(
     startUrl: trace.startUrl,
     status,
     failureReason,
+    ...(trace.severityIfFails ? { severityIfFails: trace.severityIfFails } : {}),
     steps,
     durationMs: Date.now() - started,
     bugIds: [],
@@ -280,7 +286,7 @@ async function replayFlow(
 }
 
 interface PlayedStep {
-  action: ResolvedAction;
+  action: { tool: string; target?: string; value?: string; locator?: ResolvedAction['locator']; rationale?: string };
   locator: TraceStep['locator'];
   outcome: Awaited<ReturnType<typeof executeAction>>;
   resolution: 'recorded' | 'healed';
@@ -293,6 +299,7 @@ async function playStep(
   opts: ReplayOptions,
   timeoutMs: number,
 ): Promise<PlayedStep> {
+  if (recorded.tool === 'check') return playRecordedCheck(page, recorded, timeoutMs);
   if (!needsElement(recorded)){
     const action = actionFromRecorded(recorded);
     const outcome = await executeAction(page, action, timeoutMs, { strictOracles: opts.strictOracles });
@@ -388,10 +395,41 @@ async function healStep(
   return resolveAction(llm, flow, step, skeleton);
 }
 
+async function playRecordedCheck(page: Page, recorded: TraceStep, timeoutMs: number): Promise<PlayedStep> {
+  const kind = recorded.value;
+  const url = recorded.locator?.target || recorded.urlAfter;
+  if (!isPageCheck(kind) || !url) {
+    return {
+      action: { tool: 'check', target: url },
+      locator: recorded.locator,
+      resolution: 'recorded',
+      outcome: {
+        status: 'skipped',
+        observation: 'Page check excluded from replay.',
+      },
+    };
+  }
+  const outcome = await replayPageCheck(page, kind, url, timeoutMs);
+  return {
+    action: { tool: 'check', target: url, value: kind },
+    locator: recorded.locator ?? { strategy: 'css', target: url },
+    resolution: 'recorded',
+    outcome: {
+      status: outcome.status,
+      observation: outcome.observation,
+      ...(outcome.error ? { error: outcome.error } : {}),
+    },
+  };
+}
+
 function needsElement(step: TraceStep): boolean {
-  if (step.tool === 'goto' || step.tool === 'noop' || step.tool === 'assert_text') return false;
+  if (step.tool === 'goto' || step.tool === 'noop' || step.tool === 'assert_text' || step.tool === 'check') return false;
   if (step.tool === 'press' && !step.locator) return false;
   return true;
+}
+
+function actionTool(step: TraceStep): Exclude<TraceTool, 'check'> {
+  return step.tool === 'check' ? 'noop' : step.tool;
 }
 
 function actionFromRecorded(step: TraceStep): ResolvedAction {
@@ -409,7 +447,7 @@ function actionFromRecorded(step: TraceStep): ResolvedAction {
   }
   const locator = step.locator;
   return {
-    tool: step.tool,
+    tool: actionTool(step),
     locator: locator?.strategy === 'testid' ? 'testid' : (locator?.strategy || 'css'),
     target: locator?.target || '',
     value: step.value,
@@ -427,21 +465,22 @@ async function firstMatch(page: Page, step: TraceStep): Promise<ResolvedAction |
     candidates.push(action);
   };
 
-  if (locator.testId) push({ tool: step.tool, locator: 'testid', target: locator.testId, value: step.value });
+  const tool = actionTool(step);
+  if (locator.testId) push({ tool, locator: 'testid', target: locator.testId, value: step.value });
   if (locator.role && (locator.name || locator.target)){
     const name = locator.name || locator.target;
-    push({ tool: step.tool, locator: 'role', target: `${locator.role}:${name}`, value: step.value });
+    push({ tool, locator: 'role', target: `${locator.role}:${name}`, value: step.value });
   }
-  if (locator.label) push({ tool: step.tool, locator: 'label', target: locator.label, value: step.value });
-  if (locator.placeholder) push({ tool: step.tool, locator: 'placeholder', target: locator.placeholder, value: step.value });
-  if (locator.text) push({ tool: step.tool, locator: 'text', target: locator.text, value: step.value });
-  if (locator.css) push({ tool: step.tool, locator: 'css', target: locator.css, value: step.value });
+  if (locator.label) push({ tool, locator: 'label', target: locator.label, value: step.value });
+  if (locator.placeholder) push({ tool, locator: 'placeholder', target: locator.placeholder, value: step.value });
+  if (locator.text) push({ tool, locator: 'text', target: locator.text, value: step.value });
+  if (locator.css) push({ tool, locator: 'css', target: locator.css, value: step.value });
   if (locator.strategy === 'css' && locator.target && locator.target !== locator.css){
-    push({ tool: step.tool, locator: 'css', target: locator.target, value: step.value });
+    push({ tool, locator: 'css', target: locator.target, value: step.value });
   }
   if (locator.strategy && locator.strategy !== 'css' && locator.target){
     push({
-      tool: step.tool,
+      tool,
       locator: locator.strategy,
       target: locator.strategy === 'role' && locator.role && locator.name
         ? `${locator.role}:${locator.name}`

@@ -18,6 +18,7 @@ import { replayTraces, type ReplayOptions } from './runner/replay.js';
 import { triage, triagePolished } from './triager/index.js';
 import { applyPlannerVerdict } from './planner/verdict.js';
 import { attachRunOutcome, countPublicScreens } from './outcome.js';
+import { BASIC_PRESET } from './depth.js';
 import { verifyBugs, type VerifyOptions, type VerifyReport } from './verify/index.js';
 import { EventBus, noopBus } from './events.js';
 import type {
@@ -49,6 +50,12 @@ export interface MonkeyConfig {
    * the caller passes it. `Monkey` passes the constructor value through.
    */
   failOn5xx?: boolean;
+  /**
+   * Planner model id. Does not change the explorer (per-page summaries) or
+   * the runner. gpt-4o-mini stays the summary default when the explorer
+   * config uses the cheap preset.
+   */
+  plannerModel?: string;
 }
 
 /**
@@ -106,7 +113,9 @@ export class Monkey {
   constructor(config: MonkeyConfig){
 
     this.explorerLLM = createLLM(config.llm.explorer);
-    this.plannerLLM  = createLLM(config.llm.planner);
+    this.plannerLLM  = createLLM(config.plannerModel
+      ? { ...config.llm.planner, model: config.plannerModel }
+      : config.llm.planner);
     // Runner picks its own LLM if provided; otherwise it reuses the planner.
     // Most teams will want a *cheaper* runner (per-step tool resolution is
     // hot-path) and a smarter planner (one-shot, high-stakes design call).
@@ -133,7 +142,11 @@ export class Monkey {
     const events = opts.events ?? noopBus();
 
     const siteMap = await explore(startUrl, this.explorerLLM, { ...opts.explore, events });
-    const testPlan = await plan(siteMap, this.plannerLLM, { ...opts.plan, events });
+    const testPlan = await plan(siteMap, this.plannerLLM, {
+      ...opts.plan,
+      maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
+      events,
+    });
     return { siteMap, plan: testPlan };
 
   }
@@ -151,12 +164,22 @@ export class Monkey {
   ): Promise<{ siteMap: SiteMap; plan: TestPlan; run: RunResult }> {
 
     const events = opts.events ?? noopBus();
+    const budgetMs = opts.run.totalBudgetMs;
+    const deadlineAt = opts.run.deadlineAt ?? (budgetMs ? Date.now() + budgetMs : undefined);
 
-    const siteMap = await explore(startUrl, this.explorerLLM, { ...opts.explore, events });
+    const siteMap = await explore(startUrl, this.explorerLLM, {
+      ...opts.explore,
+      events,
+      pageTimeoutMs: opts.explore?.pageTimeoutMs ?? (budgetMs ? BASIC_PRESET.pageTimeoutMs : undefined),
+    });
 
     let testPlan: TestPlan;
     try {
-      testPlan = await plan(siteMap, this.plannerLLM, { ...opts.plan, events });
+      testPlan = await plan(siteMap, this.plannerLLM, {
+        ...opts.plan,
+        maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
+        events,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       events.emit({
@@ -202,6 +225,7 @@ export class Monkey {
       rawRun = await runPlan(testPlan, this.runnerLLM, {
         ...opts.run,
         events,
+        deadlineAt,
         strictOracles: opts.run.strictOracles ?? this.strictOracles,
         failOn5xx: opts.run.failOn5xx ?? this.failOn5xx,
       });

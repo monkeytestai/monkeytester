@@ -342,13 +342,16 @@ function elementPhrase(step: StepResult): string {
 function inferSeverity(flow: FlowResult, step: StepResult): BugReport['severity'] {
   const has5xx = (step.networkFailures || []).some(n => (n.status || 0) >= 500);
   const hasPageError = (step.consoleErrors || []).some(c => c.level === 'error');
+  const crash = (step.error || '').toLowerCase().includes('crash');
 
-  const planned = (flow as unknown as { severityIfFails?: BugReport['severity'] }).severityIfFails;
-  let severity: BugReport['severity'] = planned || 'major';
+  if (step.severity) {
+    if (has5xx || crash) return 'critical';
+    return step.severity;
+  }
 
-  if (has5xx || (step.error || '').toLowerCase().includes('crash')) severity = 'critical';
+  let severity: BugReport['severity'] = flow.severityIfFails || 'major';
+  if (has5xx || crash) severity = 'critical';
   else if (hasPageError && severity === 'minor') severity = 'major';
-
   return severity;
 }
 

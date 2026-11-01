@@ -63,6 +63,7 @@ export function serializeTrace(trace: FlowTrace): FlowTrace {
     ...(trace.description ? { description: trace.description } : {}),
     ...(trace.kind ? { kind: trace.kind } : {}),
     ...(trace.expectation ? { expectation: trace.expectation } : {}),
+    ...(trace.severityIfFails ? { severityIfFails: trace.severityIfFails } : {}),
     steps: trace.steps.map(serializeTraceStep),
   };
 }

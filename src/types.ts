@@ -238,6 +238,12 @@ export type AuthCheck =
   | 'forgot_link'
   | 'signup_link';
 
+/**
+ * Deterministic page check. Set on engine steps whose flow id is `check-*`.
+ * The runner records `tool: 'check'` and does not ask a model.
+ */
+export type PageCheck = 'console' | 'http' | 'axe' | 'mobile' | 'meta';
+
 export interface TestStep {
   /** Human-readable instruction the runner / agent should perform. */
   action: string;
@@ -252,6 +258,12 @@ export interface TestStep {
    * Set on engine auth-negative steps (`auth-neg-*`). Omitted on other flows.
    */
   check?: AuthCheck;
+  /**
+   * Set on engine page-check steps (`check-*`). The runner uses `tool: 'check'`.
+   */
+  pageCheck?: PageCheck;
+  /** Absolute URL a page-check step loads. Omitted on model steps. */
+  url?: string;
 }
 
 export interface TestFlow {
@@ -274,6 +286,13 @@ export interface TestPlan {
   flows: TestFlow[];
   /** Free-form notes from the planner — caveats, scoping decisions, etc. */
   notes?: string;
+  /**
+   * Flows the reconciler dropped because they named a page or control the
+   * crawl did not see. Omitted when nothing was dropped. Additive.
+   */
+  droppedFlows?: { id: string; name: string; reason: string }[];
+  /** Wall time of the planner model calls, in milliseconds. Additive. */
+  plannerLatencyMs?: number;
 }
 
 /* ── Run results (output of Runner) ───────────────────────────────────── */
@@ -328,6 +347,11 @@ export interface StepResult {
    * Omitted when capture was skipped. Same shape as `BugReport.element`.
    */
   element?: BugElement;
+  /**
+   * Rank for this step when it should not inherit the flow severity.
+   * A missing autocomplete on a login field is `minor`. Omitted otherwise.
+   */
+  severity?: 'critical' | 'major' | 'minor';
 }
 
 export type FlowStatus = 'passed' | 'failed' | 'blocked' | 'error' | 'inconclusive';
@@ -409,6 +433,11 @@ export interface FlowResult {
   /** Human sentence for this flow, including what to do next. */
   outcome_detail?: string;
   steps: StepResult[];
+  /**
+   * Copied from the plan so triage can rank a bug. Omitted on runs saved
+   * before 0.7.0-beta.2.
+   */
+  severityIfFails?: 'critical' | 'major' | 'minor';
   /** Wall-clock duration in milliseconds. */
   durationMs: number;
   /** BugReport ids that were produced from this flow. */
@@ -508,7 +537,7 @@ export interface NetworkFailureEvidence {
 
 /* ── Action traces (replay) and v2 fingerprints ───────────────────────── */
 
-export type TraceTool = 'click' | 'fill' | 'goto' | 'wait' | 'assert_text' | 'press' | 'noop';
+export type TraceTool = 'click' | 'fill' | 'goto' | 'wait' | 'assert_text' | 'press' | 'noop' | 'check';
 
 export type TraceLocatorStrategy = 'role' | 'text' | 'placeholder' | 'label' | 'testid' | 'css';
 
@@ -568,6 +597,8 @@ export interface FlowTrace {
   kind?: FlowKind;
   startUrl: string;
   expectation?: string;
+  /** Plan severity, so a replay can rank a bug the same way. Additive. */
+  severityIfFails?: 'critical' | 'major' | 'minor';
   steps: TraceStep[];
 }
 

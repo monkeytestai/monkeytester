@@ -73,11 +73,22 @@ export type { DerivedOutcome, OutcomeContext, VerdictFacts } from './outcome.js'
 export { ENGINE_VERSION } from './version.js';
 
 export {
+  BASIC_PRESET,
   DEPTH_PRESETS,
   applyDepthPreset,
   resolveDepthPreset,
 } from './depth.js';
 export type { DepthPreset, DepthPresetName, PlanFocus } from './depth.js';
+
+export {
+  buildPageCheckFlows,
+  isPageCheckFlowId,
+  PAGE_CHECK_SPECS,
+} from './checks/plan.js';
+export type { PageCheckPlan, PageCheckSpec } from './checks/plan.js';
+
+export { MODEL_PRICES, estimateCostUsd, priceForModel } from './llm/prices.js';
+export type { ModelPrice } from './llm/prices.js';
 
 export { valueForInput, numericText } from './runner/actions.js';
 
@@ -126,6 +137,7 @@ export type {
   TestFlow,
   TestStep,
   FlowKind,
+  PageCheck,
   StepResult,
   StepStatus,
   FlowResult,

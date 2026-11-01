@@ -11,8 +11,17 @@
 import type { SiteMap, TestFlow } from '../types.js';
 import { canonicalPageUrl, crawlPathKey, isSameCrawlSite, sameCrawlPage } from '../explorer/queue.js';
 import { isAuthNegativeFlowId } from './authNegative.js';
+import { isPageCheckFlowId } from '../checks/plan.js';
 
 const OAUTH_LABEL = /\b(continue with|sign in with|log in with|login with|sign up with|signup with)\b|\boauth\b|\bsso\b|\baccounts\.google\b|\bgoogle\b|\bfacebook\b|\bgithub\b|\bapple\b|\bmicrosoft\b/i;
+
+const CHECK_OVERLAP: { id: string; pattern: RegExp }[] = [
+  { id: 'check-console', pattern: /\b(console errors?|uncaught exception|page error on load)\b/i },
+  { id: 'check-http', pattern: /\b(broken links?|failed requests?)\b/i },
+  { id: 'check-axe', pattern: /\b(axe-core|wcag audit|accessibility audit)\b/i },
+  { id: 'check-mobile', pattern: /\b(horizontal overflow|tap targets?|375\s*px)\b/i },
+  { id: 'check-meta', pattern: /\b(meta description|viewport meta|document title)\b/i },
+];
 
 export interface DedupeResult {
   flows: TestFlow[];
@@ -22,7 +31,7 @@ export interface DedupeResult {
 export function dedupePlannedFlows(flows: TestFlow[], siteMap: SiteMap): DedupeResult {
   const seen = new Set<string>();
   for (const flow of flows) {
-    if (!isAuthNegativeFlowId(flow.id)) continue;
+    if (!isAuthNegativeFlowId(flow.id) && !isPageCheckFlowId(flow.id)) continue;
     const key = clickKey(flow);
     if (key) seen.add(key);
   }
@@ -30,11 +39,15 @@ export function dedupePlannedFlows(flows: TestFlow[], siteMap: SiteMap): DedupeR
   const kept: TestFlow[] = [];
   const dropped: string[] = [];
   for (const flow of flows) {
-    if (isAuthNegativeFlowId(flow.id)) {
+    if (isAuthNegativeFlowId(flow.id) || isPageCheckFlowId(flow.id)) {
       kept.push(flow);
       continue;
     }
     if (isOffsiteOrOauth(flow, siteMap)) {
+      dropped.push(flow.name);
+      continue;
+    }
+    if (overlapsEngineCheck(flow, flows)) {
       dropped.push(flow.name);
       continue;
     }
@@ -47,6 +60,13 @@ export function dedupePlannedFlows(flows: TestFlow[], siteMap: SiteMap): DedupeR
     kept.push(flow);
   }
   return { flows: kept, dropped };
+}
+
+function overlapsEngineCheck(flow: TestFlow, flows: TestFlow[]): boolean {
+  const text = `${flow.name}\n${flow.description}\n${flow.steps.map(step => step.action).join('\n')}`;
+  return CHECK_OVERLAP.some(item =>
+    flows.some(candidate => candidate.id === item.id) && item.pattern.test(text),
+  );
 }
 
 function clickLabels(flow: TestFlow): string[] {

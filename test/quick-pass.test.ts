@@ -1,28 +1,40 @@
 import { describe, expect, it } from 'vitest';
 import type { LLM } from '../src/llm/index.js';
-import { applyDepthPreset, resolveDepthPreset } from '../src/depth.js';
+import { applyDepthPreset, BASIC_PRESET, resolveDepthPreset } from '../src/depth.js';
 import { plan } from '../src/planner/index.js';
 import type { SiteMap, TestFlow } from '../src/types.js';
 
 const ORIGIN = 'https://shop.example';
 
 describe('Quick pass preset', () => {
-  it('is basic: 6 pages, 4 flows, biased to forms, search, and primary CTAs', () => {
+  it('is basic: 6 pages, 5 LLM flows, page checks outside that budget, 120s', () => {
     const preset = resolveDepthPreset('basic');
     expect(preset).toMatchObject({
       id: 'basic',
       label: 'Quick pass',
-      maxPages: 6,
-      maxFlows: 4,
+      maxPages: BASIC_PRESET.pages,
+      maxFlows: BASIC_PRESET.llmFlows,
       focus: 'forms-search-cta',
+      stepTimeoutMs: BASIC_PRESET.stepTimeoutMs,
+      flowTimeoutMs: BASIC_PRESET.flowTimeoutMs,
+      totalBudgetMs: BASIC_PRESET.totalBudgetMs,
+    });
+    expect(BASIC_PRESET).toMatchObject({
+      pages: 6,
+      llmFlows: 5,
+      engineFlowCaps: { checks: 5, authNegative: 6 },
+      stepTimeoutMs: 10_000,
+      flowTimeoutMs: 25_000,
+      totalBudgetMs: 120_000,
     });
     expect(resolveDepthPreset('quick-pass').id).toBe('basic');
     expect(resolveDepthPreset('Quick pass').label).toBe('Quick pass');
 
     const capped = applyDepthPreset('basic', { maxPages: 8, maxFlows: 6, maxPagesSet: true, maxFlowsSet: false });
     expect(capped.maxPages).toBe(8);
-    expect(capped.maxFlows).toBe(4);
+    expect(capped.maxFlows).toBe(BASIC_PRESET.llmFlows);
     expect(capped.focus).toBe('forms-search-cta');
+    expect(capped.totalBudgetMs).toBe(BASIC_PRESET.totalBudgetMs);
   });
 
   it('keeps a form, a search, and a primary CTA, and drops the disabled control', async () => {
@@ -34,8 +46,10 @@ describe('Quick pass preset', () => {
     };
     const result = await plan(siteMap(), llm, { maxFlows: 4, focus: 'forms-search-cta' });
     const actions = result.flows.flatMap(flow => flow.steps.map(step => step.action)).join('\n');
-    expect(result.flows.length).toBeGreaterThanOrEqual(3);
-    expect(result.flows.length).toBeLessThanOrEqual(4);
+    const budgeted = result.flows.filter(flow => !flow.id.startsWith('check-') && !flow.id.startsWith('auth-neg-'));
+    expect(budgeted.length).toBeGreaterThanOrEqual(3);
+    expect(budgeted.length).toBeLessThanOrEqual(4);
+    expect(result.flows.filter(flow => flow.id.startsWith('check-'))).toHaveLength(5);
     expect(actions).toContain('Send message');
     expect(actions.toLowerCase()).toContain('search');
     expect(actions).toContain('Get started');

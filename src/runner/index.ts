@@ -60,6 +60,8 @@ import { resolveFlowStatus } from './flowStatus.js';
 import { ENGINE_VERSION } from '../version.js';
 import { isAuthNegativeFlowId } from '../planner/authNegative.js';
 import { runAuthCheck } from './authNegative.js';
+import { isPageCheckFlowId } from '../checks/plan.js';
+import { executePageChecks } from '../checks/execute.js';
 
 export interface RunnerOptions {
   /**
@@ -87,6 +89,17 @@ export interface RunnerOptions {
   failOn5xx?: boolean;
   /** Hard cap on a flow's wall-clock time. Default 180s. */
   flowTimeoutMs?: number;
+  /**
+   * Epoch ms for the whole run. Page checks still waiting after this are
+   * skipped. They are not failed as a timeout.
+   */
+  deadlineAt?: number;
+  /**
+   * Whole-run budget in milliseconds. `Monkey` turns this into `deadlineAt`
+   * at the start of the run so crawl time counts. Direct `runPlan` callers
+   * can pass `deadlineAt` instead.
+   */
+  totalBudgetMs?: number;
   /** Launch the browser headless. Default true. */
   headless?: boolean;
   /**
@@ -133,9 +146,60 @@ export async function runPlan(
 
   try {
 
+    const checkFlows = plan.flows.filter(flow => isPageCheckFlowId(flow.id));
+    const checksRan = new Set<string>();
+
     for (let fi = 0; fi < plan.flows.length; fi++){
 
       const flow = plan.flows[fi];
+
+      if (isPageCheckFlowId(flow.id)) {
+        if (checksRan.has(flow.id)) continue;
+        const pending = checkFlows.filter(item => !checksRan.has(item.id));
+        for (const item of pending) checksRan.add(item.id);
+        const batch = await executePageChecks(browser, pending, {
+          screenshotsDir,
+          stepTimeoutMs: stepTimeout,
+          deadlineAt: opts.deadlineAt,
+          onFlowStart: item => {
+            const index = plan.flows.findIndex(candidate => candidate.id === item.id);
+            opts.onEvent?.({ type: 'flow.start', flowId: item.id, flow: item });
+            events.emit({
+              phase: 'runner', type: 'run.flow_start',
+              message: `Flow ${index + 1}/${plan.flows.length}: ${item.name}`,
+              data: {
+                flowId: item.id,
+                flowIndex: index + 1,
+                flowsTotal: plan.flows.length,
+                name: item.name,
+                kind: item.kind,
+                startUrl: item.startUrl,
+                stepsTotal: item.steps.length,
+              },
+            });
+          },
+          onStep: (item, result) => {
+            opts.onEvent?.({ type: 'step.complete', flowId: item.id, index: result.index, result });
+          },
+          onFlowComplete: result => {
+            const index = plan.flows.findIndex(candidate => candidate.id === result.flowId);
+            opts.onEvent?.({ type: 'flow.complete', flowId: result.flowId, result });
+            events.emit({
+              phase: 'runner', type: 'run.flow_complete',
+              message: `Flow ${index + 1}/${plan.flows.length} ${result.status}: ${result.name}`,
+              data: {
+                flowId: result.flowId,
+                flowIndex: index + 1,
+                flowsTotal: plan.flows.length,
+                status: result.status,
+                failureReason: result.failureReason || null,
+              },
+            });
+          },
+        });
+        flows.push(...batch);
+        continue;
+      }
 
       // auth_required flows aren't currently runnable — record a neat
       // "blocked: needs credentials" entry instead of erroring out.
@@ -773,6 +837,7 @@ function finaliseFlow(
     kind: flow.kind,
     startUrl: flow.startUrl,
     expectation: flow.expectation,
+    severityIfFails: flow.severityIfFails,
     steps: traceSteps,
   });
 
@@ -784,6 +849,7 @@ function finaliseFlow(
     startUrl: flow.startUrl,
     status,
     failureReason,
+    severityIfFails: flow.severityIfFails,
     steps,
     durationMs: Date.now() - started,
     bugIds: [],                                  // populated by triager
