@@ -1,214 +1,231 @@
 <p align="center">
-  <img src="docs/public/hero.jpg" alt="monkeytester — an AI agent that uses your site like a real user and reports the bugs" width="820" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/public/banner-dark.svg" />
+    <img alt="monkeytester. Bugs your tests didn't think to look for. Point it at a URL. It finds the bugs, then proves you fixed them." src="docs/public/banner-light.svg" width="1280" />
+  </picture>
 </p>
 
-<h1 align="center">monkeytester</h1>
+<h1 align="center">Bugs your tests didn't think to look for.</h1>
 
 <p align="center">
-  <strong>An AI agent that uses your site like a real user — and reports the bugs.</strong><br />
-  Open source. Playwright + your favourite LLM. First result in about a minute, no API key.
+  Point it at a URL. It finds the bugs, then proves you fixed them.<br />
+  Open source. Playwright and your LLM. Node.js 20+.
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@monkeytestai/monkeytester"><img src="https://img.shields.io/npm/v/@monkeytestai/monkeytester" alt="npm @monkeytestai/monkeytester" /></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen" alt="Node 20+" /></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen" alt="Node.js 20+" /></a>
   <a href="https://docs.monkeytest.ai"><img src="https://img.shields.io/badge/docs-docs.monkeytest.ai-7c3aed" alt="Documentation" /></a>
   <a href="https://github.com/monkeytestai/monkeytester/actions/workflows/ci.yml"><img src="https://github.com/monkeytestai/monkeytester/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/monkeytestai/monkeytester/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-64748b" alt="AGPL-3.0" /></a>
 </p>
 
 <p align="center">
-  <a href="https://docs.monkeytest.ai/guide/quick-start">Quick start</a> ·
-  <a href="https://docs.monkeytest.ai/guide/why-monkeytest">Why monkeytest</a> ·
-  <a href="https://docs.monkeytest.ai/guide/llm-providers">LLM providers</a> ·
-  <a href="https://docs.monkeytest.ai/guide/cost-and-depth">Cost & depth</a> ·
-  <a href="https://docs.monkeytest.ai/reference/overview">API</a> ·
+  <a href="https://docs.monkeytest.ai/getting-started/quick-start">Quick start</a> ·
+  <a href="https://docs.monkeytest.ai/guides/how-is-this-different">How is this different?</a> ·
+  <a href="https://docs.monkeytest.ai/reference/cli">CLI</a> ·
+  <a href="https://docs.monkeytest.ai/guides/llm-providers">LLM providers</a> ·
   <a href="https://monkeytest.ai">Cloud</a>
 </p>
 
----
+`@monkeytestai/monkeytester` is an AGPL-3.0 TypeScript engine. The CLI is `monkeytest`. npm `latest` is **0.6.1**. Pre-release builds, including the tree on `main`, publish under the **`next`** tag.
 
-Most "AI testing" tools stop at *finding* bugs. monkeytester is built around the **full loop**:
+## Quick start
 
-> **find → fix → re-run the same plan → diff what changed.**
-
-Point it at a URL. It crawls a few pages, asks an LLM *"what would a real user try here?"*, runs those flows step by step, and writes a stable, versioned `plan.json` you can commit to git. Tomorrow, after you ship a fix, **`monkeytest rerun`** re-executes the *exact same* plan — no LLM cost for re-planning, no plan drift between runs — and **`monkeytest diff`** tells you what's new, what's fixed, what regressed.
+### 1. npx
 
 ```bash
-npx monkeytest run https://example.com   # first run: explore + plan + execute, exit 1 if bugs
-# ...you ship a fix...
-npx monkeytest rerun                     # re-runs the same plan, exit 1 if any blocking bug remains
-npx monkeytest diff prev latest          # 2 fixed, 0 new, 1 still broken, 0 regressed (net -2)
+npx --yes @monkeytestai/monkeytester@latest --help
 ```
 
-Those subcommands come from `npm install @monkeytestai/monkeytester`. A clone runs them with `node dist/cli.js`.
+That prints the commands. It does not need an API key or a browser.
 
-Or programmatically — same primitives:
-
-```ts
-import { Monkey, autoLLMConfig, savePlan, loadPlan, diffRuns, saveRun } from '@monkeytestai/monkeytester';
-
-const monkey = new Monkey({ llm: autoLLMConfig({ quality: 'balanced' }) });
-
-// Day 1 — discover
-const { plan, run: a } = await monkey.executeAndTriage('https://example.com', {
-  run: { screenshotsDir: '.monkeytest/shots' },
-});
-savePlan(plan, { dir: '.monkeytest' });
-saveRun(a, { dir: '.monkeytest' });
-
-// Day 2 — verify after fixing
-const stored = loadPlan('.monkeytest');
-const { run: b } = await monkey.runFromPlan(stored.plan, {
-  run: { screenshotsDir: '.monkeytest/shots' },
-});
-saveRun(b, { dir: '.monkeytest' });
-
-const diff = diffRuns(a, b);
-console.log(`${diff.stats.fixed} fixed, ${diff.stats.regressed} regressed`);
-```
-
-No fixtures, no page objects, no recorders. Read [the bug-finding loop](https://docs.monkeytest.ai/guide/the-bug-finding-loop) for the full story. The import above resolves from [`@monkeytestai/monkeytester`](https://www.npmjs.com/package/@monkeytestai/monkeytester) on npm. See [why monkeytest](https://docs.monkeytest.ai/guide/why-monkeytest) for how it sits next to similar tools.
-
-## Install
-
-Node.js 20 or newer.
+### 2. Install
 
 ```bash
 npm install @monkeytestai/monkeytester
 npx playwright install chromium
 ```
 
-[@monkeytestai/monkeytester](https://www.npmjs.com/package/@monkeytestai/monkeytester) **0.6.1** is the published package. The CLI is `npx monkeytest`.
+pnpm, yarn, and bun install the same package (`pnpm add`, `yarn add`, `bun add`). Playwright downloads its own Chromium. These docs match `main`. For that build:
 
 ```bash
-export GEMINI_API_KEY="paste-your-key"
+npm install @monkeytestai/monkeytester@next
+```
+
+### 3. First run
+
+```bash
+export OPENAI_API_KEY="sk-..."
 npx monkeytest run https://example.com --depth basic
 ```
 
-`--depth basic` is the free **Quick pass**: 6 pages, 5 LLM flows, and deterministic page checks outside that budget, with a 120 second cap. `standard` and `deep` are the broader presets. `--max` and `--flows` still override the page and flow caps. Import `BASIC_PRESET` from the package for the same numbers.
+With an OpenAI key, the default model is `gpt-4o-mini`. If several keys are set, auto-detect uses the first of: `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY`, then `OPENAI_COMPATIBLE_BASE_URL`.
 
-A finished run includes:
+`--depth basic` is Quick pass: 6 pages, 5 LLM flows, page checks outside that budget, and a 120 second cap. About 10 cases, usually 1–2 minutes. `--max` and `--flows` override the page and flow caps.
 
-| Field | Values |
-| ----- | ------ |
-| `outcome` | `bugs_found`, `clean`, `inconclusive`, `could_not_test` |
-| `outcome_reason` | Short code such as `automation_error`, `all_flows_skipped`, `site_unreachable`, `login_required`, `no_assertion`, `assertion_unverifiable`. `login_required` is also set on `clean` and `bugs_found` when `public_screens` is `0`. `no_assertion` means the journey had no outcome to verify |
-| `outcome_detail` | A sentence that matches the confirmed bug count, plus a next step. On a login-only site it says deeper journeys need an account |
-| `public_screens` | Number of crawled pages that are not auth-gated. `0` is a login-only site |
-| `engine_version` | Engine that produced the run, for example `0.7.0-beta.4` (`ENGINE_VERSION`) |
-| `suggestions` | Style notes (missing autocomplete, viewport, or description; overflow on a page with no viewport meta) and third-party page errors. Not bugs. Group by `pageUrl`. Omitted from the verdict |
-| `warnings` | Model errors and a planner-fallback line. Not bugs |
-| `signup_attempted`, `signup_verified`, `signup_status`, `signup_reason` | Set when a sign-up form was seen. Without your inbox, status is `not_tested` and reason is `no_inbox`. The package does not include an inbox |
-
-`could_not_test` means nothing was tested. Playwright errors from the runner are `inconclusive`, not bugs. Map these three fields straight onto `audit_run`.
-
-Screenshots are written to `.monkeytest/shots/`. A free Gemini key, or Ollama on localhost, is in the [quick start](https://docs.monkeytest.ai/guide/quick-start), including where `plan.json`, `runs/`, and `shots/` show up, and how `rerun` / `diff` work.
-
-### From a clone (contributors)
-
-The no-key smoke script lives in the repository. It stubs the LLM, crawls `https://example.com`, and prints `OK — engine pipeline is wired correctly.`
+### 4. Read the report
 
 ```bash
-git clone https://github.com/monkeytestai/monkeytester.git && cd monkeytester
-npm install && npm run build
-npx playwright install chromium && node scripts/smoke.mjs
+npx monkeytest report
 ```
 
-`npm run build` writes `dist/cli.js`. The same subcommands are `node dist/cli.js run ...`.
+| Path | What it is |
+| --- | --- |
+| `.monkeytest/plan.json` | The plan. `rerun` replays its trace. |
+| `.monkeytest/runs/<id>.json` | The run: flows, bugs, outcome. |
+| `.monkeytest/shots/` | Page and step PNGs, and one WebM per flow. |
 
-## Docker
+Exit `0` when no blocking bug remains (`minor` does not fail the process). Exit `1` when `run` or `rerun` found a blocking bug, when `diff` found a new or more severe bug, or when `verify` still sees a bug firing. Exit `2` is bad arguments or no provider. Exit `3` is an engine error, including a crawl that opened no pages.
 
-A multi-stage image compiles this package and leaves it at `/opt/monkeytester` (`dist/`, `package.json`, and production dependencies) so another image can copy it, or so a sibling checkout can satisfy `file:../monkeytester`. `mtaiserver` still uses `file:../monkeytest-core` until that repo is updated. API keys and Playwright browsers are not in the image. Build, the sibling layout, and the pinned hosted SHA are in [DOCKER.md](./DOCKER.md).
+## Demo
+
+> **Not a recording.** A capture of a real `monkeytest run` is not in this repository yet. When it is added, it will be a real run (for example against [bananabeings.com](https://bananabeings.com)). The figure below is a diagram of the loop.
+
+<p align="center">
+  <img alt="Diagram: monkeytest run, you fix the site, monkeytest rerun replays the same trace, monkeytest diff reports what changed. Not a captured session." src="docs/public/loop.svg" width="720" />
+</p>
+
+## What you get
+
+Page checks run without a model call. The five are console errors, same-site failed requests and broken links, axe-core WCAG A/AA, mobile overflow and tap targets at 375px, and title / description / lang / viewport / h1. Serious or critical axe violations are bugs. A flow is `passed` only when its outcome check verifies. No check is `inconclusive` with reason `no_assertion`. A check that cannot be decided is `assertion_unverifiable`.
+
+The contributor smoke script stubs the LLM and crawls `https://example.com`. It does not call a provider. From a clone, after `npm run build` and `npx playwright install chromium`:
 
 ```bash
-docker build -t monkeytester:local .
-docker run --rm monkeytester:local --help
+node scripts/smoke.mjs
 ```
 
-## Why monkeytester?
+This is the output of `node scripts/smoke.mjs` on this repository after `npm run build`. The duration is from that run.
 
-- **Closed loop, not just discovery.** Stable JSON plans + bug fingerprints + a real `rerun` and `diff` — built in, not bolted on.
-- **Drop-in, not framework.** One library, one constructor. No DSL.
-- **Bring your own LLM.** OpenAI, Gemini, Anthropic, Mistral, Groq, or any OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter). Pick a different model **per phase**.
-- **Real evidence.** Per-step screenshots, optional WebM video, console + network failures, and bug reports with stable fingerprints across runs.
-- **Live activity stream.** Subscribe to a typed `EventBus` and pipe explorer / planner / runner / triager events into your own dashboard.
-- **Resilient.** If the planner fails, you still get explorer screenshots. If a flow blows up, you still get the steps that ran. Nothing is all-or-nothing.
-- **Hackable, typed, observable.** Pure TypeScript, zod-validated LLM output, structured `RunResult` you can serialise.
+```text
+  · visited https://example.com/ — Static placeholder page used as the canonical example domain.
 
-## A comprehensive example
+[explore] done in 1.1 s
+  pages: 1 failures: 0
+  siteType: placeholder
+
+[plan] flows: 6
+  - [happy_path] Visit the example.com homepage (2 steps)
+  - [visual] Console errors on load (1 steps)
+  - [visual] Broken requests and links (1 steps)
+  - [accessibility] WCAG A and AA (1 steps)
+  - [visual] Mobile layout (1 steps)
+  - [accessibility] Page metadata (1 steps)
+
+OK — engine pipeline is wired correctly.
+```
+
+When one confirmed bug is filed, the engine's `outcome_detail` is this sentence (asserted by the outcome tests, not a sample report):
+
+```text
+Found 1 confirmed bug. Open the top one and confirm it on the site before treating this run as healthy.
+```
+
+On a login-only crawl (`public_screens` is `0`) the same case says deeper journeys need an account, and `outcome_reason` is `login_required`.
+
+## How is this different?
+
+| | Who chooses the cases | What comes back |
+| --- | --- | --- |
+| **monkeytester** | The engine, from the pages it crawled | A stored plan, an honest outcome, then `rerun` and `diff` |
+| **[Playwright](https://playwright.dev/docs/intro)** | You do. Playwright Test is an end-to-end framework for the tests you write. | A report for those scripts |
+| **[browser-use](https://github.com/browser-use/browser-use)** | You do. Its README describes an open-source browser agent that carries out a task you give it. | The result of that task |
+| **Recorders and other scripted QA tools** | You do, by recording a session or writing the steps | A replay of those steps |
+
+monkeytester decides what to try. A pass requires a verified outcome check, otherwise the result is `inconclusive`. `monkeytest rerun` replays the stored trace, and `monkeytest diff` compares fingerprints. More on the [comparison page](https://docs.monkeytest.ai/guides/how-is-this-different).
+
+## Find, fix, rerun, diff
+
+```bash
+npx monkeytest run https://example.com --depth basic
+# you ship a fix
+npx monkeytest rerun
+npx monkeytest diff prev latest
+```
+
+`rerun` replays the action trace and does not call the LLM. `--heal` may call the model when a stored locator misses. Runs saved before traces existed fall back to re-executing the plan with the LLM. `diff prev latest` compares the previous run to the newest one. The printer's line is `N new, N fixed, N still broken, N regressed (net ±N)`. It exits 1 when a bug is new or more severe.
+
+`monkeytest verify` replays each known bug and prints `fixed`, `still_broken`, `flaky`, `healed`, or `blocked`.
+
+The same loop from the library:
 
 ```ts
-import { Monkey, EventBus } from '@monkeytestai/monkeytester';
+import { Monkey, autoLLMConfig, savePlan, saveRun, loadPlan, diffRuns } from '@monkeytestai/monkeytester';
 
-const events = new EventBus();
-events.on(e => console.log(`[${e.phase}] ${e.type}: ${e.message}`));
-
-// Mix providers per phase: cheap explorer + smart planner + fast runner
-const monkey = new Monkey({
-  llm: {
-    explorer: { provider: 'gemini',    model: 'gemini-flash-lite-latest' },
-    planner:  { provider: 'anthropic', model: 'claude-sonnet-4-5' },
-    runner:   { provider: 'groq',      model: 'llama-3.3-70b-versatile' },
-  },
+const monkey = new Monkey({ llm: autoLLMConfig({ quality: 'balanced' }) });
+const { plan, run: first } = await monkey.executeAndTriage('https://example.com', {
+  run: { screenshotsDir: '.monkeytest/shots' },
 });
+savePlan(plan, { dir: '.monkeytest' });
+saveRun(first, { dir: '.monkeytest' });
 
-const { siteMap, plan, run } = await monkey.executeAndTriage('https://app.example.com', {
-  events,
-  explore: { maxPages: 12, screenshotsDir: '.monkeytest/shots' },
-  plan:    { maxFlows: 6, includeAuthFlows: false },
-  run:     { screenshotsDir: '.monkeytest/shots', headless: true, stepTimeoutMs: 20_000 },
+const stored = loadPlan('.monkeytest');
+const { run: second } = await monkey.runFromPlan(stored.plan, {
+  run: { screenshotsDir: '.monkeytest/shots' },
 });
-
-console.log(`Visited ${siteMap.pages.length} pages, planned ${plan.flows.length} flows.`);
-console.log(`${run.outcome}: ${run.outcome_detail}`);
-
-for (const bug of run.bugs.filter(b => b.severity !== 'minor')){
-  console.error(`- [${bug.severity}] ${bug.title}\n  ${bug.observed}`);
-  console.error(`  evidence: ${bug.evidence.screenshots.length} screenshot(s)`);
-}
+saveRun(second, { dir: '.monkeytest' });
+console.log(diffRuns(first, second).stats);
 ```
 
-## Where it shines
+## CI
 
-- **Pre-release sanity checks** on staging.
-- **PR previews** — run on Vercel/Netlify preview URLs in CI ([recipe](https://docs.monkeytest.ai/guide/ci)).
-- **Daily smoke runs** against prod with cheap models.
-- **Embedding in your own product** — the engine is a library, not a CLI.
+`run` already exits 1 on a blocking bug, so the job fails without a wrapper. Pass your preview URL in. The step below does not wait on a host for you.
 
-## What it isn't
+```yaml
+name: monkeytest
+on: [workflow_dispatch]
+jobs:
+  monkeytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install @monkeytestai/monkeytester
+      - run: npx playwright install --with-deps chromium
+      - run: npx monkeytest run "$PREVIEW_URL" --depth basic
+        env:
+          PREVIEW_URL: https://example.com
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+```
 
-- Not a replacement for **deterministic critical-path E2E tests** — it's a complement.
-- Not a **load tester** or **a11y auditor**.
-- Not magic — quality of bug reports tracks the quality of the LLM you give it.
+Upload `.monkeytest/shots/` and `.monkeytest/runs/` as artifacts when you want the evidence. The longer recipe is in the [CI guide](https://docs.monkeytest.ai/guides/ci).
 
-## Documentation
+## LLM providers
 
-Everything lives at **[docs.monkeytest.ai](https://docs.monkeytest.ai)**:
+One provider per phase, or the same one everywhere. `autoLLMConfig({ quality: 'balanced' })` uses the cheap model for explore and run, and the smart model for the single planning call.
 
-- [Quick start](https://docs.monkeytest.ai/guide/quick-start) — npm install, or a clone for the no-key smoke run, then Gemini or Ollama
-- [Why monkeytest](https://docs.monkeytest.ai/guide/why-monkeytest) — how it compares with nearby tools
-- [The bug-finding loop](https://docs.monkeytest.ai/guide/the-bug-finding-loop) — explore once, run repeatedly, diff
-- [CLI reference](https://docs.monkeytest.ai/reference/cli) — every subcommand and flag
-- [How it works](https://docs.monkeytest.ai/guide/architecture) — the four phases
-- [LLM providers](https://docs.monkeytest.ai/guide/llm-providers) — model picks per provider
-- [Cost & depth](https://docs.monkeytest.ai/guide/cost-and-depth) — what each run costs
-- [Recipes](https://docs.monkeytest.ai/guide/recipes) — battle-tested patterns
-- [Use in CI](https://docs.monkeytest.ai/guide/ci) — GitHub Actions setup
-- [Troubleshooting](https://docs.monkeytest.ai/guide/troubleshooting) — common errors
+| Provider | Flag | Key | Cheap model | Smart model |
+| --- | --- | --- | --- | --- |
+| OpenAI | `openai` | `OPENAI_API_KEY` | `gpt-4o-mini` | `gpt-4o` |
+| Gemini | `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-flash-lite-latest` | `gemini-flash-latest` |
+| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` | `claude-sonnet-4-5` |
+| Mistral | `mistral` | `MISTRAL_API_KEY` | `mistral-small-latest` | `mistral-large-latest` |
+| Groq | `groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` | `llama-3.3-70b-versatile` |
+| OpenAI-compatible | `openai_compatible` | `OPENAI_COMPATIBLE_BASE_URL` | `gpt-4o-mini` | `gpt-4o` |
 
-## MonkeyTest Cloud
+Ollama, vLLM, LM Studio, and OpenRouter use `openai_compatible` and `--base-url`. Model ids are the defaults in `CHEAP_FAST_MODEL` and `SMART_MODEL`. Details, including a local Ollama command: [LLM providers](https://docs.monkeytest.ai/guides/llm-providers).
 
-Don't want to run it yourself? **[MonkeyTest Cloud](https://monkeytest.ai)** is the same engine, fully managed: hosted browsers, history, dashboards, team accounts.
+## Docs
+
+[docs.monkeytest.ai](https://docs.monkeytest.ai)
+
+- [Quick start](https://docs.monkeytest.ai/getting-started/quick-start)
+- [Your first run](https://docs.monkeytest.ai/getting-started/first-run) and [reading the report](https://docs.monkeytest.ai/getting-started/reading-the-report)
+- [How is this different?](https://docs.monkeytest.ai/guides/how-is-this-different)
+- [Rerun and diff](https://docs.monkeytest.ai/guides/rerun-and-diff)
+- [Auth and login-only sites](https://docs.monkeytest.ai/guides/auth)
+- [Sign-up testing with your own inbox](https://docs.monkeytest.ai/guides/signup)
+- [Cost and depth](https://docs.monkeytest.ai/guides/cost-and-depth)
+- [CLI](https://docs.monkeytest.ai/reference/cli), [config](https://docs.monkeytest.ai/reference/config), [API](https://docs.monkeytest.ai/reference/api), [report fields](https://docs.monkeytest.ai/reference/report)
+
+Hosted runs of the same engine: [monkeytest.ai](https://monkeytest.ai).
 
 ## Contributing
 
-PRs and issues welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md). Report vulnerabilities in private using [SECURITY.md](./SECURITY.md).
 
-## Security
+## License
 
-Report vulnerabilities privately — see [SECURITY.md](./SECURITY.md).
-
----
-
-<sub>AGPL-3.0 · `SPDX-License-Identifier: AGPL-3.0-only` · See [LICENSE](./LICENSE) for the full text and the [license summary](https://docs.monkeytest.ai/guide/license).</sub>
+[AGPL-3.0-only](./LICENSE). `SPDX-License-Identifier: AGPL-3.0-only`. You can run and self-host it. If you modify the engine and serve that modification as a network service, the Affero terms apply. Summary: [License](https://docs.monkeytest.ai/guides/license).

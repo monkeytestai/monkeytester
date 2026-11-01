@@ -1,16 +1,16 @@
 # LLM providers
 
-monkeytester ships first-class support for **six provider families**, and lets you mix providers across phases. Every phase (`explorer`, `planner`, `runner`) takes its own `LLMConfig`, so you can — for example — use Anthropic for the smart planning call and Groq for the cheap per-step runner calls.
-
 ```ts
 new Monkey({
   llm: {
-    explorer: { provider: 'gemini',    model: 'gemini-flash-lite-latest' },
-    planner:  { provider: 'anthropic', model: 'claude-sonnet-4-5' },
-    runner:   { provider: 'groq',      model: 'llama-3.3-70b-versatile' },
+    explorer: { provider: 'gemini', model: 'gemini-flash-lite-latest' },
+    planner: { provider: 'anthropic', model: 'claude-sonnet-4-5' },
+    runner: { provider: 'groq', model: 'llama-3.3-70b-versatile' },
   },
 });
 ```
+
+Six provider families. Each phase (`explorer`, `planner`, `runner`, and optional `triager`) takes its own `LLMConfig`.
 
 ## Supported providers
 
@@ -144,7 +144,7 @@ Env vars the client actually reads (`src/llm/index.ts`, `src/llm/presets.ts`):
 | `OPENAI_COMPATIBLE_BASE_URL` | Endpoint. Also the fallback when `--base-url` is omitted. Auto-detect selects this provider only when this variable is set and no hosted key is set. |
 | `OPENAI_COMPATIBLE_API_KEY` | Sent as the bearer token. Ollama ignores it. If both this and `--api-key` are unset, the client uses `sk-no-key-required`. |
 
-Pass `--model`. The default model id for `openai_compatible` is `gpt-4o-mini`, which Ollama does not serve. JSON mode (`response_format`) is disabled when the base URL matches `ollama`, `localhost`, or `127.0.0.1`. The copy-paste walkthrough is on the [quick start](/guide/quick-start#fully-local-with-ollama).
+Pass `--model`. The default model id for `openai_compatible` is `gpt-4o-mini`, which Ollama does not serve. JSON mode (`response_format`) is disabled when the base URL matches `ollama`, `localhost`, or `127.0.0.1`. The copy-paste walkthrough is on [Your first run](/getting-started/first-run#local-model).
 
 ```ts
 // OpenRouter
@@ -199,6 +199,6 @@ import { Monkey, autoLLMConfig } from '@monkeytestai/monkeytester';
 new Monkey({ llm: autoLLMConfig({ quality: 'balanced' }) });
 ```
 
-It picks the first env var it finds in the order `GEMINI → OPENAI → ANTHROPIC → MISTRAL → GROQ → OPENAI_COMPATIBLE` and uses sensible cheap/smart defaults. See [Configuration](/guide/configuration) for the exact behaviour.
+It picks the first env var it finds in the order `GEMINI → OPENAI → ANTHROPIC → MISTRAL → GROQ → OPENAI_COMPATIBLE` and uses sensible cheap/smart defaults. See [Configuration](/reference/config) for the exact behaviour.
 
-Next: [Cost & depth →](/guide/cost-and-depth)
+Next: [Cost & depth →](/guides/cost-and-depth)

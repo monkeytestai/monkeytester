@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="640" viewBox="0 0 720 640" role="img" aria-label="Diagram of a page being explored">
+  <rect width="720" height="640" rx="28" fill="#161222"/>
+  <rect x="70" y="70" width="580" height="420" rx="22" fill="#1A1524" stroke="#332A46"/>
+  <rect x="102" y="106" width="160" height="14" rx="7" fill="#3A3150"/>
+  <rect x="102" y="140" width="360" height="10" rx="5" fill="#2C2540"/>
+  <rect x="102" y="164" width="300" height="10" rx="5" fill="#2C2540"/>
+  <rect x="102" y="188" width="250" height="10" rx="5" fill="#2C2540"/>
+  <rect x="102" y="240" width="220" height="64" rx="12" fill="#120E1C" stroke="#332A46"/>
+  <rect x="122" y="258" width="90" height="8" rx="4" fill="#3A3150"/>
+  <rect x="122" y="276" width="140" height="8" rx="4" fill="#2C2540"/>
+  <rect x="346" y="240" width="220" height="64" rx="12" fill="#120E1C" stroke="#332A46"/>
+  <rect x="366" y="258" width="90" height="8" rx="4" fill="#3A3150"/>
+  <rect x="366" y="276" width="140" height="8" rx="4" fill="#2C2540"/>
+  <rect x="102" y="340" width="140" height="44" rx="10" fill="#7c3aed"/>
+  <rect x="258" y="340" width="140" height="44" rx="10" fill="#1A1524" stroke="#3A3150"/>
+  <path d="M430 390l48 92 28-14-38-86-38 8z" fill="#A78BFA"/>
+  <text x="70" y="560" fill="#C8BED8" font-family="Inter, Helvetica, Arial, sans-serif" font-size="18">find   -&gt;   fix   -&gt;   rerun   -&gt;   diff</text>
+</svg>

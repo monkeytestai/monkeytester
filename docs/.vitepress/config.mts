@@ -1,115 +1,140 @@
 import { defineConfig } from 'vitepress';
 
+const description =
+  'Point it at a URL. monkeytester finds the bugs, then proves you fixed them. Open-source Playwright and LLM agent.';
+
 export default defineConfig({
   title: 'monkeytester',
-  description:
-    'The open-source AI agent that explores your website like a real user and reports bugs. Playwright + LLM. Works with OpenAI, Gemini, Anthropic, Mistral, Groq, or any OpenAI-compatible endpoint.',
+  description,
   lang: 'en-US',
   cleanUrls: true,
   lastUpdated: true,
+  appearance: true,
+  titleTemplate: ':title · monkeytester',
+
+  markdown: {
+    theme: { light: 'github-light', dark: 'github-dark' },
+  },
 
   head: [
     ['link', { rel: 'icon', href: '/logo.svg', type: 'image/svg+xml' }],
+    ['link', { rel: 'preconnect', href: 'https://fonts.googleapis.com' }],
+    ['link', { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' }],
+    [
+      'link',
+      {
+        rel: 'stylesheet',
+        href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap',
+      },
+    ],
     ['meta', { name: 'theme-color', content: '#7c3aed' }],
     [
       'meta',
       {
         name: 'keywords',
         content:
-          'monkeytest, monkeytester, AI testing, exploratory testing, Playwright, LLM, browser automation, QA, bug detection, OpenAI, Gemini, Anthropic, Mistral, Groq, open source',
+          'monkeytest, monkeytester, exploratory testing, Playwright, LLM, bug finding, OpenAI, Gemini, open source',
       },
     ],
-    ['meta', { property: 'og:title', content: 'monkeytester — AI exploratory testing for any web app' }],
-    ['meta', { property: 'og:description', content: 'An open-source AI agent that uses your site like a real user and reports bugs. Playwright + your favourite LLM.' }],
-    ['meta', { property: 'og:image', content: 'https://docs.monkeytest.ai/hero.jpg' }],
+    ['meta', { property: 'og:site_name', content: 'monkeytester' }],
+    ['meta', { property: 'og:title', content: 'Bugs your tests didn’t think to look for.' }],
+    ['meta', { property: 'og:description', content: description }],
+    ['meta', { property: 'og:image', content: 'https://docs.monkeytest.ai/og.png' }],
+    ['meta', { property: 'og:image:width', content: '1280' }],
+    ['meta', { property: 'og:image:height', content: '640' }],
     ['meta', { property: 'og:type', content: 'website' }],
+    ['meta', { property: 'og:url', content: 'https://docs.monkeytest.ai/' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
-    ['meta', { name: 'twitter:image', content: 'https://docs.monkeytest.ai/hero.jpg' }],
+    ['meta', { name: 'twitter:title', content: 'Bugs your tests didn’t think to look for.' }],
+    ['meta', { name: 'twitter:description', content: description }],
+    ['meta', { name: 'twitter:image', content: 'https://docs.monkeytest.ai/og.png' }],
   ],
 
   themeConfig: {
     logo: '/logo.svg',
+    siteTitle: 'monkeytester',
 
     nav: [
-      { text: 'Guide', link: '/guide/quick-start', activeMatch: '/guide/(?!why-monkeytest)' },
-      { text: 'Why monkeytest', link: '/guide/why-monkeytest', activeMatch: '/guide/why-monkeytest' },
-      { text: 'LLMs', link: '/guide/llm-providers', activeMatch: '/guide/llm-' },
-      { text: 'Reference', link: '/reference/overview', activeMatch: '/reference/' },
+      { text: 'Get started', link: '/getting-started/quick-start' },
+      { text: 'Guides', link: '/guides/how-is-this-different', activeMatch: '/guides/' },
+      { text: 'Reference', link: '/reference/cli', activeMatch: '/reference/' },
       { text: 'GitHub', link: 'https://github.com/monkeytestai/monkeytester' },
-      { text: 'MonkeyTest Cloud', link: 'https://monkeytest.ai' },
+      { text: 'Cloud', link: 'https://monkeytest.ai' },
     ],
 
-    sidebar: {
-      '/guide/': [
-        {
-          text: 'Start here',
-          items: [
-            { text: 'Quick start', link: '/guide/quick-start' },
-            { text: 'Why monkeytest', link: '/guide/why-monkeytest' },
-            { text: 'Installation', link: '/guide/installation' },
-            { text: 'Introduction', link: '/guide/introduction' },
-            { text: 'The bug-finding loop', link: '/guide/the-bug-finding-loop' },
-            { text: 'Replay and verify', link: '/guide/replay-and-verify' },
-            { text: 'How it works', link: '/guide/architecture' },
-          ],
-        },
-        {
-          text: 'Configure the engine',
-          items: [
-            { text: 'Configuration', link: '/guide/configuration' },
-            { text: 'LLM providers', link: '/guide/llm-providers' },
-            { text: 'Prompt caching', link: '/guide/prompt-caching' },
-            { text: 'Triager polish', link: '/guide/triager' },
-            { text: 'Cost & depth', link: '/guide/cost-and-depth' },
-            { text: 'Live events', link: '/guide/live-events' },
-          ],
-        },
-        {
-          text: 'Recipes',
-          items: [
-            { text: 'Common recipes', link: '/guide/recipes' },
-            { text: 'Use in CI', link: '/guide/ci' },
-            { text: 'Troubleshooting', link: '/guide/troubleshooting' },
-          ],
-        },
-        {
-          text: 'Project',
-          items: [
-            { text: 'License', link: '/guide/license' },
-            { text: 'Publishing docs', link: '/guide/publishing-docs' },
-          ],
-        },
-      ],
-      '/reference/': [
-        {
-          text: 'API Reference',
-          items: [
-            { text: 'Overview', link: '/reference/overview' },
-            { text: 'Monkey class', link: '/reference/monkey' },
-            { text: 'EventBus & live events', link: '/reference/events' },
-            { text: 'CLI', link: '/reference/cli' },
-          ],
-        },
-      ],
-    },
+    sidebar: [
+      {
+        text: 'Getting started',
+        items: [
+          { text: 'Introduction', link: '/getting-started/introduction' },
+          { text: 'Quick start', link: '/getting-started/quick-start' },
+          { text: 'Installation', link: '/getting-started/installation' },
+          { text: 'Your first run', link: '/getting-started/first-run' },
+          { text: 'Reading the report', link: '/getting-started/reading-the-report' },
+        ],
+      },
+      {
+        text: 'Guides',
+        items: [
+          { text: 'How is this different?', link: '/guides/how-is-this-different' },
+          { text: 'CI', link: '/guides/ci' },
+          { text: 'Rerun and diff', link: '/guides/rerun-and-diff' },
+          { text: 'Auth and login-only sites', link: '/guides/auth' },
+          { text: 'Sign-up testing', link: '/guides/signup' },
+          { text: 'LLM providers', link: '/guides/llm-providers' },
+          { text: 'Cost and depth', link: '/guides/cost-and-depth' },
+          { text: 'Docker', link: '/guides/docker' },
+          { text: 'How it works', link: '/guides/how-it-works' },
+          { text: 'Recipes', link: '/guides/recipes' },
+          { text: 'Live events', link: '/guides/live-events' },
+          { text: 'Prompt caching', link: '/guides/prompt-caching' },
+          { text: 'Triager', link: '/guides/triager' },
+          { text: 'License', link: '/guides/license' },
+          { text: 'Publishing docs', link: '/guides/publishing-docs' },
+        ],
+      },
+      {
+        text: 'Reference',
+        items: [
+          { text: 'CLI', link: '/reference/cli' },
+          { text: 'Config', link: '/reference/config' },
+          { text: 'Programmatic API', link: '/reference/api' },
+          { text: 'Report', link: '/reference/report' },
+          { text: 'Events', link: '/reference/events' },
+        ],
+      },
+      {
+        text: 'Help',
+        items: [
+          { text: 'FAQ and troubleshooting', link: '/troubleshooting' },
+          { text: 'Changelog', link: '/changelog' },
+        ],
+      },
+    ],
 
     socialLinks: [
       { icon: 'github', link: 'https://github.com/monkeytestai/monkeytester' },
     ],
 
     footer: {
-      message: 'AGPL-3.0 · Made for the testing community',
+      message: 'AGPL-3.0-only',
       copyright: 'Copyright © MonkeyTest contributors',
     },
 
-    search: {
-      provider: 'local',
-    },
+    search: { provider: 'local' },
+
+    outline: { level: [2, 3] },
 
     editLink: {
-      pattern:
-        'https://github.com/monkeytestai/monkeytester/edit/main/docs/:path',
-      text: 'Edit this page on GitHub',
+      pattern: 'https://github.com/monkeytestai/monkeytester/edit/main/docs/:path',
+      text: 'Edit this page',
+    },
+
+    lastUpdated: { text: 'Updated' },
+
+    docFooter: {
+      prev: 'Previous',
+      next: 'Next',
     },
   },
 });

@@ -1,6 +1,6 @@
 # Recipes
 
-Battle-tested patterns for getting real value out of monkeytester. Copy, paste, adjust.
+Copy-paste patterns. Adjust the URL, the caps, and the model.
 
 ## Test a deploy preview, fail the build on bugs
 
@@ -116,7 +116,7 @@ new Monkey({
 });
 ```
 
-See [Triager polish](/guide/triager) for what changes and how to control cost.
+See [Triager polish](/guides/triager) for what changes and how to control cost.
 
 ## Use Anthropic for the planner only
 
@@ -166,4 +166,4 @@ export async function runMonkeyTest({ url, screenshotsDir, onEvent }) {
 }
 ```
 
-Next: [Use in CI →](/guide/ci)
+Next: [Use in CI →](/guides/ci)

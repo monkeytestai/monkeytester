@@ -1,171 +1,105 @@
-# CLI reference
-
-The `monkeytest` binary ships in [`@monkeytestai/monkeytester`](https://www.npmjs.com/package/@monkeytestai/monkeytester) **0.7.0-beta.4**:
+# CLI
 
 ```bash
-npm install @monkeytestai/monkeytester
 npx monkeytest --help
+npx monkeytest version
 ```
 
-`npm install -g @monkeytestai/monkeytester` puts `monkeytest` on your PATH. From a clone, the same binary is `dist/cli.js`:
+The binary ships in `@monkeytestai/monkeytester`. From a clone it is `node dist/cli.js`. Everything writes to `./.monkeytest` unless you pass `--dir`.
 
-```bash
-git clone https://github.com/monkeytestai/monkeytester.git
-cd monkeytester
-npm install && npm run build
-node dist/cli.js --help
+`monkeytest init` prints:
+
+```text
+✓ Initialised .monkeytest/
+  Tracked:    config.json, plan.json (after first run)
+  Ignored:    shots/, runs/
 ```
 
-All commands write to `./.monkeytest/` by default (override with `--dir`).
+`config.json` is a starter file. The CLI does not read it. Flags and environment variables are what take effect. The `$schema` URL in that file is not published.
 
 ## Commands
 
-### `monkeytest init`
-
-Scaffold a `.monkeytest/` directory with `config.json`, `runs/`, `shots/`, and a `.gitignore` that ignores `shots/` and `runs/`. Idempotent — an existing `config.json` is left in place.
-
-```bash
-node dist/cli.js init
-# ✓ Initialised .monkeytest/
-#   Tracked:    config.json, plan.json (after first run)
-#   Ignored:    shots/, runs/
-```
-
-`config.json` is a starter file. The CLI does not read it on `explore`, `run`, `rerun`, `diff`, or `report`. Provider, model, quality, and limits come from flags and environment variables. The file's `$schema` field points at `https://docs.monkeytest.ai/config-schema-v1.json`, and that URL 404s — there is no published JSON Schema. Editors may warn. Delete the `$schema` line, or delete the file, if the warning gets in the way. Nothing in the engine fetches it.
-
-### `monkeytest explore <url>`
-
-Crawl the site, summarise pages with the LLM, and generate a `TestPlan`. Writes `plan.json` and `sitemap.json`. **Does not** execute any flows.
+| Command | What it does |
+| --- | --- |
+| `init` | Creates `.monkeytest/` with `config.json`, `runs/`, `shots/`, and a `.gitignore`. Idempotent. |
+| `explore <url>` | Crawl and plan. Writes `plan.json` and `sitemap.json`. Does not run the flows. |
+| `run <url>` | Explore, plan, run, triage. Writes `plan.json`, `runs/<id>.json`, and `shots/`. |
+| `rerun [runId]` | Replays the stored trace. No LLM unless `--heal`, or the run has no trace. |
+| `verify [run]` | Replays each bug trace. Verdicts: `fixed`, `still_broken`, `flaky`, `healed`, `blocked`. |
+| `diff <a> <b>` | Fingerprint diff. `latest` and `prev` are shortcuts. |
+| `report [runId]` | Prints a stored run. Defaults to `latest`. |
+| `help [command]` | Top-level or per-command help. |
+| `version` | Prints `monkeytester@<version>`. |
 
 ```bash
-monkeytest explore https://example.com --max 12 --flows 8
+npx monkeytest run https://example.com --depth basic
+npx monkeytest rerun
+npx monkeytest diff prev latest
+npx monkeytest report --json
 ```
 
-Useful when you want to inspect the plan before running it (or commit it before a CI rerun).
+`diff` prints `N new, N fixed, N still broken, N regressed (net ±N)` and exits 1 when a bug is new or more severe. The sections under that line are "New bugs", "Regressed bugs", "Fixed bugs", and "Still broken", each with severity, title, and fingerprint. Those titles come from the runs on disk.
 
-### `monkeytest run <url>`
+## Flags
 
-Full pipeline: explore + plan + run + triage. Writes:
+| Flag | Default | What |
+| --- | --- | --- |
+| `-d, --dir <path>` | `.monkeytest` | Working directory |
+| `--provider <id>` | auto-detect | `openai`, `gemini`, `anthropic`, `mistral`, `groq`, `openai_compatible` |
+| `--model <id>` | provider default | Runner model. Also the planner, unless `--planner-model` is set. Page summaries stay on the cheap model. |
+| `--planner-model <id>` | | Planner only |
+| `--api-key <key>` | env | Overrides the env key |
+| `--base-url <url>` | | Required for `openai_compatible` when the env URL is unset |
+| `--quality <preset>` | `balanced` | `cheap`, `balanced`, `smart` |
+| `--depth <preset>` | | `basic` (Quick pass), `standard`, `deep`, `shallow`. Aliases: `quick-pass`, `broader-pass`, `deeper-dig`. |
+| `-m, --max <n>` | 8, or the preset | Page cap. Wins over `--depth` when you pass it. |
+| `--flows <n>` | 6, or the preset | LLM flow cap. Wins over `--depth` when you pass it. |
+| `--no-headless` | headless | Show the browser |
+| `--label <text>` | | Saved on the plan and the run |
+| `--json` | text | Machine-readable output for `run`, `diff`, `report`, `verify` |
+| `--fail-on-5xx` / `--no-fail-on-5xx` | on | A same-origin HTTP ≥500 (document, xhr, or fetch) becomes a blocking bug |
+| `--heal` | off | On `rerun` and `verify`, re-resolve a missed locator |
+| `--repeat <n>` | 1 | How many times `verify` replays each bug |
+| `--bug <fingerprint>` | | `verify` one bug |
+| `--inbox <module>` | | Your `InboxProvider` module. No hosted inbox. |
+| `--inbox-http <url>` | | Your HTTP inbox. Token: `MONKEYTEST_INBOX_TOKEN`. |
 
-- `plan.json` — the generated `TestPlan`
-- `runs/<timestamp>.json` — the `RunResult` (flows, bugs, stats)
-- `shots/page-*.png` — explorer screenshots
-- `shots/flow-*-step-*-*.png` — per-step screenshots
-- `shots/flow-*.webm` — per-flow video recordings
+`--depth basic` is 6 pages, 5 LLM flows, up to 5 page checks and 6 auth-negative flows outside that budget, and a 120 second cap. Page checks run before sign-up and model flows. Suggestions (missing autocomplete, viewport, or description, overflow without a viewport, third-party and unattributed page errors) are not bugs and do not change the exit code. See [Your first run](/getting-started/first-run).
 
-Exits **`1`** if any non-`minor` bug is found, so CI can gate on it.
+`--inbox` and `--inbox-http` also allow one password-reset or OTP send. Newsletter, checkout, and account deletion stay validation-only. There is no CLI flag for those. The library option is `run.allowSensitive`.
 
-```bash
-monkeytest run https://example.com --quality balanced
-```
+## Environment
 
-### `monkeytest rerun [<runId>]`
-
-Re-execute the **same stored plan** (skip explore + plan). The cheap, fast, deterministic path for verifying that a fix landed.
-
-```bash
-monkeytest rerun                      # uses .monkeytest/plan.json
-monkeytest rerun 2026-05-02T10-15-00Z # use the plan stored alongside this run
-```
-
-Exits **`1`** if any blocking bug is still failing.
-
-### `monkeytest diff <runA> <runB>`
-
-Set diff over bug fingerprints. `<runA>` / `<runB>` are stored run ids, or the shortcuts `latest` and `prev`.
-
-```bash
-monkeytest diff prev latest
-#
-# Diff 2026-05-02T08-00-00Z → 2026-05-02T13-30-00Z
-#   1 new, 2 fixed, 1 still broken, 0 regressed (net -1)
-#
-#   New bugs (1)
-#     [critical] Checkout returns 500
-#            fingerprint: fp-checkout-500
-#   Fixed bugs (2)
-#     [major]    Login button does not respond
-#     [minor]    Footer typo
-#   Still broken (1)
-#     [major]    Search slow
-```
-
-Exits **`1`** if there are new bugs **or** any severity escalation.
-
-### `monkeytest report [<runId>]`
-
-Pretty-print a stored run — flows, bugs, evidence paths.
-
-```bash
-monkeytest report          # latest
-monkeytest report --json   # machine-readable
-```
-
-### `monkeytest help [<command>]`
-
-Top-level or per-command help.
-
-### `monkeytest version`
-
-Print the engine version.
-
-## Common flags
-
-| Flag                    | Default        | What                                                                  |
-| ----------------------- | -------------- | --------------------------------------------------------------------- |
-| `-d, --dir <path>`      | `.monkeytest`  | Working directory                                                     |
-| `--provider <id>`       | auto-detect    | `openai` \| `gemini` \| `anthropic` \| `mistral` \| `groq` \| `openai_compatible` |
-| `--model <id>`          | provider best  | Runner model. Also the planner, unless `--planner-model` is set. Page summaries stay on the cheap model. |
-| `--planner-model <id>`  | —              | Planner model only. Does not change per-page summaries or the runner. |
-| `--api-key <key>`       | env var        | Override the env API key                                              |
-| `--base-url <url>`      | —              | Required for `openai_compatible` (Ollama, vLLM, OpenRouter, …)        |
-| `--quality <preset>`    | `balanced`     | `cheap` \| `balanced` \| `smart` (used by `autoLLMConfig`)            |
-| `--depth <preset>`      | —              | `basic` (Quick pass) \| `standard` \| `deep` \| `shallow`. `basic` crawls 6 pages, plans 5 LLM flows, adds page checks outside that budget, and stops at 120s. `--max` and `--flows` override the page and flow caps. |
-| `-m, --max <n>`         | `8`            | Max pages to crawl (`run`, `explore`). A few slots are reserved for help, contact, support, and about links the crawl actually saw. |
-| `--flows <n>`           | `6`            | Max flows to plan. A crawled public form, one enabled button, one link to a page that was not crawled, and one disabled button each keep a grounded flow when the budget allows. |
-| `--fail-on-5xx`         | on             | Fail a step that saw a same-origin HTTP ≥500 (document, xhr, or fetch) and report a blocking bug. `new Monkey()` defaults this on too. |
-| `--no-fail-on-5xx`      |                | Leave those 5xx responses as evidence on the step. Library callers pass `failOn5xx: false`. |
-| `--no-headless`         | headless       | Show the browser window                                               |
-| `--label <text>`        | —              | Free-form label saved on the plan/run                                 |
-| `--json`                | text           | Machine-readable output (`run`, `diff`, `report`)                     |
-
-## Environment variables
-
-| Variable                          | Used for                                          |
-| --------------------------------- | ------------------------------------------------- |
-| `OPENAI_API_KEY`                  | OpenAI provider                                   |
-| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Google Generative AI                            |
-| `ANTHROPIC_API_KEY`               | Anthropic Claude                                  |
-| `MISTRAL_API_KEY`                 | Mistral                                           |
-| `GROQ_API_KEY`                    | Groq                                              |
-| `OPENAI_COMPATIBLE_BASE_URL`      | Self-hosted (Ollama, vLLM, LM Studio, OpenRouter) |
-| `OPENAI_COMPATIBLE_API_KEY`       | Optional key for the OpenAI-compatible endpoint   |
-| `MONKEYTEST_DEBUG`                | Print stack traces on failure                     |
-| `MONKEYTEST_INBOX_TOKEN`          | Bearer token for `--inbox-http` (your host)       |
+| Variable | Used for |
+| --- | --- |
+| `GEMINI_API_KEY`, `GOOGLE_API_KEY` | Gemini. Checked first. |
+| `OPENAI_API_KEY` | OpenAI |
+| `ANTHROPIC_API_KEY` | Anthropic |
+| `MISTRAL_API_KEY` | Mistral |
+| `GROQ_API_KEY` | Groq |
+| `OPENAI_COMPATIBLE_BASE_URL` | Ollama, vLLM, LM Studio, OpenRouter |
+| `OPENAI_COMPATIBLE_API_KEY` | Optional key for that endpoint |
+| `MONKEYTEST_INBOX_TOKEN` | Bearer token for `--inbox-http` |
+| `MONKEYTEST_DEBUG` | Stack traces on failure |
 
 ## Exit codes
 
-| Code | Meaning                                         |
-| ---- | ----------------------------------------------- |
-| `0`  | Success / no blocking bugs                      |
-| `1`  | Blocking bugs found (or `diff` regressed)       |
-| `2`  | Bad arguments / setup error (no API key, etc.)  |
-| `3`  | Engine / runtime error. `run` also uses this when the explorer visits zero pages. |
+| Code | Meaning |
+| --- | --- |
+| 0 | Success, or no blocking bug |
+| 1 | Blocking bugs, a bad `diff`, or `verify` still firing |
+| 2 | Bad arguments or no provider |
+| 3 | Engine error. Also when `run` opens zero pages. |
 
-## On-disk format
+## On disk
 
-```
+```text
 .monkeytest/
-├── config.json                     ← written by `init`, not read by the CLI
-├── plan.json                       ← latest plan (tracked, version 1)
-├── sitemap.json                    ← latest crawl summary
-├── runs/
-│   ├── 2026-05-02T08-00-00Z.json  ← one stored run per file
-│   └── 2026-05-02T13-30-00Z.json
-└── shots/
-    ├── page-*.png                  ← explorer screenshots
-    ├── flow-*-step-*-*.png         ← per-step screenshots
-    └── flow-*.webm                 ← per-flow recordings
+├── config.json          # written by init, not read by the CLI
+├── plan.json            # schema 1
+├── sitemap.json         # explore only
+├── runs/<id>.json       # schema 1
+└── shots/               # page-*.png, flow-*-step-*.png, flow-*.webm
 ```
 
-`plan.json` and run JSONs both carry a `schema` field (currently `1`) so future migrations have a clear upgrade path. Files written by a newer schema will be rejected with a clear error rather than silently misread.
+A file whose `schema` is newer than this build is rejected instead of being misread.

@@ -1,7 +1,7 @@
 {
   "name": "@monkeytestai/monkeytester",
   "version": "0.7.0-beta.4",
-  "description": "Open-source AI exploratory testing engine. Crawls a real browser with Playwright, plans flows with an LLM, executes with screenshots, and reports deduplicated bugs. Works with OpenAI, Gemini, Anthropic, Mistral, Groq, or any OpenAI-compatible endpoint.",
+  "description": "Open-source agent that explores a URL, finds bugs your scripts did not cover, and proves a fix with rerun and diff. Playwright and your LLM.",
   "license": "AGPL-3.0-only",
   "author": "MonkeyTest",
   "homepage": "https://docs.monkeytest.ai",
@@ -17,6 +17,7 @@
     "monkeytester",
     "ai-testing",
     "exploratory-testing",
+    "bug-finding",
     "playwright",
     "browser-automation",
     "qa",

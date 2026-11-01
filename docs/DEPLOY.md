@@ -14,7 +14,7 @@ docs/.vitepress/dist
 - DNS for `docs.monkeytest.ai` is a CNAME to `vercel-dns`.
 - `.github/workflows/docs.yml` builds the site and uploads a `docs-site` artifact. It does **not** deploy. The Vercel project is connected to the GitHub repo on its own.
 
-VitePress is configured with `cleanUrls: true`, so every internal link is extensionless (`/guide/quick-start`). The build still emits `guide/quick-start.html`. Vercel does not map `/guide/quick-start` to that file unless [`cleanUrls`](https://vercel.com/docs/project-configuration#cleanurls) is enabled. That flag lives in `vercel.json` at the repository root (Vercel has no dashboard toggle for it). `netlify.toml` and `docs/public/_redirects` are not read by Vercel — `_redirects` is published as a static file and returns 200, which is why those rewrites never fixed the 404s.
+VitePress is configured with `cleanUrls: true`, so every internal link is extensionless (`/getting-started/quick-start`). The build still emits `getting-started/quick-start.html`. Vercel does not map that clean path to the file unless [`cleanUrls`](https://vercel.com/docs/project-configuration#cleanurls) is enabled. Moved pages, including `/guide/quick-start`, redirect in `vercel.json`. That flag lives in `vercel.json` at the repository root (Vercel has no dashboard toggle for it). `netlify.toml` and `docs/public/_redirects` are not read by Vercel — `_redirects` is published as a static file and returns 200, which is why those rewrites never fixed the 404s.
 
 `vercel.json` in this repo sets:
 
