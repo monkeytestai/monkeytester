@@ -102,6 +102,7 @@ function searchFlow(page: SiteMapPage, form: SiteMapForm): TestFlow {
       },
     ],
     expectation: 'Search runs without a server error.',
+    outcomeCheck: { kind: 'observable_response' },
     severityIfFails: 'major',
   };
 }
@@ -154,6 +155,7 @@ function ctaFlow(page: SiteMapPage, label: string): TestFlow {
       expectation: `The "${label}" control runs without a page error.`,
     }],
     expectation: `The "${label}" control runs without a page error.`,
+    outcomeCheck: { kind: 'observable_response' },
     severityIfFails: 'major',
   };
 }

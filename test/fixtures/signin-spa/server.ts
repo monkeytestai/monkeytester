@@ -109,12 +109,28 @@ function handle(req: IncomingMessage, res: ServerResponse, countLogin: () => voi
   if (url.pathname === '/' && url.searchParams.get('mode') === 'signup') {
     sendHtml(res, 'Create account', `
       <h1>Create account</h1>
-      <p>Sign up for a casting account. The test must not submit this form.</p>
+      <p>Sign up for a casting account. A completed, valid form must not be submitted.</p>
+      <p id="signup-alert" role="alert"></p>
       <form id="signup">
         <label for="signup-email">Email</label>
-        <input id="signup-email" name="email" type="email" autocomplete="email" />
-        <button type="button">Create account</button>
+        <input id="signup-email" name="email" type="email" autocomplete="email" required />
+        <button type="button" id="create-account">Create account</button>
       </form>
+      <script>
+        document.getElementById('create-account').addEventListener('click', function () {
+          var email = document.getElementById('signup-email').value.trim();
+          var alert = document.getElementById('signup-alert');
+          if (!email) {
+            alert.textContent = 'Email is required';
+            return;
+          }
+          if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+            alert.textContent = 'Enter a valid email';
+            return;
+          }
+          alert.textContent = 'This fixture does not create accounts.';
+        });
+      </script>
       <p><a href="/?mode=signin">Sign in</a></p>
     `);
     return;

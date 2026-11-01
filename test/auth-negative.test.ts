@@ -112,7 +112,7 @@ describe('auth-negative plan', () => {
     const actions = result.flows.flatMap(flow => flow.steps.map(step => step.action)).join('\n');
     expect(actions).not.toMatch(/view pricing/i);
     expect(actions).not.toMatch(/google/i);
-    expect(duplicateClicks(result.flows.filter(flow => !flow.id.startsWith('auth-neg-')))).toEqual([]);
+    expect(duplicateClicks(result.flows.filter(flow => !flow.id.startsWith('auth-neg-') && !flow.id.startsWith('signup-')))).toEqual([]);
     expect(result.flows.length).toBeGreaterThan(4);
   });
 });
@@ -199,7 +199,7 @@ describe('sign-in-first fixture', () => {
     const actions = testPlan.flows.flatMap(flow => flow.steps.map(step => step.action)).join('\n');
     expect(actions).not.toMatch(/google/i);
     expect(actions).not.toMatch(/view pricing/i);
-    expect(duplicateClicks(testPlan.flows.filter(flow => !flow.id.startsWith('auth-neg-')))).toEqual([]);
+    expect(duplicateClicks(testPlan.flows.filter(flow => !flow.id.startsWith('auth-neg-') && !flow.id.startsWith('signup-')))).toEqual([]);
 
     const raw = await runPlan(testPlan, llm, {
       screenshotsDir: shots,
@@ -220,7 +220,10 @@ describe('sign-in-first fixture', () => {
     expect(run.outcome_reason).toBe('login_required');
     expect(run.public_screens).toBe(0);
     expect(run.engine_version).toBe(ENGINE_VERSION);
-    expect(run.signup_attempted).toBeUndefined();
+    expect(run.signup_attempted).toBe(false);
+    expect(run.signup_verified).toBe(false);
+    expect(run.signup_status).toBe('not_tested');
+    expect(run.signup_reason).toBe('no_inbox');
     expect(llmCalls.filter(label => label === 'runner.resolveAction')).toHaveLength(0);
     expect(elapsed).toBeLessThan(120_000);
   }, 120_000);

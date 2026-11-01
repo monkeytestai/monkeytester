@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0-beta.3] — 2026-11-01
+
+### Fixed
+
+- A flow is no longer `passed` because its steps executed. Every kept flow has an `outcomeCheck`. The runner evaluates it after the last step. A missing check is `inconclusive` with `outcome_reason` `no_assertion`. A check that cannot be decided is `assertion_unverifiable`. Page checks, auth-negative checks, and sign-up validation already assert an observation; replay does the same, and a trace with no check is not a pass.
+- The runner refuses to submit a completed sign-up or account-creation form (password plus confirm, create-account / sign-up / register, or a signup URL) unless the caller passed an `InboxProvider`. Without one, the engine runs validation only (empty, invalid email, password mismatch) and sets `signup_status` `not_tested` with `signup_reason` `no_inbox`. That refusal is a hard guard, not a prompt.
+
+### Added
+
+- `TestFlow.outcomeCheck` and `FlowResult.assertion`. `OutcomeReason` gains `no_assertion` and `assertion_unverifiable`.
+- `InboxProvider` (`allocate` returns `{ address, expiresAt? }`, `waitFor` accepts `signal` and may return `text` / `html`, optional `release`). One sign-up per run, name "MonkeyTest QA", password only in memory, never phone or payment. `signup_attempted`, `signup_verified`, `signup_status`, and `signup_reason` are set from that attempt. Captcha, phone, payment, timeout, and `cap_reached` are not bugs.
+- CLI `--inbox <module>` and `--inbox-http <url>` (`MONKEYTEST_INBOX_TOKEN`). `createHttpInbox` and `loadInboxProvider` are exported. There is no default host.
+
 ## [0.7.0-beta.2] — 2026-11-01
 
 ### Added

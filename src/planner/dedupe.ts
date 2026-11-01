@@ -12,6 +12,7 @@ import type { SiteMap, TestFlow } from '../types.js';
 import { canonicalPageUrl, crawlPathKey, isSameCrawlSite, sameCrawlPage } from '../explorer/queue.js';
 import { isAuthNegativeFlowId } from './authNegative.js';
 import { isPageCheckFlowId } from '../checks/plan.js';
+import { isSignupFlowId } from '../signup/plan.js';
 
 const OAUTH_LABEL = /\b(continue with|sign in with|log in with|login with|sign up with|signup with)\b|\boauth\b|\bsso\b|\baccounts\.google\b|\bgoogle\b|\bfacebook\b|\bgithub\b|\bapple\b|\bmicrosoft\b/i;
 
@@ -31,7 +32,7 @@ export interface DedupeResult {
 export function dedupePlannedFlows(flows: TestFlow[], siteMap: SiteMap): DedupeResult {
   const seen = new Set<string>();
   for (const flow of flows) {
-    if (!isAuthNegativeFlowId(flow.id) && !isPageCheckFlowId(flow.id)) continue;
+    if (!isEngineFlow(flow.id)) continue;
     const key = clickKey(flow);
     if (key) seen.add(key);
   }
@@ -39,7 +40,7 @@ export function dedupePlannedFlows(flows: TestFlow[], siteMap: SiteMap): DedupeR
   const kept: TestFlow[] = [];
   const dropped: string[] = [];
   for (const flow of flows) {
-    if (isAuthNegativeFlowId(flow.id) || isPageCheckFlowId(flow.id)) {
+    if (isEngineFlow(flow.id)) {
       kept.push(flow);
       continue;
     }
@@ -60,6 +61,10 @@ export function dedupePlannedFlows(flows: TestFlow[], siteMap: SiteMap): DedupeR
     kept.push(flow);
   }
   return { flows: kept, dropped };
+}
+
+function isEngineFlow(id: string): boolean {
+  return isAuthNegativeFlowId(id) || isPageCheckFlowId(id) || isSignupFlowId(id);
 }
 
 function overlapsEngineCheck(flow: TestFlow, flows: TestFlow[]): boolean {

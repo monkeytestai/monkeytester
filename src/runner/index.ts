@@ -34,6 +34,8 @@ import type {
   TestFlow,
   TestStep,
   FlowResult,
+  FlowAssertion,
+  InboxProvider,
   StepResult,
   StepStatus,
   RunResult,
@@ -62,6 +64,11 @@ import { isAuthNegativeFlowId } from '../planner/authNegative.js';
 import { runAuthCheck } from './authNegative.js';
 import { isPageCheckFlowId } from '../checks/plan.js';
 import { executePageChecks } from '../checks/execute.js';
+import { isSignupFlowId } from '../signup/plan.js';
+import { signupSubmitBlock } from '../signup/guard.js';
+import { runSignupCheck } from '../signup/run.js';
+import { emptySignupLedger, signupFields, type SignupLedger } from '../signup/ledger.js';
+import { evaluateOutcomeCheck, snapPage, type PageSnap } from '../outcome/check.js';
 
 export interface RunnerOptions {
   /**
@@ -111,6 +118,13 @@ export interface RunnerOptions {
   onEvent?: (event: RunnerEvent) => void;
   /** Optional live event bus. Receives runner lifecycle events. */
   events?: EventBus;
+  /**
+   * Caller-supplied mailbox for the one sign-up in this run.
+   * Absent means sign-up forms are validation-only. Additive.
+   */
+  inbox?: InboxProvider;
+  /** Stable id passed to InboxProvider.allocate. Defaults to the run start time. */
+  runId?: string;
 }
 
 export type RunnerEvent =
@@ -137,6 +151,8 @@ export async function runPlan(
 
   const startedAt = new Date().toISOString();
   const flows: FlowResult[] = [];
+  const signup = emptySignupLedger();
+  const runId = opts.runId || startedAt;
 
   if (plan.flows.length === 0){
     return emptyRun(plan, startedAt);
@@ -237,7 +253,7 @@ export async function runPlan(
       const timeout = createFlowTimeout(flow.name, flowTimeout, () => abort.abort());
       const work = runFlow(
         browser, flow, llm,
-        { ...opts, screenshotsDir, stepTimeoutMs: stepTimeout, events },
+        { ...opts, screenshotsDir, stepTimeoutMs: stepTimeout, events, signup, runId },
         fi + 1, plan.flows.length,
         abort.signal,
       );
@@ -286,6 +302,7 @@ export async function runPlan(
     bugs: [],                                   // populated by triager phase
     stats: aggregateStats(flows),
     engine_version: ENGINE_VERSION,
+    ...signupFields(signup),
   };
 
 }
@@ -296,6 +313,8 @@ interface RunFlowOpts extends RunnerOptions {
   screenshotsDir: string;
   stepTimeoutMs: number;
   events: EventBus;
+  signup: SignupLedger;
+  runId: string;
 }
 
 async function runFlow(
@@ -349,10 +368,13 @@ async function runFlow(
   const traceSteps: TraceStep[] = [];
   let flowFailed = false;
   let firstFailureReason: string | undefined;
+  let halted: string | undefined;
+  let beforeLast: PageSnap | undefined;
   const authNeg = isAuthNegativeFlowId(flow.id);
+  const signupFlow = isSignupFlowId(flow.id);
   const llmFallbacks = { used: 0 };
 
-  const finish = (videoPath?: string) => {
+  const finish = (videoPath?: string, assertion?: FlowAssertion) => {
     if (opts.failOn5xx) {
       const promoted = promoteRecordedSteps(steps, traceSteps, origins);
       if (promoted.changed) {
@@ -366,6 +388,7 @@ async function runFlow(
     }
     return finaliseFlow(
       flow, steps, flowFailed, firstFailureReason, flowStarted, videoPath, traceSteps,
+      assertion ?? (halted ? 'blocked' : undefined),
     );
   };
 
@@ -480,6 +503,14 @@ async function runFlow(
       },
     });
 
+    if (halted){
+      const blocked = blockedStep(stepIndex, step, halted);
+      blocked.screenshotPath = await safeShot(page, opts.screenshotsDir, flow.id, stepIndex, 'blocked');
+      steps.push(blocked);
+      opts.onEvent?.({ type: 'step.complete', flowId: flow.id, index: stepIndex, result: blocked });
+      continue;
+    }
+
     if (flowFailed){
       const blocked = blockedStep(stepIndex, step, 'Earlier step failed; not attempted.');
       blocked.screenshotPath = await safeShot(page, opts.screenshotsDir, flow.id, stepIndex, 'blocked');
@@ -569,6 +600,59 @@ async function runFlow(
       continue;
     }
 
+    if (step.signupCheck) {
+      if (i === flow.steps.length - 1) beforeLast = await snapPage(page);
+      const outcome = await runSignupCheck(page, step.signupCheck, {
+        ledger: opts.signup,
+        inbox: opts.inbox,
+        runId: opts.runId,
+        timeoutMs: opts.stepTimeoutMs,
+        signal,
+        submitLabel: undefined,
+      });
+      const screenshotPath = await safeShot(page, opts.screenshotsDir, flow.id, stepIndex, outcome.status);
+      const result: StepResult = {
+        index: stepIndex,
+        action: step.action,
+        expectation: step.expectation,
+        status: outcome.status,
+        observation: outcome.observation,
+        tool: outcome.tool,
+        target: outcome.target,
+        resolution: 'recorded',
+        durationMs: Date.now() - stepStart,
+        screenshotPath,
+        consoleErrors: evidence.consoleByStep.get(stepIndex),
+        networkFailures: evidence.networkByStep.get(stepIndex),
+        ...(outcome.error ? { error: outcome.error } : {}),
+      };
+      steps.push(result);
+      traceSteps.push(serializeTraceStep({
+        index: stepIndex,
+        action: step.action,
+        expectation: step.expectation,
+        tool: outcome.tool,
+        value: outcome.value,
+        urlBefore,
+        urlAfter: safePageUrl(page),
+        startedAt,
+        durationMs: result.durationMs,
+        status: outcome.status,
+        observation: outcome.observation,
+        error: outcome.error,
+        screenshotPath,
+        consoleErrors: result.consoleErrors,
+        networkFailures: result.networkFailures,
+        resolution: 'recorded',
+      }));
+      opts.onEvent?.({ type: 'step.complete', flowId: flow.id, index: stepIndex, result });
+      if (outcome.status === 'failed') {
+        flowFailed = true;
+        firstFailureReason = firstFailureReason || outcome.error || outcome.observation;
+      }
+      continue;
+    }
+
     let resolved: ResolvedAction;
     try {
       const skeleton = await skeletonForLLM(page);
@@ -584,6 +668,42 @@ async function runFlow(
       resolved = groundFillAction(drafted, skeleton);
       if (step.value && resolved.tool === 'fill') {
         resolved = { ...resolved, value: step.value, preserveValue: true };
+      }
+      if (i === flow.steps.length - 1 && !beforeLast) beforeLast = await snapPage(page);
+      const blockedSignup = await signupSubmitBlock(page, resolved, {
+        inbox: opts.inbox,
+        ledger: opts.signup,
+      });
+      if (blockedSignup) {
+        halted = blockedSignup.observation;
+        const result: StepResult = {
+          index: stepIndex,
+          action: step.action,
+          expectation: step.expectation,
+          status: 'skipped',
+          observation: blockedSignup.observation,
+          tool: resolved.tool,
+          target: resolved.target,
+          durationMs: Date.now() - stepStart,
+          screenshotPath: await safeShot(page, opts.screenshotsDir, flow.id, stepIndex, 'skipped'),
+        };
+        steps.push(result);
+        traceSteps.push(serializeTraceStep({
+          index: stepIndex,
+          action: step.action,
+          expectation: step.expectation,
+          tool: resolved.tool,
+          urlBefore,
+          urlAfter: safePageUrl(page),
+          startedAt,
+          durationMs: result.durationMs,
+          status: 'skipped',
+          observation: result.observation,
+          screenshotPath: result.screenshotPath,
+          resolution: 'recorded',
+        }));
+        opts.onEvent?.({ type: 'step.complete', flowId: flow.id, index: stepIndex, result });
+        continue;
       }
     } catch (err) {
       // LLM couldn't propose an action. That's a planner/runner integration
@@ -715,6 +835,55 @@ async function runFlow(
   // still attributed to that step before the context closes.
   if (opts.failOn5xx) await flushStepEvents(page);
 
+  const oracleFlow = authNeg || signupFlow || flow.steps.some(step => step.check || step.signupCheck || step.pageCheck);
+  let assertion: FlowAssertion | undefined;
+  if (halted) {
+    assertion = 'blocked';
+  } else if (oracleFlow) {
+    assertion = oracleAssertion(steps);
+  } else if (!flowFailed) {
+    const verdict = await evaluateOutcomeCheck(page, flow.outcomeCheck, { startUrl: flow.startUrl, before: beforeLast });
+    const unfinished = steps.some(step => step.index > 0 && (step.status === 'skipped' || step.status === 'blocked'));
+    assertion = verdict.state === 'verified'
+      ? 'verified'
+      : verdict.state === 'failed' && !unfinished
+        ? 'failed'
+        : verdict.state === 'missing'
+          ? 'missing'
+          : 'unverifiable';
+    const index = (steps[steps.length - 1]?.index ?? 0) + 1;
+    const status: StepStatus = assertion === 'verified' ? 'passed' : assertion === 'failed' ? 'failed' : 'skipped';
+    const result: StepResult = {
+      index,
+      action: 'Check the expected outcome',
+      expectation: flow.expectation,
+      status,
+      observation: verdict.observation,
+      tool: 'assert_text',
+      target: flow.outcomeCheck?.kind,
+      ...(assertion === 'failed' ? { error: verdict.observation } : {}),
+    };
+    steps.push(result);
+    traceSteps.push(serializeTraceStep({
+      index,
+      action: result.action,
+      expectation: result.expectation,
+      tool: 'assert_text',
+      urlBefore: beforeLast?.url,
+      urlAfter: safePageUrl(page),
+      status,
+      observation: verdict.observation,
+      error: result.error,
+      resolution: 'recorded',
+    }));
+    if (assertion === 'failed') {
+      flowFailed = true;
+      firstFailureReason = firstFailureReason || verdict.observation;
+    }
+  } else {
+    assertion = 'unverifiable';
+  }
+
   // Grab the video path before closing — Playwright finalises the file on close.
   let videoPathRaw: string | null = null;
   try {
@@ -752,7 +921,7 @@ async function runFlow(
     } catch { /* ignore */ }
   }
 
-  return finish(videoPath);
+  return finish(videoPath, assertion);
 
 }
 
@@ -818,6 +987,13 @@ function errorFlowResult(flow: TestFlow, msg: string, started: number): FlowResu
   };
 }
 
+function oracleAssertion(steps: StepResult[]): FlowAssertion {
+  const planned = steps.filter(step => step.index > 0);
+  const last = planned[planned.length - 1];
+  if (last?.status === 'passed' || planned.some(step => step.status === 'failed')) return 'verified';
+  return 'unverifiable';
+}
+
 function finaliseFlow(
   flow: TestFlow,
   steps: StepResult[],
@@ -826,9 +1002,13 @@ function finaliseFlow(
   started: number,
   videoPath: string | undefined,
   traceSteps: TraceStep[],
+  assertion?: FlowAssertion,
 ): FlowResult {
 
-  const status = resolveFlowStatus(steps, failed);
+  const decided = assertion ?? (flow.outcomeCheck ? 'missing' : 'missing');
+  const status = decided === 'blocked'
+    ? 'blocked' as const
+    : resolveFlowStatus(steps, failed, decided);
   const trace = serializeTrace({
     version: 1,
     flowId: flow.id,
@@ -838,9 +1018,13 @@ function finaliseFlow(
     startUrl: flow.startUrl,
     expectation: flow.expectation,
     severityIfFails: flow.severityIfFails,
+    outcomeCheck: flow.outcomeCheck,
     steps: traceSteps,
   });
 
+  const reason = status === 'blocked'
+    ? failureReason
+    : failureReason;
   return {
     flowId: flow.id,
     name: flow.name,
@@ -848,7 +1032,10 @@ function finaliseFlow(
     kind: flow.kind,
     startUrl: flow.startUrl,
     status,
-    failureReason,
+    ...(reason ? { failureReason: reason } : {}),
+    ...(status === 'inconclusive' && decided === 'missing' ? { outcome_reason: 'no_assertion' as const } : {}),
+    ...(status === 'inconclusive' && decided === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
+    assertion: decided,
     severityIfFails: flow.severityIfFails,
     steps,
     durationMs: Date.now() - started,

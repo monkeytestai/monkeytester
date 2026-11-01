@@ -56,9 +56,11 @@ import { replayTraces } from './runner/replay.js';
 import { triage } from './triager/index.js';
 import { verifyBugs, type VerifyReport } from './verify/index.js';
 import type {
-  LLMProvider, LLMConfig, MonkeyLLMConfig, BugReport, FlowTrace, RunResult,
+  LLMProvider, LLMConfig, MonkeyLLMConfig, BugReport, FlowTrace, InboxProvider, RunResult,
 } from './types.js';
 import { ENGINE_VERSION } from './version.js';
+import { createHttpInbox } from './inbox/http.js';
+import { loadInboxProvider } from './inbox/load.js';
 
 /* ── Tiny ANSI helpers (no chalk dep) ─────────────────────────────────── */
 
@@ -121,6 +123,10 @@ interface CommonOpts {
    * bug. Default true. `--no-fail-on-5xx` turns it off.
    */
   failOn5xx: boolean;
+  /** Path to a module that exports an InboxProvider. */
+  inboxModule?: string;
+  /** Base URL of a caller-operated HTTP inbox. No default host. */
+  inboxHttp?: string;
 }
 
 function defaultCommonOpts(): CommonOpts {
@@ -193,6 +199,18 @@ function parseArgs(argv: string[]): Parsed {
       case '--json':                       out.opts.json = true; break;
       case '--fail-on-5xx':                out.opts.failOn5xx = true; break;
       case '--no-fail-on-5xx':             out.opts.failOn5xx = false; break;
+      case '--inbox': {
+        const spec = next();
+        if (!spec) die(2, '--inbox requires a module path');
+        out.opts.inboxModule = spec;
+        break;
+      }
+      case '--inbox-http': {
+        const url = next();
+        if (!url) die(2, '--inbox-http requires your inbox base URL');
+        out.opts.inboxHttp = url;
+        break;
+      }
       case '--heal':                       out.opts.heal = true; break;
       case '--bug': {
         const fp = next();
@@ -328,6 +346,8 @@ Common flags (apply to most commands):
       --json                 Machine-readable output
       --fail-on-5xx          Fail steps that saw a same-origin HTTP ≥500 (default)
       --no-fail-on-5xx       Keep those 5xx responses as evidence only
+      --inbox <module>       Module that exports your InboxProvider (no hosted inbox)
+      --inbox-http <url>     Your HTTP inbox API (MONKEYTEST_INBOX_TOKEN). No default host.
 
 Exit codes: 0 ok · 1 bugs still firing · 2 bad args / setup · 3 engine error.
 
@@ -446,7 +466,7 @@ async function cmdExplore(url: string | undefined, opts: CommonOpts){
       pageTimeoutMs: opts.pageTimeoutMs,
       onPage: (p) => console.log(`  · visited [${p.authGated ? 'auth' : 'open'}] ${p.url} — ${truncate(p.summary, 80)}`),
     },
-    plan: { maxFlows: opts.maxFlows, focus: opts.focus, minFlows: opts.minFlows, maxPages: opts.maxPages },
+    plan: { maxFlows: opts.maxFlows, focus: opts.focus, minFlows: opts.minFlows, maxPages: opts.maxPages, signupInbox: Boolean(opts.inboxModule || opts.inboxHttp) },
   });
 
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
@@ -470,7 +490,8 @@ async function cmdRun(url: string | undefined, opts: CommonOpts){
   const screenshotsDir = resolve(opts.dir, 'shots');
   mkdirSync(screenshotsDir, { recursive: true });
 
-  const monkey = new Monkey({ llm: buildLLMConfig(opts), plannerModel: opts.plannerModel, strictOracles: true, failOn5xx: opts.failOn5xx });
+  const inbox = await inboxFromOpts(opts);
+  const monkey = new Monkey({ llm: buildLLMConfig(opts), plannerModel: opts.plannerModel, strictOracles: true, failOn5xx: opts.failOn5xx, inbox });
   console.log(`\n→ Running ${tty(url, 'cyan')} (max ${opts.maxPages} pages, ${opts.maxFlows} flows, headless=${opts.headless})…\n`);
 
   const t0 = Date.now();
@@ -482,7 +503,7 @@ async function cmdRun(url: string | undefined, opts: CommonOpts){
       pageTimeoutMs: opts.pageTimeoutMs,
       onPage: (p) => console.log(`  · visited ${p.url}`),
     },
-    plan: { maxFlows: opts.maxFlows, focus: opts.focus, minFlows: opts.minFlows, maxPages: opts.maxPages },
+    plan: { maxFlows: opts.maxFlows, focus: opts.focus, minFlows: opts.minFlows, maxPages: opts.maxPages, signupInbox: Boolean(opts.inboxModule || opts.inboxHttp) },
     run:  {
       screenshotsDir,
       headless: opts.headless,
@@ -886,6 +907,14 @@ function exitIfBlocking(run: RunResult){
 
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+async function inboxFromOpts(opts: CommonOpts): Promise<InboxProvider | undefined> {
+  if (opts.inboxModule && opts.inboxHttp) die(2, 'Pass either --inbox or --inbox-http, not both.');
+  if (opts.inboxModule) return loadInboxProvider(opts.inboxModule);
+  if (!opts.inboxHttp) return undefined;
+  const token = process.env.MONKEYTEST_INBOX_TOKEN;
+  return createHttpInbox({ baseUrl: opts.inboxHttp, ...(token ? { token } : {}) });
 }
 
 function die(code: number, msg: string): never {

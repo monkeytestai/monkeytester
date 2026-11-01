@@ -120,6 +120,7 @@ function buildCandidate(page: SiteMapPage, label: string, kind: 'button' | 'link
       startUrl: page.url,
       steps: [{ action: `Click "${label}"`, expectation }],
       expectation,
+      outcomeCheck: { kind: 'observable_response' },
       severityIfFails: 'critical',
     },
   };
