@@ -59,6 +59,7 @@ import { createFlowTimeout } from './timeout.js';
 import { applyPassedOracles, attachStepEvidence, flushStepEvents } from './evidence.js';
 import { collectOrigins, outcomeWithSameOrigin5xx, promoteRecordedSteps } from './http5xx.js';
 import { serializeTrace, serializeTraceStep } from '../trace/serialize.js';
+import { humanStepLabel } from '../trace/stepLabel.js';
 import { resolveFlowStatus } from './flowStatus.js';
 import { ENGINE_VERSION } from '../version.js';
 import { isAuthNegativeFlowId } from '../planner/authNegative.js';
@@ -66,10 +67,14 @@ import { runAuthCheck } from './authNegative.js';
 import { isPageCheckFlowId } from '../checks/plan.js';
 import { executePageChecks } from '../checks/execute.js';
 import { isSignupFlowId } from '../signup/plan.js';
+
+/** Inbox sign-up waits up to 60s. The Quick pass flow cap must not cut that wait. */
+export const SIGNUP_FLOW_TIMEOUT_MS = 75_000;
 import { signupSubmitBlock } from '../signup/guard.js';
 import { runSignupCheck } from '../signup/run.js';
-import { emptySignupLedger, signupFields, type SignupLedger } from '../signup/ledger.js';
+import { emptySignupLedger, noteSignup, signupFields, type SignupLedger } from '../signup/ledger.js';
 import { evaluateOutcomeCheck, snapPage, type PageSnap } from '../outcome/check.js';
+import { installDialogPolicy, installSubmissionGuards, setStepIntent, type SensitiveKind } from './sensitive.js';
 
 export interface RunnerOptions {
   /**
@@ -126,6 +131,13 @@ export interface RunnerOptions {
   inbox?: InboxProvider;
   /** Stable id passed to InboxProvider.allocate. Defaults to the run start time. */
   runId?: string;
+  /**
+   * Sensitive submits the host allows in addition to an inbox.
+   * An inbox already allows sign-up, OTP / magic-link, and password reset.
+   * Newsletter, checkout/payment, and account deletion stay blocked unless
+   * named here. Additive.
+   */
+  allowSensitive?: SensitiveKind[];
 }
 
 export type RunnerEvent =
@@ -164,17 +176,8 @@ export async function runPlan(
   try {
 
     const checkFlows = plan.flows.filter(flow => isPageCheckFlowId(flow.id));
-    const checksRan = new Set<string>();
-
-    for (let fi = 0; fi < plan.flows.length; fi++){
-
-      const flow = plan.flows[fi];
-
-      if (isPageCheckFlowId(flow.id)) {
-        if (checksRan.has(flow.id)) continue;
-        const pending = checkFlows.filter(item => !checksRan.has(item.id));
-        for (const item of pending) checksRan.add(item.id);
-        const batch = await executePageChecks(browser, pending, {
+    if (checkFlows.length > 0) {
+      const batch = await executePageChecks(browser, checkFlows, {
           screenshotsDir,
           stepTimeoutMs: stepTimeout,
           deadlineAt: opts.deadlineAt,
@@ -215,8 +218,12 @@ export async function runPlan(
           },
         });
         flows.push(...batch);
-        continue;
-      }
+    }
+
+    for (let fi = 0; fi < plan.flows.length; fi++){
+
+      const flow = plan.flows[fi];
+      if (isPageCheckFlowId(flow.id)) continue;
 
       // auth_required flows aren't currently runnable — record a neat
       // "blocked: needs credentials" entry instead of erroring out.
@@ -251,7 +258,9 @@ export async function runPlan(
       const abort = new AbortController();
       // Firing the guard aborts the context immediately; cancel() after the
       // race clears the timer so a finished flow cannot reject later.
-      const timeout = createFlowTimeout(flow.name, flowTimeout, () => abort.abort());
+      const inboxSignup = isSignupFlowId(flow.id) && flow.steps.some(step => step.signupCheck === 'inbox_verify');
+      const thisFlowTimeout = inboxSignup ? Math.max(flowTimeout, SIGNUP_FLOW_TIMEOUT_MS) : flowTimeout;
+      const timeout = createFlowTimeout(flow.name, thisFlowTimeout, () => abort.abort());
       const work = runFlow(
         browser, flow, llm,
         { ...opts, screenshotsDir, stepTimeoutMs: stepTimeout, events, signup, runId },
@@ -264,12 +273,21 @@ export async function runPlan(
       try {
         const winner = await Promise.race([work, timeout.promise]);
         if (!winner || !('flowId' in winner)){
-          throw new Error(`flow "${flow.name}" exceeded ${flowTimeout}ms`);
+          throw new Error(`flow "${flow.name}" exceeded ${thisFlowTimeout}ms`);
         }
         result = winner;
       } catch (err) {
         abort.abort();
-        result = errorFlowResult(flow, err instanceof Error ? err.message : String(err), flowStarted);
+        const message = err instanceof Error ? err.message : String(err);
+        result = errorFlowResult(flow, message, flowStarted);
+        if (inboxSignup && /exceeded \d+ms/.test(message)) {
+          noteSignup(signup, { saw: true, attempted: true, status: 'unverified', reason: 'timeout' });
+          result = {
+            ...result,
+            outcome_reason: 'timeout',
+            outcome_detail: 'The sign-up wait was cut off (signup_reason timeout).',
+          };
+        }
       } finally {
         timeout.cancel();
       }
@@ -360,6 +378,8 @@ async function runFlow(
   signal?.addEventListener('abort', onAbort, { once: true });
 
   const page = await context.newPage();
+  await installSubmissionGuards(page, { inbox: Boolean(opts.inbox), allow: opts.allowSensitive });
+  installDialogPolicy(page);
 
   // Per-flow buffers. Listeners attribute console, page errors, and network
   // failures to whichever step index is current.
@@ -370,6 +390,7 @@ async function runFlow(
   let flowFailed = false;
   let firstFailureReason: string | undefined;
   let halted: string | undefined;
+  let guardedReason: string | undefined;
   let beforeLast: PageSnap | undefined;
   const flowSuggestions: Suggestion[] = [];
   const authNeg = isAuthNegativeFlowId(flow.id);
@@ -540,6 +561,8 @@ async function runFlow(
     const stepStart = Date.now();
     const startedAt = new Date().toISOString();
     const urlBefore = page.url();
+    const upcoming = flow.steps.slice(i).map(item => `${item.action}\n${item.expectation || ''}`).join('\n');
+    setStepIntent(page, upcoming);
 
     if (step.check) {
       const outcome = await runAuthCheck(page, flow, step, evidence, stepIndex, {
@@ -629,6 +652,7 @@ async function runFlow(
         consoleErrors: evidence.consoleByStep.get(stepIndex),
         networkFailures: evidence.networkByStep.get(stepIndex),
         ...(outcome.error ? { error: outcome.error } : {}),
+        ...(outcome.phases?.length ? { signupPhases: outcome.phases } : {}),
       };
       steps.push(result);
       traceSteps.push(serializeTraceStep({
@@ -773,6 +797,9 @@ async function runFlow(
       if (!opts.strictOracles) await flushStepEvents(page);
       exec = outcomeWithSameOrigin5xx(exec, evidence.networkByStep.get(stepIndex), origins);
     }
+    if (exec.error === 'sensitive-submit' || exec.error === 'oauth-navigation') {
+      guardedReason = exec.observation;
+    }
     const screenshotPath = await safeShot(page, opts.screenshotsDir, flow.id, stepIndex, exec.status);
     const durationMs = Date.now() - stepStart;
 
@@ -888,6 +915,17 @@ async function runFlow(
     }
   } else {
     assertion = 'unverifiable';
+  }
+
+  if (guardedReason) {
+    assertion = 'unverifiable';
+    const outcomeStep = steps.find(step => step.action === 'Check the expected outcome' && step.status === 'failed');
+    if (outcomeStep) {
+      outcomeStep.status = 'skipped';
+      delete outcomeStep.error;
+    }
+    flowFailed = steps.some(step => step.status === 'failed');
+    if (!flowFailed) firstFailureReason = undefined;
   }
 
   // Grab the video path before closing — Playwright finalises the file on close.
@@ -1012,6 +1050,8 @@ function finaliseFlow(
   suggestions: Suggestion[] = [],
 ): FlowResult {
 
+  const labelled = steps.map(step => ({ ...step, label: humanStepLabel(step) }));
+  const labelledTrace = traceSteps.map(step => ({ ...step, label: step.label || humanStepLabel(step) }));
   const decided = assertion ?? (flow.outcomeCheck ? 'missing' : 'missing');
   const status = decided === 'blocked'
     ? 'blocked' as const
@@ -1026,7 +1066,7 @@ function finaliseFlow(
     expectation: flow.expectation,
     severityIfFails: flow.severityIfFails,
     outcomeCheck: flow.outcomeCheck,
-    steps: traceSteps,
+    steps: labelledTrace,
   });
 
   const reason = status === 'blocked'
@@ -1044,7 +1084,7 @@ function finaliseFlow(
     ...(status === 'inconclusive' && decided === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
     assertion: decided,
     severityIfFails: flow.severityIfFails,
-    steps,
+    steps: labelled,
     durationMs: Date.now() - started,
     bugIds: [],                                  // populated by triager
     ...(videoPath ? { videoPath } : {}),

@@ -64,24 +64,48 @@ export async function locateActionTarget(page: Page, action: ResolvedAction): Pr
     ? snap.filter(isField)
     : snap;
   let ambiguous = 0;
+  const click = action.tool === 'click' || action.tool === 'press';
 
-  const own = await probe(locatorFor(page, strategy, action.target || ''));
-  if ('locator' in own) return { locator: own.locator, action, via: 'given' };
-  if (own.count > 1) ambiguous = own.count;
+  // A CSS selector recorded from the crawl wins. A text locator does not:
+  // `text:Search` matches headings and hidden copies before the icon button
+  // whose only name is aria-label.
+  if (strategy === 'css' && action.target) {
+    const stored = await probe(locatorFor(page, 'css', action.target));
+    if ('locator' in stored) return { locator: stored.locator, action, via: 'selector' };
+    if (stored.count > 1) ambiguous = stored.count;
+  }
+
+  if (click && text) {
+    const named = await matchRole(page, text);
+    if (named) return retarget(action, named.locator, 'role', named.target, named.via);
+  }
+
+  if (text) {
+    const labelled = await probe(safeLabel(page, text));
+    if ('locator' in labelled) return retarget(action, labelled.locator, 'label', text, 'label');
+    const placeholder = await probe(safePlaceholder(page, text));
+    if ('locator' in placeholder) return retarget(action, placeholder.locator, 'placeholder', text, 'placeholder');
+    const aria = await probe(page.locator(`[aria-label="${cssAttr(text)}" i]`));
+    if ('locator' in aria) {
+      return retarget(action, aria.locator, 'css', `[aria-label="${cssAttr(text)}" i]`, 'aria-label');
+    }
+  }
+
+  if (strategy !== 'css') {
+    const own = await probe(locatorFor(page, strategy, action.target || ''));
+    if ('locator' in own) return { locator: own.locator, action, via: 'given' };
+    if (own.count > 1) ambiguous = own.count;
+  }
 
   const implied = impliedType(text);
   const role = implied ? TYPE_ROLE[implied] : undefined;
   if (role && text) {
-    const named = await probe(page.getByRole(role, { name: new RegExp(escapeRegex(text), 'i') }));
+    const named = await probe(page.getByRole(role, { name: exactName(text) }));
     if ('locator' in named) {
       return retarget(action, named.locator, 'role', `${role}:${text}`, 'role');
     }
   }
   if (text) {
-    const labelled = await probe(safeLabel(page, text));
-    if ('locator' in labelled) {
-      return retarget(action, labelled.locator, 'label', text, 'label');
-    }
     if (role) {
       const unnamed = await probe(page.getByRole(role));
       if ('locator' in unnamed) {
@@ -181,6 +205,63 @@ export function impliedType(text: string): string | undefined {
   if (/\bselect\b|\bdropdown\b|\bcombobox\b/.test(value)) return 'select';
   if (/\btext\s*(input|field|box)\b|\btextbox\b/.test(value) || value === 'text') return 'text';
   return undefined;
+}
+
+const CLICK_ROLES = ['button', 'link', 'searchbox'] as const;
+
+async function matchRole(
+  page: Page,
+  text: string,
+): Promise<{ locator: Locator; target: string; via: string } | undefined> {
+  const css = await page.evaluate((wanted) => {
+    const needle = wanted.trim().toLowerCase();
+    function visible(el: Element): boolean {
+      const html = el as HTMLElement;
+      const style = getComputedStyle(html);
+      const rect = html.getBoundingClientRect();
+      if (html.hidden || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+      if (rect.width < 1 || rect.height < 1 || rect.right < 0 || rect.bottom < 0) return false;
+      return true;
+    }
+    function nameOf(el: Element): string {
+      return (el.getAttribute('aria-label') || (el as HTMLElement).innerText || (el as HTMLInputElement).value || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    }
+    const nodes = Array.from(document.querySelectorAll('button, a[href], input[type="submit"], input[type="search"], [role="button"], [role="link"], [role="searchbox"]'));
+    const hits = nodes.filter(visible).map(el => {
+      const name = nameOf(el);
+      const exact = name === needle;
+      const contains = name.includes(needle);
+      if (!exact && !contains) return null;
+      const tag = el.tagName.toLowerCase();
+      const role = (el.getAttribute('role') || tag).toLowerCase();
+      const preference = tag === 'button' || role === 'button' ? 0 : tag === 'a' || role === 'link' ? 1 : 2;
+      return { el, exact, preference };
+    }).filter((item): item is { el: Element; exact: boolean; preference: number } => Boolean(item));
+    const exacts = hits.filter(item => item.exact);
+    const pool = (exacts.length ? exacts : hits).sort((a, b) => a.preference - b.preference);
+    if (pool.length === 0) return '';
+    const best = pool.filter(item => item.preference === pool[0].preference);
+    if (best.length !== 1) return '';
+    const el = best[0].el as HTMLElement;
+    const tag = el.tagName.toLowerCase();
+    const role = el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'search' ? 'searchbox' : 'button');
+    if (el.id) return JSON.stringify({ css: `#${CSS.escape(el.id)}`, role });
+    el.setAttribute('data-monkey-target', '1');
+    return JSON.stringify({ css: '[data-monkey-target="1"]', role });
+  }, text).catch(() => '');
+  if (!css) return undefined;
+  let parsed: { css?: string; role?: string } = {};
+  try { parsed = JSON.parse(css) as { css?: string; role?: string }; } catch { parsed = { css }; }
+  if (!parsed.css) return undefined;
+  const role = parsed.role || 'button';
+  return { locator: page.locator(parsed.css).first(), target: `${role}:${text}`, via: 'role' };
+}
+
+function exactName(text: string): RegExp {
+  return new RegExp(`^\\s*${escapeRegex(text)}\\s*$`, 'i');
 }
 
 function retarget(
@@ -498,7 +579,7 @@ function snapshotControls(): SnapControl[] {
       inputName: html.name || '',
       preceding: ctx.preceding,
       heading: ctx.heading,
-      text: txt(el).slice(0, 80),
+      text: (txt(el) || el.getAttribute('aria-label') || '').slice(0, 80),
       css: cssFor(el),
       visible: visibleInPage(el),
       enabled: !html.disabled && el.getAttribute('aria-disabled') !== 'true',

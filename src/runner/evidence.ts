@@ -101,23 +101,45 @@ function asPageError(value: string | PageErrorHit): PageErrorHit {
   return typeof value === 'string' ? { message: value } : value;
 }
 
+/** Stack URL, or a script URL named in the message when the stack has none. */
+export function resolvePageErrorSource(hit: PageErrorHit): string | undefined {
+  if (hit.sourceUrl) return hit.sourceUrl;
+  return scriptUrlFromError({ message: hit.message });
+}
+
 /**
- * True when the stack names a script on a different registrable domain
- * (ads, analytics, tag managers). An error with no script URL stays
- * first-party so a real page exception is not hidden.
+ * True when the throwing script is on a different registrable domain
+ * (ads, analytics, tag managers).
  */
 export function isThirdPartyPageError(hit: PageErrorHit, pageUrl: string): boolean {
-  if (!hit.sourceUrl) return false;
-  return isDifferentRegistrableDomain(hit.sourceUrl, pageUrl);
+  const source = resolvePageErrorSource(hit);
+  if (!source) return false;
+  return isDifferentRegistrableDomain(source, pageUrl);
+}
+
+/** No script URL in the stack or the message. Not a first-party bug. */
+export function isUnattributedPageError(hit: PageErrorHit): boolean {
+  return !resolvePageErrorSource(hit);
 }
 
 export function suggestionForThirdPartyError(hit: PageErrorHit, pageUrl: string): Suggestion {
-  const where = hit.sourceUrl ? ` from ${hit.sourceUrl}` : '';
+  const source = resolvePageErrorSource(hit);
+  const where = source ? ` from ${source}` : '';
   return {
     pageUrl,
     title: 'Third-party page error',
     detail: `Uncaught error${where}: ${truncate(hit.message, 240)}`,
     kind: 'third-party-error',
+    severity: 'info',
+  };
+}
+
+export function suggestionForUnattributedError(hit: PageErrorHit, pageUrl: string): Suggestion {
+  return {
+    pageUrl,
+    title: 'Unattributed page error',
+    detail: `Uncaught error with no script URL: ${truncate(hit.message, 240)}`,
+    kind: 'unattributed-error',
     severity: 'info',
   };
 }
@@ -139,7 +161,11 @@ export function oracleFromEvidence(
 ): StepOracle | null {
   const blocking = pageErrors
     .map(asPageError)
-    .filter(hit => !(pageUrl && isThirdPartyPageError(hit, pageUrl)));
+    .filter(hit => {
+      if (!pageUrl) return true;
+      if (isUnattributedPageError(hit)) return false;
+      return !isThirdPartyPageError(hit, pageUrl);
+    });
   if (blocking.length > 0) {
     return {
       error: 'pageerror',
@@ -176,9 +202,11 @@ export async function applyPassedOracles(
   await flushStepEvents(page);
   const pageUrl = page.url();
   const errors = evidence.pageErrorsByStep.get(stepIndex) ?? [];
-  const suggestions = errors
-    .filter(hit => isThirdPartyPageError(hit, pageUrl))
-    .map(hit => suggestionForThirdPartyError(hit, pageUrl));
+  const suggestions = errors.flatMap(hit => {
+    if (isThirdPartyPageError(hit, pageUrl)) return [suggestionForThirdPartyError(hit, pageUrl)];
+    if (isUnattributedPageError(hit)) return [suggestionForUnattributedError(hit, pageUrl)];
+    return [];
+  });
   const withNotes = suggestions.length
     ? { ...outcome, suggestions: [...(outcome.suggestions ?? []), ...suggestions] }
     : outcome;

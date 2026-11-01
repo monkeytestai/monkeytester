@@ -70,6 +70,7 @@ import {
   type CrawlQueueItem,
   type DiscoveredLink,
 } from './queue.js';
+import { decideAuthGated, screenFingerprint } from './screens.js';
 
 export interface ExploreOptions {
   /** Hard cap on how many pages the explorer visits. Default 8. */
@@ -105,7 +106,8 @@ export async function explore(
   const visited = new Set<string>();
   const start = canonicalPageUrl(startUrl);
   const queue: CrawlQueueItem[] = seedCrawlQueue(startUrl);
-  const pages: SiteMapPage[] = [];
+    const pages: SiteMapPage[] = [];
+    const seenScreens = new Set<string>();
   const failures: { url: string; reason: string }[] = [];
   const warnings: string[] = [];
   let authUrlsQueued = 0;
@@ -235,7 +237,16 @@ export async function explore(
         const outbound = selectOutboundLinks(linksOnCrawlSite(skeleton.links, startUrl));
         // Password field or auth URL is decisive. The model flag is only a
         // secondary signal when those two are absent.
-        const authGated = skeletonHasPassword(skeleton) || looksLikeAuthUrl(url) || summary.authGated;
+        const authGated = decideAuthGated(url, skeletonHasPassword(skeleton), summary.authGated);
+        const fingerprint = screenFingerprint({
+          title: skeleton.title,
+          heading: skeleton.headings[0],
+          fields: skeleton.inputs
+            .map(input => [input.type || '', input.name || '', input.id || '', input.label || ''].join(':'))
+            .filter(field => field.replace(/:/g, '').trim().length > 0),
+        });
+        if (fingerprint && seenScreens.has(fingerprint)) continue;
+        if (fingerprint) seenScreens.add(fingerprint);
 
         const sm: SiteMapPage = {
           url,
@@ -301,6 +312,7 @@ export async function explore(
       data: {
         siteType: overall.siteType,
         pagesVisited: pages.length,
+        pagesExplored: pages.length,
         pagesFailed: failures.length,
         ...(warnings.length ? { warnings } : {}),
       },
@@ -314,6 +326,7 @@ export async function explore(
       publicJourneys: overall.publicJourneys ?? undefined,
       authSurfaces: overall.authSurfaces ?? undefined,
       pages,
+      pagesExplored: pages.length,
       pendingUrls: queue.map(item => item.url),
       failedUrls: failures,
       ...(warnings.length ? { warnings } : {}),

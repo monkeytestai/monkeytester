@@ -21,10 +21,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The planner drops a journey that navigates to any URL the crawl did not see, including a URL on another host.
 - `estimateCostUsd` prices each step at that step's model. `gpt-5-mini` and `gpt-5-nano` have price rows. `gpt-4.1-nano` is marked deprecated.
 - Explorer model errors are on `SiteMap.warnings` and on the page (`SiteMapPage.warnings`), as well as in the server log. `RunResult.warnings` copies them, plus a line when the planner used the grounded fallback.
+- axe-core findings roll up by rule id across pages into one bug with `affectedPages`. `color-contrast` and `scrollable-region-focusable` are minor at most. Other serious or critical rules stay bugs, also one per rule.
+- The same HTTP failure (method + path + status) from two flows is one bug. `seenInFlows` lists the flows. Every step gets a `label`, taken from the action and target when the planner omits one.
+- A configured inbox (`MonkeyConfig.inbox`, `run.inbox`, or `plan.signupInbox: true`) plans exactly one account sign-up for a detected sign-up form. The "do not create an account" instruction applies only when no inbox is configured. `exploreAndPlan` and `executeAndTriage` pass the flag through.
+- A click aimed at `text:Search` prefers `getByRole(button | link | searchbox)`, then label, placeholder, and aria-label, and uses a stored CSS selector first. Hidden and duplicate matches are skipped. Text is the fallback. The recorded role is the element's role, so a link is not replayed as a button.
+- Sign-up validation clicks the form's own submit (`type="submit"` or a create-account / sign-up / register label). It does not click the first button, and it does not click OAuth controls (`Use Facebook`, `Continue with`, `Sign in with`, and `/auth/<provider>`). A hidden honeypot is not filled. A fill that fails before submit is `signup_reason` `automation_error` with `signup_started: true`, not a site bug. No sign-up form reports `signup_reason` `no_signup_form`.
+- Password-reset, OTP / magic-link / send-code, newsletter, checkout/payment, and account-deletion submits are blocked in the runner and at the network (the POST is aborted) unless the host allows them. An inbox allows OTP, reset, and the one sign-up. Empty validation still runs. `RunnerOptions.allowSensitive` names any extra kinds.
+- Navigation to `/auth/<provider>` or a known OAuth host is aborted. The flow is inconclusive.
+- Invented success copy is not a failing check. `text_visible` and `text_absent` misses are inconclusive. The planner is told to prefer a URL change, a form that leaves, a `role=alert` / `role=status` region, or the form request's HTTP status. A fill that leaves the field empty is an automation error. A confirm dialog is accepted only when the remaining steps ask for it.
+- A page error with no script URL in the stack or the message is a suggestion (`unattributed-error`), not a major bug. When the message names a script, that script decides first-party vs third-party.
+- Page checks run before sign-up and model flows, and each check records its own `durationMs`. A check skipped because the run is out of time has `outcome_reason` `budget_exhausted`, not a 0ms couldn't-confirm.
+- Sign-in, sign-up, register, and password-reset URLs are public screens, not auth-gated. Two URLs that render the same title, heading, and fields (for example `/` and `/signin`) are one page.
+- An input placeholder is not visible text. A placeholder of "Success" does not satisfy a text assertion.
 
 ### Added
 
 - `RunResult.suggestions` and `Suggestion` (`pageUrl`, `title`, `detail`, `kind`, `severity: 'info'`). Group by `pageUrl` for a per-page list. Omitted when empty.
+- `BugReport.affectedPages` for a rolled-up axe rule, and `BugReport.seenInFlows` (`{ flowId, name }`) when more than one flow hit the same HTTP failure.
+- `TestStep.label`, `StepResult.label`, and `TraceStep.label`.
+- `SuggestionKind` `unattributed-error`. `SignupReason` `automation_error`. `OutcomeReason` `budget_exhausted`. `RunResult.signup_started` and `RunResult.pagesExplored`.
+- `RunnerOptions.allowSensitive` (`signup`, `reset`, `otp`, `newsletter`, `payment`, `deletion`). An inbox already allows `signup`, `reset`, and `otp`.
 - `scripts/bakeoff.ts --runs N`. Each row reports suggestions separately from real bugs, records `plannerFallback`, and prices tokens per step.
 
 ## [0.7.0-beta.3] — 2026-11-01

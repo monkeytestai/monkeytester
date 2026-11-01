@@ -214,6 +214,13 @@ export interface SiteMap {
    */
   warnings?: string[];
   pages: SiteMapPage[];
+  /**
+   * Unique URLs that loaded, including auth-gated pages. A redirect that
+   * lands on a URL already in `pages` is not counted again. Failed loads
+   * stay in `failedUrls` and are not included. Equals `pages.length`
+   * after dedupe. Additive in 0.7.0-beta.4.
+   */
+  pagesExplored?: number;
   /** Pages the explorer noticed but did not actually visit. */
   pendingUrls: string[];
   /** Pages where the crawler hit auth walls / errors. */
@@ -344,6 +351,11 @@ export interface TestStep {
    * Omitted on other flows. Additive in 0.7.0-beta.3.
    */
   signupCheck?: SignupCheck;
+  /**
+   * Human-readable step name. Derived from `action` and `target` when the
+   * planner omits one. Additive in 0.7.0-beta.4.
+   */
+  label?: string;
 }
 
 export interface TestFlow {
@@ -454,6 +466,22 @@ export interface StepResult {
    * Additive in 0.7.0-beta.4.
    */
   suggestions?: Suggestion[];
+  /**
+   * Sign-up phases in order, for example "filled", "submitted",
+   * "inbox allocated", "waiting", "mail received" or "timeout",
+   * "link followed". Additive in 0.7.0-beta.4.
+   */
+  signupPhases?: string[];
+  /**
+   * Human-readable name. Always set on steps this engine records.
+   * Additive in 0.7.0-beta.4.
+   */
+  label?: string;
+  /**
+   * axe-core rules that failed on this step, one entry per rule.
+   * Triage rolls these up by `id` across pages. Additive in 0.7.0-beta.4.
+   */
+  axeRules?: AxeRuleFinding[];
 }
 
 export type FlowStatus = 'passed' | 'failed' | 'blocked' | 'error' | 'inconclusive';
@@ -506,7 +534,12 @@ export type OutcomeReason =
    * no before/after signal, or an ambiguous page). Additive in 0.7.0-beta.3.
    * Never paired with flow status `passed`.
    */
-  | 'assertion_unverifiable';
+  | 'assertion_unverifiable'
+  /**
+   * A page check was not started because the run's wall clock was already
+   * spent. Not "couldn't confirm". Additive in 0.7.0-beta.4.
+   */
+  | 'budget_exhausted';
 
 /**
  * Phase 3 signup result. Reserved in 0.7.0-beta.1 and left unset.
@@ -524,7 +557,12 @@ export type SignupReason =
   | 'payment'
   | 'timeout'
   | 'cap_reached'
-  | 'no_signup_form';
+  | 'no_signup_form'
+  /**
+   * Filling started and failed before submit (a hidden field, a locator
+   * timeout). Not a site bug. Additive in 0.7.0-beta.4.
+   */
+  | 'automation_error';
 
 export interface FlowResult {
   flowId: string;
@@ -623,6 +661,17 @@ export interface RunResult {
   signup_status?: SignupStatus;
   /** Phase 3. Unset in 0.7.0-beta.1. */
   signup_reason?: SignupReason;
+  /**
+   * True once sign-up filling has begun. Omitted until then.
+   * Additive in 0.7.0-beta.4.
+   */
+  signup_started?: boolean;
+  /**
+   * Same count as `SiteMap.pagesExplored` for this run. Unique loaded
+   * URLs, including auth-gated pages, excluding failed loads and redirect
+   * duplicates. Additive in 0.7.0-beta.4.
+   */
+  pagesExplored?: number;
   /** Aggregate stats for quick UI rendering. */
   stats: {
     flowsTotal: number;
@@ -663,7 +712,8 @@ export type SuggestionKind =
   | 'viewport'
   | 'description'
   | 'overflow'
-  | 'third-party-error';
+  | 'third-party-error'
+  | 'unattributed-error';
 
 export interface Suggestion {
   /** Page the note is about. */
@@ -731,6 +781,8 @@ export interface TraceStep {
   locator?: TraceLocator;
   /** Value typed (fill) or key pressed (press). */
   value?: string;
+  /** Human-readable name. Omitted on traces recorded before 0.7.0-beta.4. */
+  label?: string;
   /** Page URL before the action. */
   urlBefore?: string;
   /** Page URL after the action. */
@@ -874,6 +926,31 @@ export interface BugReport {
    * the field and does not fail the step. Omitted before 0.6.1.
    */
   element?: BugElement;
+  /**
+   * Pages where this same axe rule failed. One bug per rule, not per page.
+   * Omitted on bugs that are not rolled-up axe findings. Additive in 0.7.0-beta.4.
+   */
+  affectedPages?: string[];
+  /**
+   * Flows that hit the same HTTP failure (method + path + status).
+   * Omitted when the bug was seen in only the flow named by `flow_id`.
+   * Additive in 0.7.0-beta.4.
+   */
+  seenInFlows?: SeenInFlow[];
+}
+
+/** A flow that contributed to a deduped bug. */
+export interface SeenInFlow {
+  flowId: string;
+  name: string;
+}
+
+/** One axe-core rule on one page, before triage rolls rules up. */
+export interface AxeRuleFinding {
+  id: string;
+  impact: string;
+  help: string;
+  pageUrl?: string;
 }
 
 /* ── Live event stream (yielded by Monkey.run) ────────────────────────── */

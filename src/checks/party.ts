@@ -37,10 +37,18 @@ export function isDifferentRegistrableDomain(sourceUrl: string, pageUrl: string)
   return registrableDomain(source.hostname) !== registrableDomain(page.hostname);
 }
 
-/** First http(s) URL in a stack, which is the throwing script when the browser includes one. */
-export function scriptUrlFromError(err: { message?: string; stack?: string }): string | undefined {
-  const stack = err.stack || '';
-  const match = stack.match(HTTP_URL);
+function firstScriptUrl(text: string): string | undefined {
+  HTTP_URL.lastIndex = 0;
+  const match = text.match(HTTP_URL);
   if (!match) return undefined;
   return match[0].replace(/:\d+:\d+$/, '').replace(/[.,;]+$/, '');
+}
+
+/**
+ * Script URL for an uncaught error. The stack is preferred. When the stack
+ * has no URL, the message is used, because some browsers put the throwing
+ * script there instead.
+ */
+export function scriptUrlFromError(err: { message?: string; stack?: string }): string | undefined {
+  return firstScriptUrl(err.stack || '') || firstScriptUrl(err.message || '');
 }

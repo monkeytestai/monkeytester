@@ -11,7 +11,7 @@ import type { SiteMapFormInput, SiteMapPage } from '../types.js';
 export const SIGNUP_URL = /(?:^|[/?#=&._-])(?:sign[-_]?up|register|create[-_]?account|createaccount)(?=$|[/?#=&._-])/i;
 export const SIGNUP_SUBMIT = /\b(create(?:\s+an?)?\s+account|sign[\s-]*up|signup|register)\b/i;
 export const LOGIN_SUBMIT = /\b(sign[\s-]*in|log[\s-]*in|login)\b/i;
-export const OAUTH_LABEL = /\b(continue with|sign in with|log in with|sign up with|signup with)\b|\boauth\b/i;
+export const OAUTH_LABEL = /\b(?:continue with|sign[\s-]*in with|sign[\s-]*up with|log[\s-]*in with|use)\s+(?:google|facebook|github|apple|microsoft)\b|\b(?:continue with|sign in with|log in with|sign up with|signup with)\b|\boauth\b|\/auth\/(?:google|facebook|github|apple|microsoft)\b/i;
 const CONFIRM = /confirm|repeat|retype|again|password2|password_confirmation|passwd2/;
 const CAPTCHA = /captcha|recaptcha|hcaptcha|turnstile/i;
 const PHONE = /\b(phone|mobile)\b/i;
@@ -29,6 +29,8 @@ export interface SignupField {
   id?: string;
   required?: boolean;
   value?: string;
+  /** Set false by the probe for hidden, disabled, or off-screen controls. */
+  interactable?: boolean;
 }
 
 export interface SignupSurface {
@@ -58,11 +60,15 @@ export function isEmailField(field: SignupField): boolean {
 }
 
 export function isPasswordField(field: SignupField): boolean {
+  if (field.interactable === false) return false;
   const type = (field.type || '').toLowerCase();
+  if (type === 'hidden') return false;
   return type === 'password' || (field.name || '').toLowerCase() === 'password';
 }
 
 export function isConfirmField(field: SignupField): boolean {
+  if (field.interactable === false) return false;
+  if ((field.type || '').toLowerCase() === 'hidden') return false;
   if (!isPasswordField(field) && !/password/.test(fieldBlob(field))) return false;
   return CONFIRM.test(fieldBlob(field));
 }
@@ -90,7 +96,11 @@ export function syntacticEmail(value: string | undefined): boolean {
 }
 
 export function classifySignup(url: string | undefined, fields: SignupField[], submitLabels: string[]): SignupProbe {
-  const submits = submitLabels.map(label => label.trim()).filter(Boolean);
+  const visibleFields = fields.filter(field => field.interactable !== false && (field.type || '').toLowerCase() !== 'hidden');
+  const submits = submitLabels
+    .map(label => label.trim())
+    .filter(label => label && !OAUTH_LABEL.test(label));
+  fields = visibleFields;
   const urlHit = Boolean(url && SIGNUP_URL.test(url));
   const submitHit = submits.some(label => SIGNUP_SUBMIT.test(label) && !OAUTH_LABEL.test(label) && !LOGIN_SUBMIT.test(label));
   const passwords = fields.filter(isPasswordField);

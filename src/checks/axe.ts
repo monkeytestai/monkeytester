@@ -12,6 +12,21 @@ import type { Result } from 'axe-core';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
+/**
+ * Common, noisy WCAG hits. They stay bugs, but never above minor, and
+ * triage rolls every page into one item per rule.
+ */
+export const AXE_MINOR_RULES = new Set([
+  'color-contrast',
+  'scrollable-region-focusable',
+]);
+
+export function axeBugSeverity(ruleId: string, impact: string): 'critical' | 'major' | 'minor' {
+  if (AXE_MINOR_RULES.has(ruleId)) return 'minor';
+  if (impact === 'critical') return 'critical';
+  return 'major';
+}
+
 export interface AxeJudgement {
   serious: { id: string; impact: string; help: string }[];
   /** Missing autocomplete on login fields. Minor, not serious. */

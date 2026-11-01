@@ -107,6 +107,7 @@ const REASON_PRIORITY: OutcomeReason[] = [
   'nothing_tested',
   'no_assertion',
   'assertion_unverifiable',
+  'budget_exhausted',
 ];
 
 function firstReason(reasons: Array<OutcomeReason | undefined>): OutcomeReason | undefined {
@@ -141,12 +142,34 @@ function flowDetail(reason: OutcomeReason, flow: FlowResult): string {
       return `Our test couldn't complete ${name} because the journey had no outcome to verify. A flow is not passed just because its steps ran.`;
     case 'assertion_unverifiable':
       return `Our test couldn't complete ${name} because the expected outcome could not be checked on the page.`;
+    case 'budget_exhausted':
+      return `Our test didn't run ${name} because the run finished its time budget. This is not a failure to confirm the page.`;
     default:
       return `Our test couldn't complete ${name}. Check the URL and run again.`;
   }
 }
 
 function classifyFlow(flow: FlowResult): FlowResult {
+  if (flow.outcome_reason === 'budget_exhausted') {
+    return {
+      ...flow,
+      status: 'inconclusive',
+      bugIds: [],
+      outcome_reason: 'budget_exhausted',
+      outcome_detail: flow.outcome_detail || flowDetail('budget_exhausted', flow),
+    };
+  }
+  const automation = flow.steps.find(step => step.error === 'automation_error');
+  if (automation && !flow.steps.some(step => step.status === 'failed')) {
+    const phases = automation.signupPhases?.length ? ` Phases: ${automation.signupPhases.join(' → ')}.` : '';
+    return {
+      ...flow,
+      status: 'inconclusive',
+      bugIds: [],
+      outcome_reason: 'automation_error',
+      outcome_detail: `${automation.observation}${phases}`,
+    };
+  }
   const steps = flow.steps.map(demoteStep);
   const trace = flow.trace
     ? {
@@ -328,6 +351,8 @@ function runDetail(outcome: RunOutcome, reason: OutcomeReason | undefined, bugCo
       return 'Our test couldn\'t complete a journey because it had no outcome to verify. Steps running is not a pass.';
     case 'assertion_unverifiable':
       return 'Our test couldn\'t complete a journey because the expected outcome could not be checked on the page.';
+    case 'budget_exhausted':
+      return 'Page checks were not run because the run finished its time budget. This is not a failure to confirm the page.';
     default:
       return 'Our test couldn\'t complete a visit because nothing was executed. Check the URL and run again.';
   }

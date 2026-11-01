@@ -35,10 +35,12 @@ describe('page check classifiers', () => {
     expect(isIgnoredConsoleMessage('TypeError: cart is undefined', 'https://cdn.example/app.js', 'https://shop.example/')).toBe(true);
     expect(isIgnoredConsoleMessage('TypeError: cart is undefined', 'https://shop.example/app.js', 'https://shop.example/')).toBe(false);
     const judged = judgeConsole([
-      { kind: 'pageerror', message: 'checkout exploded' },
+      { kind: 'pageerror', message: 'checkout exploded', sourceUrl: 'https://shop.example/app.js' },
+      { kind: 'pageerror', message: 'Script error.' },
       { kind: 'console', message: 'waiting for locator("#save")' },
     ], 'https://shop.example/');
     expect(judged.bugs.map(hit => hit.message)).toEqual(['checkout exploded']);
+    expect(judged.unattributed.map(hit => hit.message)).toEqual(['Script error.']);
     expect(judged.ignored).toBe(1);
   });
 
@@ -194,7 +196,7 @@ describe('check fixtures', () => {
     expect(step('check-http', '/http')?.status).toBe('failed');
     expect(step('check-http', '/http')?.error).toMatch(/http-404/);
     expect(step('check-axe', '/axe')?.status).toBe('failed');
-    expect(step('check-axe', '/axe')?.severity).toBeUndefined();
+    expect(['major', 'critical']).toContain(step('check-axe', '/axe')?.severity);
     const login = step('check-axe', '/axe-login');
     expect(login?.status).toBe('passed');
     expect(login?.suggestions?.some(item => item.kind === 'autocomplete')).toBe(true);
@@ -212,8 +214,9 @@ describe('check fixtures', () => {
     expect(loginBug).toBeUndefined();
     expect(run.suggestions?.some(item => item.kind === 'autocomplete' && item.pageUrl.endsWith('/axe-login'))).toBe(true);
     expect(run.stats.bugsMinor).toBeGreaterThan(0);
-    const axeBug = run.bugs.find(bug => bug.flow_id === 'check-axe' && bug.page_url?.endsWith('/axe'));
-    expect(axeBug?.severity).toBe('major');
+    const axeBugs = run.bugs.filter(bug => bug.flow_id === 'check-axe' && bug.page_url?.endsWith('/axe'));
+    expect(axeBugs.length).toBeGreaterThan(0);
+    expect(axeBugs.every(bug => bug.severity === 'major' || bug.severity === 'critical')).toBe(true);
   }, 90_000);
 });
 

@@ -42,6 +42,7 @@ import { installPageNameHelper } from './locate.js';
 import { signupSubmitBlock } from '../signup/guard.js';
 import { emptySignupLedger, signupFields, type SignupLedger } from '../signup/ledger.js';
 import { evaluateOutcomeCheck, snapPage, type PageSnap } from '../outcome/check.js';
+import { installDialogPolicy, installSubmissionGuards, setStepIntent, type SensitiveKind } from './sensitive.js';
 
 export interface ReplayOptions {
   screenshotsDir: string;
@@ -73,6 +74,8 @@ export interface ReplayOptions {
   llm?: LLM;
   /** Same mailbox as a live run. Replay still refuses a second completed sign-up. */
   inbox?: InboxProvider;
+  /** Same allow-list as `RunnerOptions.allowSensitive`. */
+  allowSensitive?: SensitiveKind[];
 }
 
 export async function replayTraces(
@@ -169,6 +172,8 @@ async function replayFlow(
   signal.addEventListener('abort', onAbort, { once: true });
 
   const page = await context.newPage();
+  await installSubmissionGuards(page, { inbox: Boolean(opts.inbox), allow: opts.allowSensitive });
+  installDialogPolicy(page);
   const evidence = attachStepEvidence(page);
   const origins = collectOrigins([trace.startUrl]);
 
@@ -195,6 +200,7 @@ async function replayFlow(
       const urlBefore = page.url();
       const startedAt = new Date().toISOString();
       const stepStart = Date.now();
+      setStepIntent(page, `${recorded.action || ''}\n${recorded.expectation || ''}`);
       if (!beforeLast && recorded.index > 0) beforeLast = await snapPage(page);
       const played = await playStep(page, trace, recorded, opts, stepTimeout);
       if (played.halted) halted = true;

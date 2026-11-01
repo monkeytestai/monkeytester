@@ -4,6 +4,12 @@
  * and the number of times it was reported. The "after" column runs the
  * 0.7.0-beta.4 classifiers: a former false positive is a suggestion or is
  * not reported. Real bugs stay bugs.
+ *
+ * A later Banana Beings run (beta.3) is measured in test/roll-up.test.ts:
+ * 8 confirmed bugs (6 page-level axe hits + 2 copies of POST /api/contact 500)
+ * become 4 (one minor color-contrast, one minor scrollable-region-focusable,
+ * one critical button-name, one critical HTTP bug). Those two axe rules are
+ * never major or critical.
  */
 
 import { describe, expect, it } from 'vitest';

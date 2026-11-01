@@ -16,6 +16,7 @@ import type {
 } from '../types.js';
 import { isAutomationFault } from '../automation/signatures.js';
 import { impliedType, locateActionTarget, pageFn, type LocateHit } from './locate.js';
+import { blockSensitiveClick, isOauthNavigation, submissionPolicy } from './sensitive.js';
 
 const ACTION_TOOLS = ['click', 'fill', 'goto', 'wait', 'assert_text', 'press', 'noop'] as const;
 const ACTION_LOCATORS = ['css', 'role', 'text', 'placeholder', 'label', 'testid'] as const;
@@ -492,8 +493,14 @@ export async function executeAction(
         const acted = located.action;
         const disabled = await disabledOutcome(locator, acted, options?.strictOracles);
         if (disabled) return disabled;
+        const label = await controlLabel(locator);
+        const blocked = await blockSensitiveClick(page, `${label.text}\n${acted.target || ''}\n${acted.value || ''}`, label);
+        if (blocked) return guardSkip(blocked, 'sensitive-submit');
+        const prior = submissionPolicy(page)?.blocked;
         await locator.click({ timeout: timeoutMs });
         await settleSPA(page).catch(() => {});
+        const guarded = guardAfterNavigation(page, prior);
+        if (guarded) return guarded;
         return done('passed', `Clicked ${describeTarget(acted)}.`, acted);
       }
 
@@ -513,7 +520,26 @@ export async function executeAction(
           ? valueForInput(meta, action.value ?? '')
           : (action.value ?? '');
         const numeric = meta?.type === 'number' || meta?.type === 'tel' || meta?.type === 'range';
+        const beforeValue = await readInputValue(locator);
         await fillWithFallback(page, locator, safeValue, timeoutMs, numeric);
+        const afterValue = await readInputValue(locator);
+        if (safeValue.trim() && afterValue !== undefined && !afterValue.trim()) {
+          return {
+            status: 'skipped',
+            observation: `Fill did not change ${describeTarget(acted)}. The field is still empty, so this is an automation error, not a pass.`,
+            error: 'automation_error',
+            resolved: acted,
+          };
+        }
+        if (safeValue.trim() && beforeValue !== undefined && afterValue !== undefined
+          && afterValue.trim() === beforeValue.trim() && afterValue.trim() !== safeValue.trim()) {
+          return {
+            status: 'skipped',
+            observation: `Fill did not change ${describeTarget(acted)}. The value stayed ${JSON.stringify(afterValue.trim() || '')}, so this is an automation error, not a pass.`,
+            error: 'automation_error',
+            resolved: acted,
+          };
+        }
         return done('passed', `Typed "${truncate(safeValue, 40)}" into ${describeTarget(acted)}.`, acted);
       }
 
@@ -522,8 +548,11 @@ export async function executeAction(
         if (!/^https?:\/\//.test(url)){
           return { status: 'failed', observation: `Refused to navigate to non-http URL "${url}".`, error: 'invalid_url' };
         }
+        const prior = submissionPolicy(page)?.blocked;
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
         await settleSPA(page).catch(() => {});
+        const guarded = guardAfterNavigation(page, prior);
+        if (guarded) return guarded;
         return { status: 'passed', observation: `Navigated to ${url}.` };
       }
 
@@ -537,8 +566,22 @@ export async function executeAction(
       case 'assert_text': {
         const text = action.target || '';
         if (!text) return { status: 'skipped', observation: 'No text supplied for observation.' };
-        const found = await page.locator('body').filter({ hasText: text }).first().count();
-        if (found > 0){
+        const found = await page.evaluate((needle) => {
+          const chunks: string[] = [];
+          const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+          let node = walker.nextNode();
+          while (node) {
+            const parent = node.parentElement;
+            const tag = parent?.tagName || '';
+            if (parent && tag !== 'SCRIPT' && tag !== 'STYLE' && tag !== 'NOSCRIPT') {
+              const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+              if (text) chunks.push(text);
+            }
+            node = walker.nextNode();
+          }
+          return chunks.join(' ').toLowerCase().includes(needle.toLowerCase());
+        }, text).catch(() => false);
+        if (found){
           return { status: 'passed', observation: `Observed "${truncate(text, 60)}" on the page.` };
         }
         return {
@@ -554,11 +597,25 @@ export async function executeAction(
           if ('reason' in located) return miss(located.reason);
           const disabled = await disabledOutcome(located.locator, located.action, options?.strictOracles);
           if (disabled) return disabled;
+          const label = await controlLabel(located.locator);
+          const blocked = key === 'Enter'
+            ? await blockSensitiveClick(page, `${label.text}\n${located.action.target || ''}`, label)
+            : undefined;
+          if (blocked) return guardSkip(blocked, 'sensitive-submit');
+          const prior = submissionPolicy(page)?.blocked;
           await located.locator.press(key, { timeout: timeoutMs });
+          await settleSPA(page).catch(() => {});
+          const guarded = guardAfterNavigation(page, prior);
+          if (guarded) return guarded;
         } else {
+          const blocked = key === 'Enter' ? await blockSensitiveClick(page, await submitLabels(page)) : undefined;
+          if (blocked) return guardSkip(blocked, 'sensitive-submit');
+          const prior = submissionPolicy(page)?.blocked;
           await page.keyboard.press(key);
+          await settleSPA(page).catch(() => {});
+          const guarded = guardAfterNavigation(page, prior);
+          if (guarded) return guarded;
         }
-        await settleSPA(page).catch(() => {});
         return { status: 'passed', observation: `Pressed ${key}${action.target ? ` on ${describeTarget(action)}` : ''}.` };
       }
 
@@ -573,6 +630,10 @@ export async function executeAction(
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    const guarded = /ERR_BLOCKED_BY_CLIENT|blockedbyclient/i.test(msg)
+      ? (guardAfterNavigation(page) || guardSkip('The browser blocked that request. The outcome is inconclusive.', isOauthNavigation(safePageUrl(page)) ? 'oauth-navigation' : 'sensitive-submit'))
+      : guardAfterNavigation(page, submissionPolicy(page)?.blocked);
+    if (guarded) return guarded;
     if (isAutomationFault(msg) || isSoftAutomationMiss(msg)){
       return {
         status: 'skipped',
@@ -691,7 +752,7 @@ export async function skeletonForLLM(page: Page): Promise<PageSkeletonForLLM> {
       .map(txt).filter(Boolean).slice(0, 12);
 
     const buttons = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'))
-      .map(b => txt(b) || (b as HTMLInputElement).value || '')
+      .map(b => txt(b) || b.getAttribute('aria-label') || (b as HTMLInputElement).value || '')
       .filter(Boolean).slice(0, 25);
 
     const links = Array.from(document.querySelectorAll('a[href]'))
@@ -794,11 +855,17 @@ export async function skeletonForLLM(page: Page): Promise<PageSkeletonForLLM> {
 }
 
 export async function settleSPA(page: Page): Promise<void> {
-  await page.waitForLoadState('networkidle', { timeout: 4_000 }).catch(() => {});
+  const ready = await page.evaluate(() => {
+    const text = (document.body?.innerText || '').replace(/\s+/g, '');
+    return text.length > 20 || Boolean(document.querySelector('form, button, a, input, [role="button"]'));
+  }).catch(() => true);
+  if (ready) return;
+  await page.waitForLoadState('networkidle', { timeout: 400 }).catch(() => {});
   await page.waitForFunction(
-    () => (document.body?.innerText || '').replace(/\s+/g, '').length > 30,
+    () => (document.body?.innerText || '').replace(/\s+/g, '').length > 20
+      || Boolean(document.querySelector('form, button, [role="button"]')),
     undefined,
-    { timeout: 6_000 },
+    { timeout: 800 },
   ).catch(() => {});
 }
 
@@ -865,6 +932,64 @@ async function elementFor(
 
 function miss(reason: string): ActionOutcome {
   return { status: 'skipped', observation: reason, error: 'locator-unresolved' };
+}
+
+function guardSkip(observation: string, error: 'sensitive-submit' | 'oauth-navigation'): ActionOutcome {
+  return { status: 'skipped', observation, error };
+}
+
+function guardAfterNavigation(page: Page, prior?: string): ActionOutcome | undefined {
+  const policy = submissionPolicy(page);
+  const url = safePageUrl(page);
+  const fresh = policy?.blocked && policy.blocked !== prior ? policy.blocked : undefined;
+  if ((fresh && fresh.startsWith('oauth')) || isOauthNavigation(url)) {
+    return guardSkip(
+      fresh
+        ? `Blocked ${fresh}. The outcome is inconclusive.`
+        : `Navigation to ${url} is an OAuth page. The outcome is inconclusive.`,
+      'oauth-navigation',
+    );
+  }
+  if (fresh) return guardSkip(`Blocked ${fresh}. The outcome is inconclusive.`, 'sensitive-submit');
+  return undefined;
+}
+
+function safePageUrl(page: Page): string {
+  try { return page.url(); } catch { return ''; }
+}
+
+async function controlLabel(locator: Locator): Promise<{ text: string; tag?: string; inForm?: boolean }> {
+  try {
+    const info = await locator.first().evaluate(el => {
+      const html = el as HTMLElement;
+      return {
+        text: (html.innerText || html.getAttribute('aria-label') || (el as HTMLInputElement).value || '').replace(/\s+/g, ' ').trim(),
+        tag: el.tagName.toLowerCase(),
+        inForm: Boolean(el.closest('form')),
+      };
+    });
+    return info;
+  } catch {
+    return { text: '' };
+  }
+}
+
+async function submitLabels(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    return Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]'))
+      .map(el => ((el as HTMLElement).innerText || el.getAttribute('aria-label') || (el as HTMLInputElement).value || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join('\n');
+  }).catch(() => '');
+}
+
+async function readInputValue(locator: Locator): Promise<string | undefined> {
+  try {
+    if (await locator.count() < 1) return undefined;
+    return await locator.inputValue();
+  } catch {
+    return undefined;
+  }
 }
 
 function done(status: StepStatus, observation: string, acted: ResolvedAction): ActionOutcome {

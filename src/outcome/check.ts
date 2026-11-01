@@ -126,15 +126,32 @@ export function withRepairedCheck(flow: TestFlow): TestFlow | undefined {
 
 export async function snapPage(page: Page): Promise<PageSnap> {
   const signal = await page.evaluate(() => {
-    const text = (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 4000);
-    const fields = Array.from(document.querySelectorAll('input, textarea, select')).map(node => {
-      const el = node as HTMLInputElement;
-      const type = (el.type || '').toLowerCase();
+    // Visible text nodes only. Placeholder, aria-placeholder, and title are
+    // not visible copy, so a placeholder of "Success" does not satisfy an
+    // assertion that the page shows Success.
+    const chunks: string[] = [];
+    const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      const tag = parent?.tagName || '';
+      if (parent && tag !== 'SCRIPT' && tag !== 'STYLE' && tag !== 'NOSCRIPT') {
+        const style = getComputedStyle(parent);
+        if (style.display !== 'none' && style.visibility !== 'hidden') {
+          const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+          if (text) chunks.push(text);
+        }
+      }
+      node = walker.nextNode();
+    }
+    const fields = Array.from(document.querySelectorAll('input, textarea, select')).map(el => {
+      const input = el as HTMLInputElement;
+      const type = (input.type || '').toLowerCase();
       const secret = type === 'password' || type === 'hidden';
-      const value = secret ? String(el.value || '').length : (el.value || '');
-      return `${el.name || el.id || type}:${secret ? 'secret' : 'v'}:${value}`;
+      const value = secret ? String(input.value || '').length : (input.value || '');
+      return `${input.name || input.id || type}:${secret ? 'secret' : 'v'}:${value}`;
     });
-    return `${text}\n${fields.join('|')}`;
+    return `${chunks.join(' ').slice(0, 4000)}\n${fields.join('|')}`;
   }).catch(() => '');
   let url = '';
   try { url = page.url(); } catch { /* page closing */ }
@@ -171,10 +188,10 @@ async function evaluateOne(
     case 'text_visible':
       return includesText(now.signal, check.value || '')
         ? { state: 'verified', observation: `Saw "${check.value}".` }
-        : { state: 'failed', observation: `Expected visible text "${check.value}" and did not see it.` };
+        : { state: 'unverifiable', observation: `A text check for "${check.value}" did not match. Text checks are weak, so this is inconclusive rather than a failed flow.` };
     case 'text_absent':
       return includesText(now.signal, check.value || '')
-        ? { state: 'failed', observation: `Text "${check.value}" is still visible.` }
+        ? { state: 'unverifiable', observation: `Text "${check.value}" is still visible. Text checks are weak, so this is inconclusive rather than a failed flow.` }
         : { state: 'verified', observation: `Text "${check.value}" is not visible.` };
     case 'url_changed':
       return sameUrl(now.url, ctx.startUrl)

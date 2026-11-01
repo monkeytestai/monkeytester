@@ -163,6 +163,8 @@ export type {
   Suggestion,
   SuggestionKind,
   BugReport,
+  SeenInFlow,
+  AxeRuleFinding,
   BugEvidence,
   BugTrace,
   FlowTrace,

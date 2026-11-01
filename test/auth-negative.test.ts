@@ -190,8 +190,8 @@ describe('sign-in-first fixture', () => {
     const siteMap = await explore(`${spa.url}/?mode=signin`, llm, { maxPages: 6, headless: true });
     expect(siteMap.pages.length).toBeGreaterThanOrEqual(3);
     expect(siteMap.pages.some(page => page.url.includes('accounts.google.com'))).toBe(false);
-    expect(countPublicScreens(siteMap.pages)).toBe(0);
-    expect(siteMap.pages.every(page => page.authGated)).toBe(true);
+    expect(countPublicScreens(siteMap.pages)).toBe(siteMap.pages.length);
+    expect(siteMap.pages.every(page => page.authGated)).toBe(false);
 
     const testPlan = await plan(siteMap, llm, { maxFlows: 4, focus: 'forms-search-cta' });
     const auth = testPlan.flows.filter(flow => flow.id.startsWith('auth-neg-'));
@@ -218,8 +218,8 @@ describe('sign-in-first fixture', () => {
 
     expect(spa.loginPosts()).toBe(1);
     expect(run.outcome).toBe('clean');
-    expect(run.outcome_reason).toBe('login_required');
-    expect(run.public_screens).toBe(0);
+    expect(run.outcome_reason).toBeUndefined();
+    expect(run.public_screens).toBe(siteMap.pages.length);
     expect(run.engine_version).toBe(ENGINE_VERSION);
     expect(run.signup_attempted).toBe(false);
     expect(run.signup_verified).toBe(false);

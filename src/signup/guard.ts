@@ -17,7 +17,40 @@ export interface SignupBlock {
 
 export async function probeSignup(page: Page): Promise<SignupProbe> {
   const raw = await page.evaluate(() => {
-    const fields = Array.from(document.querySelectorAll('input, textarea, select')).map(node => {
+    function interactable(el: Element): boolean {
+      const html = el as HTMLInputElement;
+      const type = (html.getAttribute('type') || '').toLowerCase();
+      if (type === 'hidden' || html.disabled) return false;
+      if (html.hidden || html.getAttribute('aria-hidden') === 'true') return false;
+      let node: Element | null = html;
+      while (node) {
+        if (node instanceof HTMLElement) {
+          if (node.hidden || node.getAttribute('aria-hidden') === 'true' || node.hasAttribute('inert')) return false;
+        }
+        node = node.parentElement;
+      }
+      const style = getComputedStyle(html);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+      const rect = html.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return false;
+      if (rect.right < 0 || rect.bottom < 0) return false;
+      const docW = Math.max(document.documentElement.scrollWidth, window.innerWidth);
+      const docH = Math.max(document.documentElement.scrollHeight, window.innerHeight);
+      if (rect.left > docW || rect.top > docH) return false;
+      if (html.getAttribute('tabindex') === '-1' && !html.getAttribute('aria-label') && !html.getAttribute('aria-labelledby')) {
+        const labelled = html.id && document.querySelector(`label[for="${CSS.escape(html.id)}"]`);
+        if (!labelled) return false;
+      }
+      return true;
+    }
+    function oauthLabel(text: string, href: string): boolean {
+      const blob = `${text} ${href}`;
+      if (/\/auth\/(?:google|facebook|github|apple|microsoft)\b/i.test(blob)) return true;
+      if (/\b(?:continue with|sign[\s-]*in with|sign[\s-]*up with|log[\s-]*in with|use)\s+(?:google|facebook|github|apple|microsoft)\b/i.test(text)) return true;
+      if (/\b(?:continue with|sign in with|log in with|sign up with)\b/i.test(text)) return true;
+      return false;
+    }
+    const fields = Array.from(document.querySelectorAll('input, textarea, select')).filter(interactable).map(node => {
       const el = node as HTMLInputElement;
       const label = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || '';
       return {
@@ -28,11 +61,16 @@ export async function probeSignup(page: Page): Promise<SignupProbe> {
         id: el.id || '',
         required: el.required,
         value: el.value || '',
+        interactable: true,
       };
     });
-    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]'))
-      .map(node => (node as HTMLElement).innerText || (node as HTMLInputElement).value || node.getAttribute('aria-label') || '')
-      .map(text => text.replace(/\s+/g, ' ').trim())
+    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"], a[href]'))
+      .filter(interactable)
+      .map(node => {
+        const text = ((node as HTMLElement).innerText || (node as HTMLInputElement).value || node.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+        const href = node.getAttribute('href') || '';
+        return oauthLabel(text, href) ? '' : text;
+      })
       .filter(Boolean);
     const captcha = Boolean(document.querySelector('iframe[src*="captcha" i], iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="turnstile" i], [name*="captcha" i]'));
     return { url: location.href, fields, buttons, captcha };

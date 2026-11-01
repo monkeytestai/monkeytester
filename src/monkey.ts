@@ -156,6 +156,7 @@ export class Monkey {
     const testPlan = await plan(siteMap, this.plannerLLM, {
       ...opts.plan,
       maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
+      signupInbox: opts.plan?.signupInbox === true || Boolean(this.inbox),
       events,
     });
     return { siteMap, plan: testPlan };
@@ -190,7 +191,7 @@ export class Monkey {
       testPlan = await planWithinBudget(planLimit, () => plan(siteMap, this.plannerLLM, {
         ...opts.plan,
         maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
-        signupInbox: Boolean(opts.run.inbox ?? this.inbox),
+        signupInbox: opts.plan?.signupInbox === true || Boolean(opts.run.inbox ?? this.inbox),
         events,
       }));
     } catch (err) {
@@ -463,7 +464,10 @@ export class Monkey {
 
     let testPlan: TestPlan;
     try {
-      testPlan = await plan(siteMap, this.plannerLLM, opts.plan);
+      testPlan = await plan(siteMap, this.plannerLLM, {
+        ...opts.plan,
+        signupInbox: opts.plan?.signupInbox === true || Boolean(this.inbox),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const fallback = markPlannerFallback(groundedTestPlan(
@@ -524,8 +528,11 @@ function withRunWarnings(run: RunResult, siteMap: SiteMap, plan: TestPlan): RunR
       : 'Planner used the grounded fallback.';
     warnings.push(line);
   }
-  if (warnings.length === 0) return run;
-  return { ...run, warnings };
+  return {
+    ...run,
+    pagesExplored: siteMap.pagesExplored ?? siteMap.pages.length,
+    ...(warnings.length ? { warnings } : {}),
+  };
 }
 
 /**

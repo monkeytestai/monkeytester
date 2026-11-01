@@ -17,6 +17,7 @@ import type {
   PageCheck,
   StepResult,
   Suggestion,
+  AxeRuleFinding,
   TestFlow,
   TraceStep,
 } from '../types.js';
@@ -34,9 +35,10 @@ import {
   sameSiteLinks,
   type ObservedRequest,
 } from './http.js';
-import { readMissingLoginAutocomplete, runAxe } from './axe.js';
+import { axeBugSeverity, readMissingLoginAutocomplete, runAxe } from './axe.js';
 import { judgeMeta, readMetaInPage } from './meta.js';
 import { judgeMobile, MOBILE_VIEWPORT, readMobileInPage } from './mobile.js';
+import { waitForDocumentReady } from './ready.js';
 
 export interface CheckStepOutcome {
   status: 'passed' | 'failed' | 'skipped';
@@ -47,6 +49,8 @@ export interface CheckStepOutcome {
   networkFailures?: NetworkFailureEvidence[];
   /** Style notes. The step can still pass. Not bugs. */
   suggestions?: Suggestion[];
+  /** Every serious or critical axe rule on this page. Triage rolls them up. */
+  axeRules?: AxeRuleFinding[];
 }
 
 export interface AxeFindingInput {
@@ -218,7 +222,8 @@ export async function executePageChecks(
       if (budgetUsed || (opts.deadlineAt !== undefined && Date.now() > opts.deadlineAt)) {
         budgetUsed = true;
         for (const flow of flows) {
-          await record(flow, url, skipped('Skipped: the run finished its time budget before this check.'), opts, steps, traces);
+          const started = Date.now();
+          await record(flow, url, skipped('budget_exhausted: the run finished its time budget before this check.'), opts, steps, traces, undefined, Math.max(1, Date.now() - started));
         }
         continue;
       }
@@ -232,36 +237,39 @@ export async function executePageChecks(
       } catch (err) {
         loadError = err;
       }
-      if (!loadError) await desktopPage.waitForTimeout(200).catch(() => {});
+      if (!loadError) await waitForDocumentReady(desktopPage, 800);
       const status = response?.status();
 
       for (const flow of flows) {
         const kind = kindOf(flow);
         if (!kind || kind === 'mobile') continue;
+        const started = Date.now();
         const outcome = loadError
           ? loadFailure(kind, url, loadError)
           : status && status >= 400 && kind !== 'http'
             ? skipped(`Page responded HTTP ${status}, so this check was not run.`)
             : await assessLoadedPage(desktopPage, kind, url, collected, linkBudget, status);
-        await record(flow, url, outcome, opts, steps, traces, desktopPage);
+        await record(flow, url, outcome, opts, steps, traces, desktopPage, Math.max(1, Date.now() - started));
       }
 
       const mobileFlow = flows.find(flow => kindOf(flow) === 'mobile');
       if (mobileFlow) {
         if (loadError || (status && status >= 400)) {
-          await record(mobileFlow, url, skipped('Page did not load, so the mobile check was not run.'), opts, steps, traces);
+          const started = Date.now();
+          await record(mobileFlow, url, skipped('Page did not load, so the mobile check was not run.'), opts, steps, traces, undefined, Math.max(1, Date.now() - started));
         } else {
           let mobileError: unknown;
+          const started = Date.now();
           try {
             await mobilePage.goto(url, { waitUntil: 'domcontentloaded', timeout: opts.stepTimeoutMs });
-            await mobilePage.waitForTimeout(100).catch(() => {});
+            await waitForDocumentReady(mobilePage, 800);
           } catch (err) {
             mobileError = err;
           }
           const outcome = mobileError
             ? skipped('Page did not load at 375px, so the mobile check was not run.')
             : await assessLoadedPage(mobilePage, 'mobile', url, bucket(mobilePage), linkBudget);
-          await record(mobileFlow, url, outcome, opts, steps, traces, mobilePage);
+          await record(mobileFlow, url, outcome, opts, steps, traces, mobilePage, Math.max(1, Date.now() - started));
         }
       }
     }
@@ -275,15 +283,17 @@ export async function executePageChecks(
     const traceSteps = traces.get(flow.id) ?? [];
     const failed = flowSteps.some(step => step.status === 'failed');
     const ran = flowSteps.some(step => step.status === 'passed' || step.status === 'failed');
-    const assertion = ran ? 'verified' as const : 'unverifiable' as const;
+    const budget = flowSteps.length > 0 && flowSteps.every(step => /budget_exhausted/.test(step.observation));
+    const assertion = budget ? undefined : ran ? 'verified' as const : 'unverifiable' as const;
     const result: FlowResult = {
       flowId: flow.id,
       name: flow.name,
       description: flow.description,
       kind: flow.kind,
       startUrl: flow.startUrl,
-      status: resolveFlowStatus(flowSteps, failed, assertion),
-      assertion,
+      status: budget ? 'inconclusive' : resolveFlowStatus(flowSteps, failed, assertion ?? 'unverifiable'),
+      ...(assertion ? { assertion } : {}),
+      ...(budget ? { outcome_reason: 'budget_exhausted' as const, outcome_detail: 'Page checks were not run because the run finished its time budget. This is not a failure to confirm the page.' } : {}),
       ...(failed ? { failureReason: flowSteps.find(step => step.status === 'failed')?.error } : {}),
       severityIfFails: flow.severityIfFails,
       steps: flowSteps,
@@ -323,14 +333,22 @@ async function assessLoadedPage(
 
 function judgeConsoleStep(collected: Collected, url: string): CheckStepOutcome {
   const judged = judgeConsole(collected.hits, url);
-  const suggestions = judged.thirdParty.map(hit => note(
-    'third-party-error',
-    url,
-    'Third-party page error',
-    hit.sourceUrl
-      ? `Uncaught error from ${hit.sourceUrl}: ${hit.message}`
-      : `Uncaught error: ${hit.message}`,
-  ));
+  const suggestions = [
+    ...judged.thirdParty.map(hit => note(
+      'third-party-error',
+      url,
+      'Third-party page error',
+      hit.sourceUrl
+        ? `Uncaught error from ${hit.sourceUrl}: ${hit.message}`
+        : `Uncaught error: ${hit.message}`,
+    )),
+    ...judged.unattributed.map(hit => note(
+      'unattributed-error',
+      url,
+      'Unattributed page error',
+      `Uncaught error with no script URL: ${hit.message}`,
+    )),
+  ];
   if (judged.bugs.length === 0) {
     const ignored = judged.ignored ? [`Ignored ${judged.ignored} third-party or automation message${judged.ignored === 1 ? '' : 's'}.`] : [];
     return passed('No first-party console error or uncaught exception on load.', ignored, suggestions);
@@ -409,9 +427,20 @@ export function outcomeForAxe(input: AxeFindingInput): CheckStepOutcome {
   const suggestions = input.autocomplete.slice(0, 4).map(line => note('autocomplete', input.pageUrl, 'Missing autocomplete', line));
   const info = input.info.slice(0, 4);
   if (input.serious.length > 0) {
-    const lines = input.serious.slice(0, 4).map(item => `${item.impact} ${item.id}: ${item.help}`);
-    const first = input.serious[0];
-    return failed(lines.join(' '), `axe:${first.id}`, suggestions.length ? { suggestions } : {}, info);
+    const rules: AxeRuleFinding[] = input.serious.map(item => ({
+      id: item.id,
+      impact: item.impact,
+      help: item.help,
+      pageUrl: input.pageUrl,
+    }));
+    const lines = rules.slice(0, 4).map(item => `${item.impact} ${item.id}: ${item.help}`);
+    const ranks = rules.map(rule => axeBugSeverity(rule.id, rule.impact));
+    const severity = ranks.includes('critical') ? 'critical' : ranks.includes('major') ? 'major' : 'minor';
+    return failed(lines.join(' '), `axe:${rules[0].id}`, {
+      severity,
+      axeRules: rules,
+      ...(suggestions.length ? { suggestions } : {}),
+    }, info);
   }
   return passed(
     input.info.length ? 'No serious or critical WCAG A/AA violation.' : 'No WCAG A/AA violation.',
@@ -515,6 +544,7 @@ async function record(
   steps: Map<string, StepResult[]>,
   traces: Map<string, TraceStep[]>,
   page?: Page,
+  durationMs = 1,
 ): Promise<void> {
   const list = steps.get(flow.id);
   if (!list) return;
@@ -531,12 +561,13 @@ async function record(
     tool: 'check',
     target: url,
     resolution: 'recorded',
-    durationMs: 0,
+    durationMs: Math.max(1, durationMs),
     ...(outcome.error ? { error: outcome.error } : {}),
     ...(outcome.severity ? { severity: outcome.severity } : {}),
     ...(outcome.consoleErrors ? { consoleErrors: outcome.consoleErrors } : {}),
     ...(outcome.networkFailures ? { networkFailures: outcome.networkFailures } : {}),
     ...(outcome.suggestions?.length ? { suggestions: outcome.suggestions } : {}),
+    ...(outcome.axeRules?.length ? { axeRules: outcome.axeRules } : {}),
   };
   if (outcome.status === 'failed' && page) {
     const path = shotPath(opts.screenshotsDir, flow.id, index, outcome.status);
