@@ -230,7 +230,7 @@ describe('planner public form flow', () => {
     expect(text).toContain('/api/contact');
     expect(text).toContain('email');
     expect(text).toContain('Send message');
-    expect(result.flows).toHaveLength(6);
+    expect(result.flows.filter(item => !item.id.startsWith('check-'))).toHaveLength(6);
     // /about was not in the crawl, so that model journey is not a test.
     expect(result.flows.some(item => item.id === 'about-page-brand-information')).toBe(false);
     expect(result.notes).toContain('start URL was not crawled');

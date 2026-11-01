@@ -1,6 +1,6 @@
 {
   "name": "@monkeytestai/monkeytester",
-  "version": "0.7.0-beta.1",
+  "version": "0.7.0-beta.2",
   "description": "Open-source AI exploratory testing engine. Crawls a real browser with Playwright, plans flows with an LLM, executes with screenshots, and reports deduplicated bugs. Works with OpenAI, Gemini, Anthropic, Mistral, Groq, or any OpenAI-compatible endpoint.",
   "license": "AGPL-3.0-only",
   "author": "MonkeyTest",
@@ -68,6 +68,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
+    "@axe-core/playwright": "^4.10.2",
     "@google/generative-ai": "^0.24.1",
     "@mistralai/mistralai": "^1.15.1",
     "openai": "^4.77.0",

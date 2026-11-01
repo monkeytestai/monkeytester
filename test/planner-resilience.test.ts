@@ -138,8 +138,8 @@ describe('plan survives a bad model response', () => {
     const result = await plan(fixtureMap(), llm, { maxFlows: 6, events: bus });
     const actions = result.flows.flatMap(flow => flow.steps.map(step => step.action)).join('\n');
 
-    expect(result.flows.length).toBeGreaterThan(0);
-    expect(result.flows.length).toBeLessThanOrEqual(6);
+    expect(result.flows.filter(flow => !flow.id.startsWith('check-')).length).toBeGreaterThan(0);
+    expect(result.flows.filter(flow => !flow.id.startsWith('check-')).length).toBeLessThanOrEqual(6);
     expect(result.flows.some(flow => flow.id === 'public-form-submit')).toBe(true);
     expect(actions).toContain('Send message');
     expect(actions).toContain('Click "Save order"');
@@ -167,7 +167,7 @@ describe('plan survives a bad model response', () => {
     expect(result.flows.some(flow => flow.id === 'public-form-submit')).toBe(true);
     expect(result.flows.some(flow => flow.id === 'browse-0')).toBe(true);
     expect(result.flows.some(flow => flow.id === 'browse-5')).toBe(false);
-    expect(result.flows.length).toBeLessThanOrEqual(6);
+    expect(result.flows.filter(flow => !flow.id.startsWith('check-')).length).toBeLessThanOrEqual(6);
     expect(result.notes).toContain('no usable steps');
     expect(result.notes).toContain('public form');
   });
@@ -197,7 +197,8 @@ describe('plan survives a bad model response', () => {
       },
     };
     const result = await plan(searchOnly, llm, { maxFlows: 6 });
-    expect(result.flows).toEqual([]);
+    expect(result.flows.filter(flow => !flow.id.startsWith('check-'))).toEqual([]);
+    expect(result.flows.filter(flow => flow.id.startsWith('check-'))).toHaveLength(5);
     expect(result.notes).toContain('not valid JSON');
   });
 });

@@ -115,11 +115,12 @@ Print the engine version.
 | ----------------------- | -------------- | --------------------------------------------------------------------- |
 | `-d, --dir <path>`      | `.monkeytest`  | Working directory                                                     |
 | `--provider <id>`       | auto-detect    | `openai` \| `gemini` \| `anthropic` \| `mistral` \| `groq` \| `openai_compatible` |
-| `--model <id>`          | provider best  | Specific model id                                                     |
+| `--model <id>`          | provider best  | Runner model. Also the planner, unless `--planner-model` is set. Page summaries stay on the cheap model. |
+| `--planner-model <id>`  | —              | Planner model only. Does not change per-page summaries or the runner. |
 | `--api-key <key>`       | env var        | Override the env API key                                              |
 | `--base-url <url>`      | —              | Required for `openai_compatible` (Ollama, vLLM, OpenRouter, …)        |
 | `--quality <preset>`    | `balanced`     | `cheap` \| `balanced` \| `smart` (used by `autoLLMConfig`)            |
-| `--depth <preset>`      | —              | `basic` (Quick pass) \| `standard` \| `deep` \| `shallow`. `basic` crawls at most 6 pages and plans 4 flows, biased to forms, search, and primary CTAs. `--max` and `--flows` override the preset. |
+| `--depth <preset>`      | —              | `basic` (Quick pass) \| `standard` \| `deep` \| `shallow`. `basic` crawls 6 pages, plans 5 LLM flows, adds page checks outside that budget, and stops at 120s. `--max` and `--flows` override the page and flow caps. |
 | `-m, --max <n>`         | `8`            | Max pages to crawl (`run`, `explore`). A few slots are reserved for help, contact, support, and about links the crawl actually saw. |
 | `--flows <n>`           | `6`            | Max flows to plan. A crawled public form, one enabled button, one link to a page that was not crawled, and one disabled button each keep a grounded flow when the budget allows. |
 | `--fail-on-5xx`         | on             | Fail a step that saw a same-origin HTTP ≥500 (document, xhr, or fetch) and report a blocking bug. `new Monkey()` defaults this on too. |

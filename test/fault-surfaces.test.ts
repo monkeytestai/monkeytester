@@ -179,7 +179,7 @@ describe('fault-surface flows', () => {
     expect(form?.steps.map(step => step.action).join('\n')).toContain('/api/contact');
     expect(result.flows.some(flow => flow.id === 'help-page-send-note')).toBe(false);
     expect(result.flows.some(flow => flow.id.startsWith('fault-'))).toBe(true);
-    expect(result.flows.length).toBeLessThanOrEqual(6);
+    expect(result.flows.filter(flow => !flow.id.startsWith('check-')).length).toBeLessThanOrEqual(6);
   });
 });
 

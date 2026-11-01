@@ -162,7 +162,7 @@ describe('plan floor after an apex → www crawl', () => {
       },
     };
     const result = await plan(crawled, llm, { maxFlows: 2 });
-    expect(result.flows.map(item => item.id)).toEqual([
+    expect(result.flows.filter(item => !item.id.startsWith('check-')).map(item => item.id)).toEqual([
       'public-form-submit',
       'fault-link-track-order',
     ]);
@@ -194,7 +194,7 @@ describe('plan floor after an apex → www crawl', () => {
     // The form floor runs only for a public form the crawl recorded.
     // The homepage search box stays under the score cutoff. Help is a link click.
     expect(result.flows.some(item => item.id === 'public-form-submit')).toBe(false);
-    expect(result.flows.map(item => item.id)).toEqual([
+    expect(result.flows.filter(item => !item.id.startsWith('check-')).map(item => item.id)).toEqual([
       'homepage-browse',
       'fault-link-help',
     ]);

@@ -95,7 +95,8 @@ describe('unlabeled number input', () => {
     const blob = result.flows.map(flow => `${flow.name} ${flow.steps.map(step => step.action).join(' ')}`).join('\n');
     expect(blob.toLowerCase()).not.toMatch(/checkbox/);
     expect(blob.toLowerCase()).not.toMatch(/text input|text field|textbox/);
-    expect(result.flows.map(flow => flow.id)).toEqual(['number-input']);
+    expect(result.flows.filter(flow => !flow.id.startsWith('check-')).map(flow => flow.id)).toEqual(['number-input']);
+    expect(result.flows.some(flow => flow.id === 'check-console')).toBe(true);
     expect(result.flows[0].steps[0].action).toMatch(/input\[type=number\]|number/i);
     expect(result.notes).toMatch(/Dropped 2 flows/);
     expect(result.notes).toMatch(/no checkbox/);

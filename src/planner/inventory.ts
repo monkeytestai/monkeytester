@@ -26,6 +26,22 @@ export interface ReconciledFlows {
 
 const GENERIC = new Set(['input', 'inputs', 'field', 'fields', 'box', 'the', 'a', 'an', 'control', 'element', 'form']);
 
+/**
+ * Kept model flows that still name a page or control the crawl did not see.
+ * Engine flows are ignored. Used by the bake-off harness on top of the
+ * reconciler's own drop list.
+ */
+export function findUncrawledReferences(flows: TestFlow[], siteMap: SiteMap): DroppedFlow[] {
+  const modelFlows = flows.filter(flow =>
+    !flow.id.startsWith('check-')
+    && !flow.id.startsWith('auth-neg-')
+    && !flow.id.startsWith('fault-')
+    && !flow.id.startsWith('quick-')
+    && flow.id !== 'public-form-submit',
+  );
+  return reconcileModelFlows(modelFlows, siteMap).dropped;
+}
+
 export function reconcileModelFlows(flows: TestFlow[], siteMap: SiteMap): ReconciledFlows {
   const kept: TestFlow[] = [];
   const dropped: DroppedFlow[] = [];

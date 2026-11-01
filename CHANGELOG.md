@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0-beta.2] — 2026-11-01
+
+### Added
+
+- Deterministic page checks in `src/checks/`, with no model call. One engine flow per check, reserved id `check-*`, kind `accessibility` or `visual`, and one step per crawled page. The five checks are console errors, same-site failed requests and broken links (about 20 link probes), axe-core WCAG A/AA, mobile overflow and tap targets at 375px, and title / description / lang / viewport / h1. They sit outside the LLM flow budget and are not dropped as phantom flows. Serious or critical axe violations are bugs. Missing `autocomplete` on a login field is minor. Title and viewport gaps are minor. Description, lang, and h1 count are info. Console noise from extensions, third parties, and `isOwnAutomationBug` is ignored. Steps record `tool: 'check'`. Replay re-runs a `check` step, or skips it when the check id is missing.
+- `BASIC_PRESET` from `depth.ts`: 6 pages, 5 LLM flows, engine caps of 5 checks and 6 auth-negative flows, 10s step timeout, 25s flow timeout, 12s page timeout, and a 120s total budget. Past that budget, remaining page checks are skipped instead of failing the run as a timeout. `--depth basic` uses these numbers.
+- The planner asks for a success check and an error or edge check on each form journey. When the plan is thinner than 5 flows and the cap allows it, it asks once more, still only against crawled pages and controls. Quick pass may use a non-submit auth control such as Sign up or Forgot password. Engine flows win when an LLM flow repeats them.
+- `--planner-model <id>` and `MonkeyConfig.plannerModel`. Per-page summaries stay on the cheap model (`gpt-4o-mini` for OpenAI). The runner model is unchanged.
+- `scripts/bakeoff.ts` compares planner models. Each run writes JSON (case count, real bugs, invented flows, false-positive candidates, planner latency, wall time, tokens, and USD) and the process prints a table. Prices live in `MODEL_PRICES`.
+
+### Changed
+
+- Quick pass plans 5 LLM flows instead of 4. `severityIfFails` is copied onto the flow result so triage uses it. A step may set `severity` when a check finding is minor.
+
 ## [0.7.0-beta.1] — 2026-10-31
 
 ### Added

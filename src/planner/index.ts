@@ -22,7 +22,8 @@ import { reconcileModelFlows } from './inventory.js';
 import { salvageModelFlows } from './salvage.js';
 import { buildAuthNegativeFlows, isAuthNegativeFlowId } from './authNegative.js';
 import { dedupePlannedFlows } from './dedupe.js';
-import type { PlanFocus } from '../depth.js';
+import { buildPageCheckFlows, isPageCheckFlowId } from '../checks/plan.js';
+import { BASIC_PRESET, type PlanFocus } from '../depth.js';
 
 export interface PlannerOptions {
   /** Soft cap on flows per plan. Default 6. */
@@ -35,6 +36,17 @@ export interface PlannerOptions {
    * a disabled control.
    */
   focus?: PlanFocus;
+  /**
+   * Add reserved `check-*` flows. Default true. They do not consume `maxFlows`.
+   */
+  pageChecks?: boolean;
+  /** Slice page checks to this many crawled pages. Default: every page in the sitemap. */
+  maxPages?: number;
+  /**
+   * When the model returns fewer journeys than this and `maxFlows` allows it,
+   * ask once more for at least this many flows. `0` disables the follow-up.
+   */
+  minFlows?: number;
   /** Optional live event bus. Receives planner lifecycle events. */
   events?: EventBus;
 }
@@ -58,6 +70,7 @@ export async function plan(
   const maxFlows = opts.maxFlows ?? 6;
   const includeAuth = opts.includeAuthFlows ?? true;
   const events = opts.events ?? noopBus();
+  const started = Date.now();
 
   if (siteMap.pages.length === 0){
     events.emit({
@@ -110,6 +123,7 @@ Hard rules:
   - Steps must be executable by a Playwright agent with no human, OTP, email inbox, or real password.
   - One goal per flow. Do not duplicate the same journey with different wording.
   - Prefer 4–7 concrete steps. Skip "look at the page" filler.
+  - For each form journey, include a success check (valid values the crawled fields can accept) and an error or edge check (empty submit, invalid value, or a boundary) when the budget allows. Both use only crawled fields and the crawled submit control.
   - severityIfFails = critical only if a real user cannot complete a core job (apply, pay, submit, checkout). Visual polish is minor.
   - Do NOT emit kind "auth_required". The engine adds sign-in checks itself. If every crawled page is an auth wall, return "flows": [].
 
@@ -160,7 +174,8 @@ ${siteMap.pages.map(p => `
   const prompt = `Now produce the test plan.
 
 Per-call constraints:
-  - Produce AT MOST ${maxFlows} flows total. Fill the quota with executable public journeys first.
+  - Produce AT MOST ${maxFlows} flows total. When the crawl has enough distinct controls, produce at least ${Math.min(5, maxFlows)}. Do not pad with a page or control that is not listed above.
+  - Fill the quota with executable public journeys first. A form journey should have a success check and an error or edge check when both fit.
   - Every step must name a control or content that appears in the crawl above. If you cannot, return no flows.
   - ${includeAuth
       ? 'Do NOT add kind="auth_required" flows and do NOT invent credentials. Sign-in, sign-up, and password-reset checks are added by the engine from crawled password fields. If the crawl has no public control, return "flows": [].'
@@ -187,7 +202,7 @@ Reply with JSON:
       schema: LoosePlanSchema,
     });
     const salvaged = salvageModelFlows(result.flows);
-    flows = dedupeFlowIds(salvaged.flows).filter(flow => !isAuthNegativeFlowId(flow.id));
+    flows = dedupeFlowIds(salvaged.flows).filter(flow => !isAuthNegativeFlowId(flow.id) && !isPageCheckFlowId(flow.id));
     modelNotes = typeof result.notes === 'string' ? result.notes : undefined;
     const rawCount = Array.isArray(result.flows)
       ? result.flows.length
@@ -211,10 +226,30 @@ Reply with JSON:
     if (publicOnly.length > 0) flows = publicOnly;
   }
 
+  const floor = opts.minFlows === 0
+    ? 0
+    : (opts.minFlows ?? (maxFlows >= 5 ? Math.min(5, maxFlows) : 0));
+  if (!discardedModel && floor > flows.length) {
+    try {
+      const more = await llm.generateJSON({
+        label: 'planner.expand',
+        system,
+        cacheable,
+        prompt: expandPrompt(flows, floor, maxFlows),
+        schema: LoosePlanSchema,
+      });
+      const extra = salvageModelFlows(more.flows).flows
+        .filter(flow => !isAuthNegativeFlowId(flow.id) && !isPageCheckFlowId(flow.id));
+      flows = mergeById(flows, extra);
+    } catch {
+      // The thin plan is still usable. Grounding adds the crawl floor.
+    }
+  }
+
   const reconciled = reconcileModelFlows(flows, siteMap);
   flows = reconciled.flows;
 
-  const grounded = groundFlows(siteMap, flows, maxFlows, opts.focus);
+  const grounded = groundFlows(siteMap, flows, maxFlows, opts.focus, opts.pageChecks !== false, opts.maxPages);
   flows = grounded.flows;
   if (discardedModel && modelProblem) {
     const kept = flows.length > 0
@@ -254,6 +289,8 @@ Reply with JSON:
     siteType: siteMap.siteType,
     flows,
     notes,
+    ...(reconciled.dropped.length ? { droppedFlows: reconciled.dropped } : {}),
+    plannerLatencyMs: Date.now() - started,
   };
 
 }
@@ -263,8 +300,8 @@ Reply with JSON:
  * controls, capped at `maxFlows`. Used when the planner model throws before
  * `plan()` can finish, so `executeAndTriage` still has flows to run.
  */
-export function groundedTestPlan(siteMap: SiteMap, maxFlows: number, preface?: string, focus?: PlanFocus): TestPlan {
-  const grounded = groundFlows(siteMap, [], maxFlows, focus);
+export function groundedTestPlan(siteMap: SiteMap, maxFlows: number, preface?: string, focus?: PlanFocus, pageChecks = true): TestPlan {
+  const grounded = groundFlows(siteMap, [], maxFlows, focus, pageChecks);
   return {
     startUrl: siteMap.startUrl,
     siteType: siteMap.siteType,
@@ -273,11 +310,45 @@ export function groundedTestPlan(siteMap: SiteMap, maxFlows: number, preface?: s
   };
 }
 
+function expandPrompt(flows: TestFlow[], floor: number, maxFlows: number): string {
+  const have = flows.length
+    ? flows.map(flow => `- ${flow.id}: ${flow.name} @ ${flow.startUrl}`).join('\n')
+    : '(none)';
+  return `The plan has ${flows.length} flow${flows.length === 1 ? '' : 's'}. That is thin.
+
+Already planned:
+${have}
+
+Add journeys until there are at least ${floor} and at most ${maxFlows}.
+Use ONLY crawled pages and controls from the site map above.
+Each new flow must name a control or field that appears there.
+Do not invent a page, button, field, or URL.
+Do not repeat a journey already planned.
+For a form, prefer a success check and an error or edge check when both are still missing.
+Return the full list, including the flows already planned.
+
+Reply with JSON:
+{
+  "flows": [ ... ],
+  "notes": "(optional)"
+}`;
+}
+
+function mergeById(base: TestFlow[], extra: TestFlow[]): TestFlow[] {
+  const byId = new Map(base.map(flow => [flow.id, flow]));
+  for (const flow of extra) {
+    if (!byId.has(flow.id)) byId.set(flow.id, flow);
+  }
+  return [...byId.values()];
+}
+
 function groundFlows(
   siteMap: SiteMap,
   modelFlows: TestFlow[],
   maxFlows: number,
   focus?: PlanFocus,
+  pageChecks = true,
+  maxPages?: number,
 ): { flows: TestFlow[]; note?: string } {
   const capped = modelFlows.slice(0, Math.max(0, maxFlows));
   const ensured = ensurePublicFormFlow(capped, siteMap, maxFlows);
@@ -287,7 +358,9 @@ function groundFlows(
     : undefined;
   const budgeted = focused ? focused.flows : faults.flows;
   const auth = buildAuthNegativeFlows(siteMap);
-  const deduped = dedupePlannedFlows([...budgeted, ...auth.flows], siteMap);
+  const authFlows = auth.flows.slice(0, BASIC_PRESET.engineFlowCaps.authNegative);
+  const checks = pageChecks ? buildPageCheckFlows(siteMap, maxPages) : { flows: [], note: undefined as string | undefined };
+  const deduped = dedupePlannedFlows([...budgeted, ...authFlows, ...checks.flows], siteMap);
   const added = focused
     ? faults.added.filter(label => deduped.flows.some(flow =>
       flow.steps.some(step => step.action.toLowerCase().includes(label.toLowerCase())),
@@ -300,6 +373,7 @@ function groundFlows(
       : '',
     focused?.note || '',
     auth.note || '',
+    checks.note || '',
     deduped.dropped.length
       ? `Dropped duplicate or off-site flows (${deduped.dropped.join(', ')}).`
       : '',

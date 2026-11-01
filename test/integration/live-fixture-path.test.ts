@@ -116,8 +116,12 @@ describe('live fixture path', () => {
       failOn5xx: quietOracles.failOn5xx,
     });
     const quiet = triage(quietRaw);
-    expect(seededSignals(quiet)).toEqual([]);
-    expect(quiet.bugs.filter(bug => bug.severity !== 'minor')).toHaveLength(0);
+    const quietActions = {
+      ...quiet,
+      bugs: quiet.bugs.filter(bug => !String(bug.flow_id || '').startsWith('check-')),
+    };
+    expect(seededSignals(quietActions)).toEqual([]);
+    expect(quietActions.bugs.filter(bug => bug.severity !== 'minor')).toHaveLength(0);
   }, 180_000);
 });
 

@@ -45,8 +45,8 @@ import { mkdirSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { Monkey } from './monkey.js';
 import { createLLM, type LLM } from './llm/index.js';
-import { autoLLMConfig, detectProviderFromEnv, CHEAP_FAST_MODEL } from './llm/presets.js';
-import { applyDepthPreset, type PlanFocus } from './depth.js';
+import { autoLLMConfig, detectProviderFromEnv, CHEAP_FAST_MODEL, SMART_MODEL } from './llm/presets.js';
+import { applyDepthPreset, BASIC_PRESET, type PlanFocus } from './depth.js';
 import {
   savePlan, loadPlan, saveRun, loadRun, listRuns,
   type StoredRun,
@@ -86,8 +86,10 @@ interface CommonOpts {
   dir: string;
   provider?: LLMProvider;
   model?: string;
+  /** Planner model only. Explorer summaries stay on the cheap default. */
+  plannerModel?: string;
   quality: 'cheap' | 'balanced' | 'smart';
-  /** Depth preset id. `basic` is Quick pass (6 pages, 4 flows, forms/search/CTAs). */
+  /** Depth preset id. `basic` is Quick pass (6 pages, 5 LLM flows, page checks, 120s). */
   depth?: string;
   maxPages: number;
   maxFlows: number;
@@ -97,6 +99,12 @@ interface CommonOpts {
   maxFlowsSet: boolean;
   /** Planner bias from the depth preset, when it has one. */
   focus?: PlanFocus;
+  /** Ask the planner for at least this many journeys when the first plan is thin. */
+  minFlows?: number;
+  stepTimeoutMs?: number;
+  flowTimeoutMs?: number;
+  totalBudgetMs?: number;
+  pageTimeoutMs?: number;
   headless: boolean;
   label?: string;
   json: boolean;
@@ -163,6 +171,12 @@ function parseArgs(argv: string[]): Parsed {
       case '-d': case '--dir':             out.opts.dir = next(); break;
       case '--provider':                   out.opts.provider = next() as LLMProvider; break;
       case '--model':                      out.opts.model = next(); break;
+      case '--planner-model': {
+        const id = next();
+        if (!id) die(2, '--planner-model requires a model id');
+        out.opts.plannerModel = id;
+        break;
+      }
       case '--api-key': case '--apikey':   out.opts.apiKey = next(); break;
       case '--base-url':                   out.opts.baseURL = next(); break;
       case '--quality':                    out.opts.quality = next() as CommonOpts['quality']; break;
@@ -207,6 +221,13 @@ function parseArgs(argv: string[]): Parsed {
       out.opts.maxFlows = applied.maxFlows;
       out.opts.focus = applied.focus;
       out.opts.depth = applied.preset.id;
+      out.opts.stepTimeoutMs = applied.stepTimeoutMs;
+      out.opts.flowTimeoutMs = applied.flowTimeoutMs;
+      out.opts.totalBudgetMs = applied.totalBudgetMs;
+      out.opts.pageTimeoutMs = applied.pageTimeoutMs;
+      if (applied.preset.id === 'basic') {
+        out.opts.minFlows = Math.min(BASIC_PRESET.llmFlows, applied.maxFlows);
+      }
     } catch (err) {
       die(2, err instanceof Error ? err.message : String(err));
     }
@@ -219,22 +240,37 @@ function parseArgs(argv: string[]): Parsed {
 
 function buildLLMConfig(opts: CommonOpts): MonkeyLLMConfig {
 
-  // Honour explicit --provider, otherwise let autoLLMConfig pick from env.
+  // Explorer summaries stay on the cheap model. --model changes the runner
+  // and, unless --planner-model is set, the planner. --planner-model never
+  // changes the summary or runner models.
+  let config: MonkeyLLMConfig;
   if (opts.provider){
-    const single: LLMConfig = {
+    const base: LLMConfig = {
       provider: opts.provider,
-      model: opts.model,
       apiKey: opts.apiKey,
       baseURL: opts.baseURL,
     };
-    return {
-      explorer: { ...single, model: opts.model || CHEAP_FAST_MODEL[opts.provider] },
-      planner:  single,
-      runner:   { ...single, model: opts.model || CHEAP_FAST_MODEL[opts.provider] },
+    const cheap = CHEAP_FAST_MODEL[opts.provider];
+    const plannerDefault = opts.quality === 'cheap' ? cheap : SMART_MODEL[opts.provider];
+    config = {
+      explorer: { ...base, model: cheap },
+      planner: { ...base, model: opts.model || plannerDefault },
+      runner: { ...base, model: opts.model || cheap },
     };
+  } else {
+    config = autoLLMConfig({ quality: opts.quality });
+    if (opts.model) {
+      config = {
+        ...config,
+        planner: { ...config.planner, model: opts.model },
+        runner: { ...(config.runner ?? config.planner), model: opts.model },
+      };
+    }
   }
-
-  return autoLLMConfig({ quality: opts.quality });
+  if (opts.plannerModel) {
+    config = { ...config, planner: { ...config.planner, model: opts.plannerModel } };
+  }
+  return config;
 
 }
 
@@ -275,12 +311,13 @@ Commands:
 Common flags (apply to most commands):
   -d, --dir <path>           Working dir (default ./.monkeytest)
       --provider <id>        openai | gemini | anthropic | mistral | groq | openai_compatible
-      --model <id>           Provider-specific model id
+      --model <id>           Runner model. Also the planner model unless --planner-model is set
+      --planner-model <id>   Planner model only. Page summaries stay on the cheap model
       --api-key <key>        Override env API key
       --base-url <url>       Required for openai_compatible (Ollama, vLLM, …)
       --quality <preset>     cheap | balanced | smart   (default balanced)
       --depth <preset>       basic (Quick pass) | standard | deep | shallow
-                             basic: 6 pages, 4 flows, biased to forms, search, and primary CTAs
+                             basic: 6 pages, 5 LLM flows, 5 page checks, 120s budget
   -m, --max <n>              Max pages to crawl (default 8, or the depth preset)
       --flows <n>            Max flows to plan (default 6, or the depth preset)
       --no-headless          Show the browser window
@@ -315,11 +352,11 @@ Docs: https://docs.monkeytest.ai
 Scaffold a working directory with config defaults. Idempotent.`,
     explore: `monkeytest explore <url> [--max 8] [--flows 6] [--depth basic] [--no-headless]
 Crawl <url>, summarise pages, generate a TestPlan. Writes plan.json + shots/.
---depth basic is Quick pass: at most 6 pages and 4 flows, biased to forms, search, and primary CTAs.`,
+--depth basic is Quick pass: 6 pages, 5 LLM flows, page checks outside that budget, 120s total.`,
     run: `monkeytest run <url> [--max 8] [--flows 6] [--depth basic] [--quality balanced]
 Run the full pipeline (explore + plan + run + triage). Writes plan.json,
 runs/<id>.json, and screenshots. Exits with code 1 if blocking bugs found.
---depth basic is Quick pass (6 pages, 4 flows, forms, search, and primary CTAs).
+--depth basic is Quick pass (6 pages, 5 LLM flows, page checks, 120s budget).
 Same-origin HTTP ≥500 responses fail the step (--no-fail-on-5xx opts out).
 The crawl reserves room for help/contact/about pages under a small --max.
 A crawled form, an enabled button, a link to a page the crawl did not open,
@@ -394,7 +431,7 @@ async function cmdExplore(url: string | undefined, opts: CommonOpts){
   if (!url) die(2, 'Usage: monkeytest explore <url>');
   ensureLLMReady(opts);
 
-  const monkey = new Monkey({ llm: buildLLMConfig(opts), strictOracles: true, failOn5xx: opts.failOn5xx });
+  const monkey = new Monkey({ llm: buildLLMConfig(opts), plannerModel: opts.plannerModel, strictOracles: true, failOn5xx: opts.failOn5xx });
   console.log(`\n→ Exploring ${tty(url, 'cyan')} (max ${opts.maxPages} pages, headless=${opts.headless})…\n`);
 
   const t0 = Date.now();
@@ -406,9 +443,10 @@ async function cmdExplore(url: string | undefined, opts: CommonOpts){
       maxPages: opts.maxPages,
       headless: opts.headless,
       screenshotsDir,
+      pageTimeoutMs: opts.pageTimeoutMs,
       onPage: (p) => console.log(`  · visited [${p.authGated ? 'auth' : 'open'}] ${p.url} — ${truncate(p.summary, 80)}`),
     },
-    plan: { maxFlows: opts.maxFlows, focus: opts.focus },
+    plan: { maxFlows: opts.maxFlows, focus: opts.focus, minFlows: opts.minFlows, maxPages: opts.maxPages },
   });
 
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
@@ -432,7 +470,7 @@ async function cmdRun(url: string | undefined, opts: CommonOpts){
   const screenshotsDir = resolve(opts.dir, 'shots');
   mkdirSync(screenshotsDir, { recursive: true });
 
-  const monkey = new Monkey({ llm: buildLLMConfig(opts), strictOracles: true, failOn5xx: opts.failOn5xx });
+  const monkey = new Monkey({ llm: buildLLMConfig(opts), plannerModel: opts.plannerModel, strictOracles: true, failOn5xx: opts.failOn5xx });
   console.log(`\n→ Running ${tty(url, 'cyan')} (max ${opts.maxPages} pages, ${opts.maxFlows} flows, headless=${opts.headless})…\n`);
 
   const t0 = Date.now();
@@ -441,12 +479,16 @@ async function cmdRun(url: string | undefined, opts: CommonOpts){
       maxPages: opts.maxPages,
       headless: opts.headless,
       screenshotsDir,
+      pageTimeoutMs: opts.pageTimeoutMs,
       onPage: (p) => console.log(`  · visited ${p.url}`),
     },
-    plan: { maxFlows: opts.maxFlows, focus: opts.focus },
+    plan: { maxFlows: opts.maxFlows, focus: opts.focus, minFlows: opts.minFlows, maxPages: opts.maxPages },
     run:  {
       screenshotsDir,
       headless: opts.headless,
+      stepTimeoutMs: opts.stepTimeoutMs,
+      flowTimeoutMs: opts.flowTimeoutMs,
+      totalBudgetMs: opts.totalBudgetMs,
       onEvent: (evt) => {
         if (evt.type === 'flow.start') console.log(`  ▶ ${tty(evt.flow.name, 'magenta')}`);
         if (evt.type === 'step.complete'){
@@ -562,7 +604,7 @@ async function rerunStoredPlan(stored: StoredRun | undefined, opts: CommonOpts){
   const screenshotsDir = resolve(opts.dir, 'shots');
   mkdirSync(screenshotsDir, { recursive: true });
 
-  const monkey = new Monkey({ llm: buildLLMConfig(opts), strictOracles: true, failOn5xx: opts.failOn5xx });
+  const monkey = new Monkey({ llm: buildLLMConfig(opts), plannerModel: opts.plannerModel, strictOracles: true, failOn5xx: opts.failOn5xx });
   console.log(`\n↻ Re-running ${storedPlan.plan.flows.length} flow(s) from ${tty(relative(process.cwd(), planSource), 'cyan')}…\n`);
 
   const t0 = Date.now();
