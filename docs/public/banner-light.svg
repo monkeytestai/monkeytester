@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">monkeytester</title>
+  <desc id="desc">Bugs your tests didn't think to look for. Point it at a URL. It finds the bugs, then proves you fixed them.</desc>
+  <rect width="1280" height="640" fill="#F6F4FB"/>
+  <rect width="1280" height="6" fill="#7c3aed"/>
+  <circle cx="1128" cy="96" r="180" fill="#7c3aed" opacity="0.08"/>
+  <circle cx="140" cy="580" r="140" fill="#7c3aed" opacity="0.05"/>
+  <g transform="translate(72 56)">
+    <rect width="44" height="44" rx="12" fill="#7c3aed"/>
+    <path d="M12 16h20M12 22h14M12 28h9" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+  <text x="132" y="86" fill="#18141F" font-family="Inter, Helvetica, Arial, sans-serif" font-size="26" font-weight="600">monkeytester</text>
+  <text x="72" y="250" fill="#18141F" font-family="Inter, Helvetica, Arial, sans-serif" font-size="52" font-weight="600">Bugs your tests didn't</text>
+  <text x="72" y="318" fill="#18141F" font-family="Inter, Helvetica, Arial, sans-serif" font-size="52" font-weight="600">think to look for.</text>
+  <text x="72" y="378" fill="#4C4458" font-family="Inter, Helvetica, Arial, sans-serif" font-size="22">Point it at a URL. It finds the bugs, then proves you fixed them.</text>
+  <g font-family="Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#5B21B6">
+    <rect x="72" y="430" width="72" height="32" rx="16" fill="#EDE9FE"/>
+    <text x="108" y="451" text-anchor="middle">find</text>
+    <rect x="160" y="430" width="64" height="32" rx="16" fill="#EDE9FE"/>
+    <text x="192" y="451" text-anchor="middle">fix</text>
+    <rect x="240" y="430" width="84" height="32" rx="16" fill="#EDE9FE"/>
+    <text x="282" y="451" text-anchor="middle">rerun</text>
+    <rect x="340" y="430" width="68" height="32" rx="16" fill="#EDE9FE"/>
+    <text x="374" y="451" text-anchor="middle">diff</text>
+  </g>
+  <g transform="translate(860 168)">
+    <rect width="340" height="300" rx="18" fill="#FFFFFF" stroke="#E4DDF0"/>
+    <rect x="24" y="24" width="292" height="168" rx="10" fill="#F6F4FB" stroke="#E4DDF0"/>
+    <rect x="44" y="48" width="120" height="10" rx="5" fill="#D9D2E6"/>
+    <rect x="44" y="70" width="180" height="8" rx="4" fill="#E6E1EF"/>
+    <rect x="44" y="88" width="150" height="8" rx="4" fill="#E6E1EF"/>
+    <rect x="44" y="118" width="96" height="28" rx="8" fill="#7c3aed"/>
+    <rect x="152" y="118" width="96" height="28" rx="8" fill="#FFFFFF" stroke="#D9D2E6"/>
+    <path d="M188 146l18 36 11-5-15-34-14 3z" fill="#7c3aed"/>
+    <text x="24" y="272" fill="#6B6478" font-family="Inter, Helvetica, Arial, sans-serif" font-size="14">Diagram, not a screenshot.</text>
+  </g>
+</svg>

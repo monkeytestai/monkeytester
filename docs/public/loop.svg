@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="148" viewBox="0 0 960 148" role="img" aria-label="Diagram of the find, fix, rerun, diff loop. Not a captured run.">
+  <rect width="960" height="148" rx="16" fill="#F6F4FB"/>
+  <g font-family="Inter, Helvetica, Arial, sans-serif" text-anchor="middle">
+    <rect x="24" y="36" width="180" height="76" rx="12" fill="#FFFFFF" stroke="#E4DDF0"/>
+    <text x="114" y="68" fill="#7c3aed" font-size="13" font-weight="700">1  ·  FIND</text>
+    <text x="114" y="92" fill="#18141F" font-size="15">monkeytest run</text>
+    <rect x="268" y="36" width="180" height="76" rx="12" fill="#FFFFFF" stroke="#E4DDF0"/>
+    <text x="358" y="68" fill="#7c3aed" font-size="13" font-weight="700">2  ·  FIX</text>
+    <text x="358" y="92" fill="#18141F" font-size="15">you change the site</text>
+    <rect x="512" y="36" width="180" height="76" rx="12" fill="#FFFFFF" stroke="#E4DDF0"/>
+    <text x="602" y="68" fill="#7c3aed" font-size="13" font-weight="700">3  ·  RERUN</text>
+    <text x="602" y="92" fill="#18141F" font-size="15">same trace</text>
+    <rect x="756" y="36" width="180" height="76" rx="12" fill="#FFFFFF" stroke="#E4DDF0"/>
+    <text x="846" y="68" fill="#7c3aed" font-size="13" font-weight="700">4  ·  DIFF</text>
+    <text x="846" y="92" fill="#18141F" font-size="15">what changed</text>
+  </g>
+  <g fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round">
+    <path d="M204 74h60"/>
+    <path d="M256 68l8 6-8 6"/>
+    <path d="M448 74h60"/>
+    <path d="M500 68l8 6-8 6"/>
+    <path d="M692 74h60"/>
+    <path d="M744 68l8 6-8 6"/>
+  </g>
+</svg>

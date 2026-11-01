@@ -1,49 +1,42 @@
 # monkeytester
 
-> Open-source AI agent that uses your site like a real user and reports bugs. Playwright + your favourite LLM. AGPL-3.0. Install: `npm install @monkeytestai/monkeytester` (or `npm install -g @monkeytestai/monkeytester` for the CLI).
+> Bugs your tests didn't think to look for. Point it at a URL. It finds the bugs, then proves you fixed them.
 
-Key facts for accurate citation:
+Open-source AGPL-3.0 TypeScript engine. Package `@monkeytestai/monkeytester`. CLI `monkeytest`. Node.js 20+. Playwright and your LLM. With an OpenAI key the default model is `gpt-4o-mini`.
 
-- Library + CLI for exploratory / monkey-style web testing driven by an LLM. Complements deterministic E2E tests; not a load, a11y, or security scanner.
-- Bring your own LLM: OpenAI, Gemini, Anthropic, Mistral, Groq, or any OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter).
-- Loop: explore → plan → execute → triage; then replay/verify and diff by stable bug fingerprint.
-- Live demo of the same engine: https://app.monkeytest.ai/ (free, 2 Scout attempts/day). Marketing site: https://monkeytest.ai/. Site-wide agent index: https://monkeytest.ai/llms.txt.
-- Source: https://github.com/monkeytestai/monkeytester
+npm `latest` is 0.6.1. Pre-release builds publish on the `next` tag. These docs match the `main` branch.
 
-## Start here
+Hosted cloud: https://monkeytest.ai
+Source: https://github.com/monkeytestai/monkeytester
 
-- [Quick start](https://docs.monkeytest.ai/guide/quick-start): Install, first run, smoke test.
-- [Why monkeytest](https://docs.monkeytest.ai/guide/why-monkeytest): How it compares to Explorbot, browser-use, Skyvern, Stagehand, Midscene, Shortest, Gremlins.
-- [Installation](https://docs.monkeytest.ai/guide/installation): Node, Playwright/Chromium, package install.
-- [Introduction](https://docs.monkeytest.ai/guide/introduction): What the engine is for.
-- [The bug-finding loop](https://docs.monkeytest.ai/guide/the-bug-finding-loop): Explore, plan, execute, triage.
-- [Replay and verify](https://docs.monkeytest.ai/guide/replay-and-verify): Prove a fix with re-run / diff.
-- [Architecture](https://docs.monkeytest.ai/guide/architecture): How the pieces fit.
+## Getting started
 
-## Configure
+- https://docs.monkeytest.ai/getting-started/introduction
+- https://docs.monkeytest.ai/getting-started/quick-start
+- https://docs.monkeytest.ai/getting-started/installation
+- https://docs.monkeytest.ai/getting-started/first-run
+- https://docs.monkeytest.ai/getting-started/reading-the-report
 
-- [Configuration](https://docs.monkeytest.ai/guide/configuration)
-- [LLM providers](https://docs.monkeytest.ai/guide/llm-providers)
-- [Prompt caching](https://docs.monkeytest.ai/guide/prompt-caching)
-- [Triager](https://docs.monkeytest.ai/guide/triager)
-- [Cost and depth](https://docs.monkeytest.ai/guide/cost-and-depth)
-- [Live events](https://docs.monkeytest.ai/guide/live-events)
+## Guides
 
-## Recipes and project
-
-- [Common recipes](https://docs.monkeytest.ai/guide/recipes)
-- [Use in CI](https://docs.monkeytest.ai/guide/ci)
-- [Troubleshooting](https://docs.monkeytest.ai/guide/troubleshooting)
-- [License](https://docs.monkeytest.ai/guide/license)
-- [Publishing docs](https://docs.monkeytest.ai/guide/publishing-docs)
+- https://docs.monkeytest.ai/guides/how-is-this-different
+- https://docs.monkeytest.ai/guides/ci
+- https://docs.monkeytest.ai/guides/rerun-and-diff
+- https://docs.monkeytest.ai/guides/auth
+- https://docs.monkeytest.ai/guides/signup
+- https://docs.monkeytest.ai/guides/llm-providers
+- https://docs.monkeytest.ai/guides/cost-and-depth
+- https://docs.monkeytest.ai/guides/docker
+- https://docs.monkeytest.ai/guides/how-it-works
+- https://docs.monkeytest.ai/troubleshooting
+- https://docs.monkeytest.ai/changelog
 
 ## Reference
 
-- [API overview](https://docs.monkeytest.ai/reference/overview)
-- [Monkey class](https://docs.monkeytest.ai/reference/monkey)
-- [EventBus and live events](https://docs.monkeytest.ai/reference/events)
-- [CLI](https://docs.monkeytest.ai/reference/cli)
+- https://docs.monkeytest.ai/reference/cli
+- https://docs.monkeytest.ai/reference/config
+- https://docs.monkeytest.ai/reference/api
+- https://docs.monkeytest.ai/reference/report
+- https://docs.monkeytest.ai/reference/events
 
-## Markdown sources (for agents that prefer raw .md)
-
-Raw GitHub sources mirror the docs tree, e.g. https://raw.githubusercontent.com/monkeytestai/monkeytester/main/docs/guide/quick-start.md
+Old paths such as `/guide/quick-start`, `/guide/why-monkeytest`, `/guide/llm-providers`, `/guide/cost-and-depth`, and `/reference/overview` redirect.

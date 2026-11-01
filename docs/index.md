@@ -1,90 +1,76 @@
 ---
 layout: home
+title: monkeytester
+titleTemplate: false
 
 hero:
-  name: monkeytester
-  text: An AI agent that uses your site like a real user — and reports the bugs.
-  tagline: Open-source. Playwright + your favourite LLM. Zero glue code. Built for devs who'd rather ship than write yet another Selenium script.
+  name: Bugs your tests didn't think to look for.
+  text: Point it at a URL. It finds the bugs, then proves you fixed them.
+  tagline: Open source, AGPL-3.0. Playwright and your LLM. Node.js 20+.
   image:
-    src: /hero.jpg
-    alt: An open library of intelligence with a stylised AI monkey agent inspecting a webpage and pinning a bug
+    src: /hero.svg
+    alt: Diagram of a page being explored. Not a screenshot of a run.
   actions:
     - theme: brand
-      text: Get started in 60 seconds
-      link: /guide/quick-start
+      text: Quick start
+      link: /getting-started/quick-start
     - theme: alt
-      text: How it works
-      link: /guide/architecture
-    - theme: alt
-      text: GitHub
-      link: https://github.com/monkeytestai/monkeytester
+      text: How is this different?
+      link: /guides/how-is-this-different
 
 features:
-  - title: Drop-in, not framework
-    icon: 🧰
-    details: One library, one constructor. No Selenium grids, no test DSL, no YAML — just `await monkey.executeAndTriage(url)`. Install with `npm install @monkeytestai/monkeytester`.
-  - title: Bring your own LLM
-    icon: 🧠
-    details: OpenAI, Gemini, Anthropic, Mistral, Groq, or any OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter). Pick a different model per phase.
-  - title: Real evidence, not log dumps
-    icon: 📸
-    details: Per-step screenshots, optional WebM video, console + network failures, and a deduplicated bug report with stable fingerprints.
-  - title: Live activity stream
-    icon: 📡
-    details: Subscribe to an EventBus and pipe explorer / planner / runner / triager events into your own dashboard or CLI.
-  - title: Predictable, hackable, typed
-    icon: 🔬
-    details: Pure TypeScript, zod-validated LLM output, structured `RunResult` you can serialise, diff, and store. No magic.
-  - title: AGPL & community-first
-    icon: 🤝
-    details: Free for everyone to use, fork, and self-host. The Affero clause keeps modifications shareable when run as a service.
+  - title: It picks the cases
+    details: You pass a URL. The crawl, the planner, and the built-in page checks decide what to try. You do not write the script.
+  - title: A pass is a checked outcome
+    details: A flow is passed only when its outcome check verifies. Otherwise the result is inconclusive, with reason no_assertion or assertion_unverifiable.
+  - title: The same plan, again
+    details: monkeytest rerun replays the stored trace. monkeytest diff compares bug fingerprints and exits 1 when something new or more severe shows up.
+  - title: Quick pass
+    details: "--depth basic is 6 pages, 5 LLM flows, page checks outside that budget, and a 120 second cap. About 10 cases, usually 1–2 minutes."
+  - title: Your model
+    details: OpenAI (default gpt-4o-mini), Gemini, Anthropic, Mistral, Groq, or any OpenAI-compatible endpoint. One model per phase if you want.
+  - title: Page checks, no model
+    details: Console errors, failed requests and broken links, axe-core WCAG A/AA, mobile layout at 375px, and title, description, lang, viewport, and h1.
 ---
 
-<style>
-.vp-doc h2 + p { font-size: 1.0625rem; }
-</style>
+## Thirty seconds
 
-::: info Install
-`npm install @monkeytestai/monkeytester` (version 0.6.1, [npm](https://www.npmjs.com/package/@monkeytestai/monkeytester)). The [quick start](/guide/quick-start) also covers a clone and a no-key smoke test. A side-by-side with other tools is on [Why monkeytest](/guide/why-monkeytest).
-:::
+Install the package, install Chromium, run Quick pass, then print the report. `latest` on npm is 0.6.1. These pages match `main`. Install `@next` for that build.
 
-## Why monkeytester?
+::: code-group
 
-Most QA tools ask you to **write tests**. monkeytester writes its own — by **looking** at your app first. How that compares with Explorbot, browser-use, Skyvern, Stagehand, Midscene.js, Shortest, and Gremlins.js is on [Why monkeytest](/guide/why-monkeytest).
-
-It opens a real browser, crawls a few pages, asks an LLM *"what would a real user try here?"*, runs those flows step by step, and hands you back a structured report with screenshots, bug fingerprints, and a live event stream you can wire into your own dashboard.
-
-```ts
-import { Monkey, autoLLMConfig } from '@monkeytestai/monkeytester';
-
-const monkey = new Monkey({ llm: autoLLMConfig({ quality: 'balanced' }) });
-
-const { run } = await monkey.executeAndTriage('https://example.com', {
-  explore: { maxPages: 8, screenshotsDir: '.monkeytest/shots' },
-  plan:    { maxFlows: 4 },
-  run:     { screenshotsDir: '.monkeytest/shots' },
-});
-
-console.log(`${run.bugs.length} bug(s) found across ${run.stats.flowsTotal} flows`);
+```bash [npm]
+npm install @monkeytestai/monkeytester
+npx playwright install chromium
+export OPENAI_API_KEY="sk-..."
+npx monkeytest run https://example.com --depth basic
+npx monkeytest report
 ```
 
-That's it. No fixtures, no page objects, no recorders.
+```bash [pnpm]
+pnpm add @monkeytestai/monkeytester
+pnpm exec playwright install chromium
+export OPENAI_API_KEY="sk-..."
+pnpm exec monkeytest run https://example.com --depth basic
+pnpm exec monkeytest report
+```
 
-## Where it shines
+```bash [yarn]
+yarn add @monkeytestai/monkeytester
+yarn playwright install chromium
+export OPENAI_API_KEY="sk-..."
+yarn monkeytest run https://example.com --depth basic
+yarn monkeytest report
+```
 
-- **Pre-release sanity checks** — point it at a staging URL and let it find the obvious "the form doesn't submit" / "checkout 500s" issues before a human does.
-- **PR previews** — run on Vercel/Netlify preview URLs in CI, fail the check if a flow regresses.
-- **Daily smoke runs against prod** — cheap LLM tier, screenshots stored as artefacts.
-- **Embedding in your own product** — the engine is a library, not a CLI. Wrap it in your own SaaS, internal tool, or VS Code extension.
+```bash [bun]
+bun add @monkeytestai/monkeytester
+bunx playwright install chromium
+export OPENAI_API_KEY="sk-..."
+bunx monkeytest run https://example.com --depth basic
+bunx monkeytest report
+```
 
-## What it isn't
+:::
 
-- Not a replacement for **deterministic critical-path E2E tests** — it's a complement.
-- Not a **load tester** or **a11y auditor** (those exist; pair them).
-- Not magic — quality of bug reports tracks the quality of the LLM you give it.
-
-## Don't want to run it yourself?
-
-[**MonkeyTest Cloud**](https://monkeytest.ai) is the same engine, fully managed, with hosted browsers, history, dashboards, and team accounts. Use the OSS engine for hacking and self-hosting; use Cloud when you want it to "just run".
-
-[Get started →](/guide/quick-start)
+The full path, including a no-key `npx` of `--help`, is the [quick start](/getting-started/quick-start). Hosted runs of the same engine are at [monkeytest.ai](https://monkeytest.ai).

@@ -1,10 +1,35 @@
 # Production docs.monkeytest.ai is hosted on Vercel, which does not read
-# this file (it is served as a static asset). Vercel clean URLs are set in
-# /vercel.json. The rules below matter only if this same VitePress output is
-# deployed to Cloudflare Pages or Netlify.
+# this file (it is served as a static asset). Vercel clean URLs and the
+# moved-page redirects live in /vercel.json. The rules below matter only if
+# this same VitePress output is deployed to Cloudflare Pages or Netlify.
 #
-# Status 200 is a rewrite: /guide/quick-start serves guide/quick-start.html.
-# Existing .html files are served directly, so these rules do not turn
-# quick-start.html into quick-start.html.html.
-/guide/*       /guide/:splat.html       200
-/reference/*   /reference/:splat.html   200
+# 301s are listed before the 200 rewrites. Status 200 serves page.html
+# for an extensionless path.
+
+/hero.jpg                      /og.png                              301
+/guide/quick-start             /getting-started/quick-start         301
+/guide/introduction            /getting-started/introduction        301
+/guide/installation            /getting-started/installation        301
+/guide/why-monkeytest          /guides/how-is-this-different        301
+/guide/llm-providers           /guides/llm-providers                301
+/guide/cost-and-depth          /guides/cost-and-depth               301
+/guide/the-bug-finding-loop    /guides/rerun-and-diff               301
+/guide/replay-and-verify       /guides/rerun-and-diff               301
+/guide/architecture            /guides/how-it-works                 301
+/guide/ci                      /guides/ci                           301
+/guide/configuration           /reference/config                    301
+/guide/triager                 /guides/triager                      301
+/guide/live-events             /guides/live-events                  301
+/guide/prompt-caching          /guides/prompt-caching               301
+/guide/recipes                 /guides/recipes                      301
+/guide/troubleshooting         /troubleshooting                     301
+/guide/license                 /guides/license                      301
+/guide/license-and-saas        /guides/license                      301
+/guide/publishing-docs         /guides/publishing-docs              301
+/reference/overview            /reference/api                       301
+/reference/monkey              /reference/api                       301
+/getting-started/*             /getting-started/:splat.html         200
+/guides/*                      /guides/:splat.html                  200
+/reference/*                   /reference/:splat.html               200
+/troubleshooting               /troubleshooting.html                200
+/changelog                     /changelog.html                      200
