@@ -83,6 +83,11 @@ export function reasonForText(text: string | undefined): OutcomeReason | undefin
   return undefined;
 }
 
+function isStaleLocatorStep(step: Pick<StepResult, 'error' | 'observation'>): boolean {
+  const raw = `${step.error || ''}\n${step.observation || ''}`.toLowerCase();
+  return raw.includes('locator_mismatch') || raw.includes('locator_stale') || raw.includes('recorded locator no longer matches');
+}
+
 function demoteStep(step: StepResult): StepResult {
   if (step.status !== 'failed') return step;
   if (isRealStep(step)) return step;
@@ -237,7 +242,10 @@ function classifyFlow(flow: FlowResult): FlowResult {
   }
 
   if (flow.assertion === 'missing' || flow.assertion === 'unverifiable') {
-    const reason = flow.assertion === 'missing' ? 'no_assertion' : 'assertion_unverifiable';
+    const stale = steps.some(step => isStaleLocatorStep(step));
+    const reason = stale
+      ? 'automation_error'
+      : flow.assertion === 'missing' ? 'no_assertion' : 'assertion_unverifiable';
     return {
       ...flow,
       status: 'inconclusive',

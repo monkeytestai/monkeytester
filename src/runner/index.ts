@@ -61,6 +61,13 @@ import { collectOrigins, outcomeWithSameOrigin5xx, promoteRecordedSteps } from '
 import { serializeTrace, serializeTraceStep } from '../trace/serialize.js';
 import { humanStepLabel } from '../trace/stepLabel.js';
 import { resolveFlowStatus } from './flowStatus.js';
+import {
+  appendSuggestions,
+  applySubmissionGuard,
+  assertionFromVerdict,
+  oracleAssertion,
+  passSignedOutVisit,
+} from './flowJudge.js';
 import { ENGINE_VERSION } from '../version.js';
 import { isAuthNegativeFlowId } from '../planner/authNegative.js';
 import { runAuthCheck } from './authNegative.js';
@@ -443,7 +450,7 @@ async function runFlow(
       statuses: navStatus === undefined ? undefined : [navStatus],
     });
     const signedOut = isPageVisitFlow(flow) && redirectKind === 'expected-auth';
-    if (signedOut) flowSuggestions.push(authRedirectSuggestion(flow.startUrl, landed));
+    if (signedOut) appendSuggestions(flowSuggestions, [authRedirectSuggestion(flow.startUrl, landed)]);
     const opened = signedOut
       ? authRedirectObservation(flow.startUrl, landed)
       : `Navigated to ${flow.startUrl}.`;
@@ -457,7 +464,7 @@ async function runFlow(
       if (!opts.strictOracles) await flushStepEvents(page);
       nav = outcomeWithSameOrigin5xx(nav, evidence.networkByStep.get(0), origins);
     }
-    if (nav.suggestions?.length) flowSuggestions.push(...nav.suggestions);
+    appendSuggestions(flowSuggestions, nav.suggestions);
     if (nav.status === 'failed') {
       navOracleError = nav.error || nav.observation;
       throw new Error(navOracleError);
@@ -484,7 +491,7 @@ async function runFlow(
     });
     const loop = /too many redirects|ERR_TOO_MANY_REDIRECTS|redirect.?loop/i.test(msg);
     if (!navOracleError && !loop && isPageVisitFlow(flow) && kind === 'expected-auth') {
-      flowSuggestions.push(authRedirectSuggestion(flow.startUrl, landed));
+      appendSuggestions(flowSuggestions, [authRedirectSuggestion(flow.startUrl, landed)]);
       traceSteps.push(serializeTraceStep({
         index: 0,
         action: `Open ${flow.startUrl}`,
@@ -865,7 +872,7 @@ async function runFlow(
       ...(ring ? { element: ring } : {}),
       ...(exec.suggestions?.length ? { suggestions: exec.suggestions } : {}),
     };
-    if (exec.suggestions?.length) flowSuggestions.push(...exec.suggestions);
+    appendSuggestions(flowSuggestions, exec.suggestions);
     steps.push(result);
     traceSteps.push(serializeTraceStep({
       index: stepIndex,
@@ -920,27 +927,10 @@ async function runFlow(
     assertion = oracleAssertion(steps);
   } else if (!flowFailed) {
     const landedNow = safePageUrl(page) || '';
-    const redirectKind = classifyDocumentRedirect({
-      requestedUrl: flow.startUrl,
-      landedUrl: landedNow,
-      statuses: navStatus === undefined ? undefined : [navStatus],
-    });
-    const signedOutVisit = isPageVisitFlow(flow) && redirectKind === 'expected-auth';
     let verdict = await evaluateOutcomeCheck(page, flow.outcomeCheck, { startUrl: flow.startUrl, before: beforeLast });
-    if (signedOutVisit && verdict.state !== 'verified') {
-      verdict = { state: 'verified', observation: authRedirectObservation(flow.startUrl, landedNow) };
-      if (!flowSuggestions.some(item => item.kind === 'auth-redirect')) {
-        flowSuggestions.push(authRedirectSuggestion(flow.startUrl, landedNow));
-      }
-    }
+    verdict = passSignedOutVisit(verdict, flow, landedNow, navStatus, flowSuggestions);
     const unfinished = steps.some(step => step.index > 0 && (step.status === 'skipped' || step.status === 'blocked'));
-    assertion = verdict.state === 'verified'
-      ? 'verified'
-      : verdict.state === 'failed' && !unfinished
-        ? 'failed'
-        : verdict.state === 'missing'
-          ? 'missing'
-          : 'unverifiable';
+    assertion = assertionFromVerdict(verdict, unfinished);
     const index = (steps[steps.length - 1]?.index ?? 0) + 1;
     const status: StepStatus = assertion === 'verified' ? 'passed' : assertion === 'failed' ? 'failed' : 'skipped';
     const result: StepResult = {
@@ -975,13 +965,9 @@ async function runFlow(
   }
 
   if (guardedReason) {
-    assertion = 'unverifiable';
-    const outcomeStep = steps.find(step => step.action === 'Check the expected outcome' && step.status === 'failed');
-    if (outcomeStep) {
-      outcomeStep.status = 'skipped';
-      delete outcomeStep.error;
-    }
-    flowFailed = steps.some(step => step.status === 'failed');
+    const guarded = applySubmissionGuard(assertion || 'unverifiable', steps, true);
+    assertion = guarded.assertion;
+    flowFailed = guarded.failed;
     if (!flowFailed) firstFailureReason = undefined;
   }
 
@@ -1086,13 +1072,6 @@ function errorFlowResult(flow: TestFlow, msg: string, started: number): FlowResu
     durationMs: Date.now() - started,
     bugIds: [],
   };
-}
-
-function oracleAssertion(steps: StepResult[]): FlowAssertion {
-  const planned = steps.filter(step => step.index > 0);
-  const last = planned[planned.length - 1];
-  if (last?.status === 'passed' || planned.some(step => step.status === 'failed')) return 'verified';
-  return 'unverifiable';
 }
 
 function finaliseFlow(

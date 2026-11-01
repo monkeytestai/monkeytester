@@ -18,6 +18,22 @@ export function isSignupFlowId(id: string): boolean {
   return id.startsWith(SIGNUP_FLOW_PREFIX);
 }
 
+const SIGNUP_CHECK_BY_ID: Record<string, NonNullable<TestStep['signupCheck']>> = {
+  'signup-val-empty': 'empty_submit',
+  'signup-val-blocked': 'empty_submit',
+  'signup-val-invalid-email': 'invalid_email',
+  'signup-val-mismatch': 'password_mismatch',
+  'signup-inbox': 'inbox_verify',
+};
+
+/**
+ * Engine sign-up check for a reserved `signup-val-*` or `signup-inbox` id.
+ * Model flows such as `signup-page-navigation` are not in this map.
+ */
+export function signupCheckForFlowId(id: string): NonNullable<TestStep['signupCheck']> | undefined {
+  return SIGNUP_CHECK_BY_ID[id];
+}
+
 export interface SignupPlan {
   flows: TestFlow[];
   note?: string;

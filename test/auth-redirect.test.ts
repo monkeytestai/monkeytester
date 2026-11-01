@@ -103,10 +103,11 @@ describe('Visit Homepage redirect', () => {
         failOn5xx: true,
         stepTimeoutMs: 8_000,
       });
+      expect(raw.flows[0].suggestions?.filter(item => item.kind === 'auth-redirect')).toHaveLength(1);
       const run = triage(raw);
       expect(run.bugs).toEqual([]);
       expect(run.flows[0].status).toBe('passed');
-      expect(run.suggestions?.some(item => item.kind === 'auth-redirect')).toBe(true);
+      expect(run.suggestions?.filter(item => item.kind === 'auth-redirect')).toHaveLength(1);
     } finally {
       await site.close();
     }

@@ -63,6 +63,7 @@ describe('our Playwright errors are inconclusive', () => {
     ['strict mode', STRICT_MODE],
     ['detached', DETACHED],
     ['selector timeout', SELECTOR_TIMEOUT],
+    ['stale locator', 'locator_mismatch'],
   ])('does not file a bug for %s', (_name, error) => {
     const run = triage(runWith(failedStep(error)));
     expect(run.bugs).toHaveLength(0);
@@ -71,6 +72,20 @@ describe('our Playwright errors are inconclusive', () => {
     expect(run.outcome_reason).toBe('automation_error');
     expect(run.outcome_detail).toMatch(/our test couldn't complete/i);
     expect(run.outcome_detail?.toLowerCase()).not.toMatch(/major bug/);
+  });
+
+  it('stays inconclusive when replay already marked a stale locator unverifiable', () => {
+    const base = runWith(failedStep(
+      'locator_mismatch',
+      'Recorded locator no longer matches for click (no locator).',
+    ));
+    base.flows[0].assertion = 'unverifiable';
+    const run = triage(base);
+    expect(run.bugs).toHaveLength(0);
+    expect(run.flows[0].status).toBe('inconclusive');
+    expect(run.flows[0].outcome_reason).toBe('automation_error');
+    expect(run.outcome).toBe('inconclusive');
+    expect(run.outcome_reason).toBe('automation_error');
   });
 
   it('covers the mtaiclient confirmedBugs.js signatures, including critical Playwright rows', () => {

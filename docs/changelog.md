@@ -2,6 +2,11 @@
 
 The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.6.1. Newer entries below are the pre-release on `main`, published under the npm `next` tag.
 
+## 0.7.1
+
+- Replay of a stored plan uses the same sign-in redirect, sign-in check, sign-up check, and sensitive-submit rules as a live run. A locator that no longer matches is inconclusive (`automation_error`), not a site bug.
+- The `auth-redirect` note is listed once on the flow.
+
 ## 0.7.0-beta.5
 
 - Analytics beacons (`sendBeacon`, keepalive, clarity, Google Analytics, `/cdn-cgi/rum`, and the other listed collectors) are not sensitive submits. A homepage visit is not inconclusive because a beacon body said "payment" or "reset". Real reset, OTP, newsletter, payment, and account-deletion submits stay blocked unless allowed.

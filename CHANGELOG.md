@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-11-01
+
+### Fixed
+
+- Stored-plan replay (`monkeytest rerun` and `replayTraces`) uses the same outcome rules as a live run. A page visit that lands on a same-origin sign-in URL passes, and the `auth-redirect` note is recorded once. Sign-in checks (`auth-neg-*`, including a wrong password) and sign-up validation (`signup-val-*`) are executed by the same checks as a live run. Sensitive submits stay blocked, and OAuth is not clicked.
+- A recorded locator that no longer matches is inconclusive. The step error stays `locator_mismatch` and the flow's `outcome_reason` is `automation_error`. It is not a confirmed site bug. Replay tries the step's quoted label, role, or text before giving up. `verify` still reports that miss as blocked, so a later bug is not treated as reproduced.
+- A live run no longer lists the `auth-redirect` suggestion twice on the flow. The opening navigation and the planned goto both observe it; the flow keeps one. The run-level list was already deduped.
+
 ## [0.7.0] — 2026-11-01
 
 First stable 0.7.0. It bundles 0.7.0-beta.1 through beta.5 with no code changes since beta.5. Highlights:
