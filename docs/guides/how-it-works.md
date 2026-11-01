@@ -1,5 +1,9 @@
 # How it works
 
+```bash
+npx monkeytest run https://example.com --depth basic
+```
+
 monkeytester is a four-phase pipeline. Each phase is a pure function of its inputs and emits structured events you can subscribe to.
 
 ```
@@ -69,12 +73,12 @@ This phase is **call-volume heavy** (one LLM call per step). Use the cheapest fa
 What it does:
 
 - Groups step failures by flow and root-cause signature.
-- Computes a **fingerprint** — a hash of `(affectedFlow, normalised observation, primary error)` — so the same bug across runs gets the same id.
+- Computes a **fingerprint**. `fingerprint` is the legacy id. `fingerprintV2` is the stable id from failure category, URL template, role, name, and error signal. Diff uses v2 when both sides have it. See [Report](/reference/report).
 - Picks a severity (`critical` / `major` / `minor`) based on flow severity + step status + evidence.
 - Bundles screenshots, console errors, and network failures into a single `BugEvidence`.
 - Writes a short, plain-English `triageNotes` for each bug.
 
-Output: the same `RunResult`, with `bugs: BugReport[]` populated. The triager is **deterministic by default**. An optional LLM polish pass is on the roadmap for richer titles.
+Output: the same `RunResult`, with `bugs: BugReport[]` populated. The triager is **deterministic by default**. An optional LLM polish pass rewrites bug copy and does not add bugs. See [Triager](/guides/triager).
 
 ## Resilience guarantees
 
@@ -92,7 +96,7 @@ Nothing is "all or nothing". You always get evidence.
 
 ## The `EventBus`
 
-Every phase emits structured `LiveEvent`s through an optional `EventBus`. This is what powers MonkeyTest Cloud's live-activity panel and is documented in [Live events](/guide/live-events).
+Every phase emits structured `LiveEvent`s through an optional `EventBus`. This is what powers MonkeyTest Cloud's live-activity panel and is documented in [Live events](/guides/live-events).
 
 ```ts
 import { Monkey, EventBus } from '@monkeytestai/monkeytester';
@@ -103,4 +107,4 @@ events.on(e => console.log(`[${e.phase}] ${e.type}: ${e.message}`));
 await new Monkey({ llm: ... }).executeAndTriage(url, { events, explore: ..., plan: ..., run: ... });
 ```
 
-Next: [Configuration →](/guide/configuration)
+Next: [Configuration →](/reference/config)

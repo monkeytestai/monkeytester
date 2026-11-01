@@ -1,6 +1,14 @@
 # Prompt caching
 
-Repeat MonkeyTest runs against the **same site** send a lot of identical context to the planner — the same site map, the same system prompt, the same flow schema. Modern LLM APIs let you cache that prefix, so the second run pays a fraction of the input-token cost.
+```ts
+import { Monkey, autoLLMConfig } from '@monkeytestai/monkeytester';
+
+new Monkey({ llm: autoLLMConfig({ quality: 'balanced' }) });
+```
+
+Nothing else. For OpenAI and Anthropic, a repeated planner prefix can be cached. You do not pass a flag.
+
+Repeat runs against the **same site** send a lot of identical context to the planner — the same site map, the same system prompt, the same flow schema. Modern LLM APIs let you cache that prefix, so the second run pays a fraction of the input-token cost.
 
 The engine wires this up automatically for **OpenAI** and **Anthropic**. You don't change anything in your code — caching kicks in once the prompt is large enough.
 
@@ -99,4 +107,4 @@ The triager polish pass (when configured) also benefits from caching: the system
 
 The explorer and runner phases don't currently use caching — their prompts are different on every call (different page, different step) and there's no useful prefix to cache.
 
-Next: [Triager polish →](/guide/triager)
+Next: [Triager polish →](/guides/triager)

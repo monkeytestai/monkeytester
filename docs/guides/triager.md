@@ -1,5 +1,18 @@
 # Triager polish
 
+```ts
+new Monkey({
+  llm: {
+    explorer: { provider: 'openai', model: 'gpt-4o-mini' },
+    planner: { provider: 'openai', model: 'gpt-4o' },
+    runner: { provider: 'openai', model: 'gpt-4o-mini' },
+    triager: { provider: 'openai', model: 'gpt-4o-mini' },
+  },
+});
+```
+
+Leave `triager` unset and triage stays deterministic. Set it and each bug's copy can be rewritten from the evidence the rules already collected.
+
 The **triager** turns the runner's raw step failures into a deduplicated list of `BugReport`s with stable fingerprints. By default it's deterministic and rule-based — fast, free, and predictable.
 
 For better-reading bug copy you can opt into an **LLM polish pass** that rewrites each bug's `title`, `observed`, `expected`, and `triageNotes` from the structured evidence the rule-based triager already collected.
@@ -117,4 +130,4 @@ Returns a brand-new `RunResult` with polished bugs. Existing `RunResult` is unch
 - Runs that produce hundreds of bugs (raise `maxBugsToPolish` carefully or skip).
 - When you're shipping the raw `RunResult` to your own LLM for further processing — let your LLM do the wording in its own voice instead.
 
-Next: [Cost & depth →](/guide/cost-and-depth)
+Next: [Cost & depth →](/guides/cost-and-depth)

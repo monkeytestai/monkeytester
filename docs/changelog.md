@@ -1,0 +1,36 @@
+# Changelog
+
+The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.6.1. Newer entries below are the pre-release on `main`, published under the npm `next` tag.
+
+## 0.7.0-beta.3
+
+- A flow is `passed` only when its outcome check verifies. No check is `inconclusive` with `no_assertion`. A check that cannot be decided is `assertion_unverifiable`.
+- The runner does not submit a completed sign-up unless you passed an `InboxProvider`. Without one, `signup_status` is `not_tested` and `signup_reason` is `no_inbox`.
+- CLI `--inbox <module>` and `--inbox-http <url>`. No default host. `createHttpInbox` and `loadInboxProvider` are exported.
+
+## 0.7.0-beta.2
+
+- Deterministic page checks, ids `check-*`, outside the LLM flow budget: console, HTTP and broken links, axe-core WCAG A/AA, mobile at 375px, and title / description / lang / viewport / h1.
+- `BASIC_PRESET`: 6 pages, 5 LLM flows, caps of 5 checks and 6 auth-negative flows, and a 120 second budget. Past the budget, remaining page checks are skipped.
+- `--planner-model` sets the planner only. Page summaries stay on the cheap model.
+
+## 0.7.0-beta.1
+
+- Auth-negative checks for a crawled password field (`auth-neg-*`): empty submit, invalid email, one wrong password, password visibility, forgot-password link, sign-up link. Sign-up and reset forms are not submitted.
+- Login-only runs set `outcome_reason` to `login_required` when `public_screens` is `0`, including when `outcome` is `clean` or `bugs_found`.
+- `ENGINE_VERSION` is copied onto `RunResult.engine_version`.
+- Pre-release tags `v*.*.*-beta.*` publish to npm dist-tag `next`. Stable tags stay on `latest`.
+
+## 0.6.1
+
+- An unlabeled number input no longer waits out `locator.fill`.
+- Optional bug fields: `impact`, `page_url`, `step_index`, `flow_id`, `element`. None of them change the fingerprint.
+- `SiteMapPage.inputs` records fillable controls that are not inside a form.
+
+## 0.6.0
+
+- `outcome`, `outcome_reason`, and `outcome_detail` on `RunResult`.
+- Playwright and selector failures are inconclusive, not confirmed bugs.
+- Quick pass added as `--depth basic` (at this version: 6 pages and 4 flows). 0.7.0-beta.2 raises the LLM flow cap to 5 and adds page checks.
+
+Older notes, including the 0.4.0 loop (`init`, `run`, `rerun`, `diff`, `report`) and the 0.5.0 rename to `@monkeytestai/monkeytester`, are in the repository changelog.
