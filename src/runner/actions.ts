@@ -16,7 +16,13 @@ import type {
 } from '../types.js';
 import { isAutomationFault } from '../automation/signatures.js';
 import { impliedType, locateActionTarget, pageFn, type LocateHit } from './locate.js';
-import { blockSensitiveClick, isOauthNavigation, submissionPolicy } from './sensitive.js';
+import {
+  authRedirectObservation,
+  authRedirectSuggestion,
+  classifyDocumentRedirect,
+  waitForSettledLocation,
+} from '../explorer/authRedirect.js';
+import { blockSensitiveClick, isOauthNavigation, refreshFormActions, submissionPolicy } from './sensitive.js';
 
 const ACTION_TOOLS = ['click', 'fill', 'goto', 'wait', 'assert_text', 'press', 'noop'] as const;
 const ACTION_LOCATORS = ['css', 'role', 'text', 'placeholder', 'label', 'testid'] as const;
@@ -487,6 +493,7 @@ export async function executeAction(
     switch (action.tool){
 
       case 'click': {
+        await refreshFormActions(page);
         const located = await elementFor(page, action, options?.located);
         if ('reason' in located) return miss(located.reason);
         const locator = located.locator;
@@ -549,10 +556,45 @@ export async function executeAction(
           return { status: 'failed', observation: `Refused to navigate to non-http URL "${url}".`, error: 'invalid_url' };
         }
         const prior = submissionPolicy(page)?.blocked;
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+        let response;
+        try {
+          response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+        } catch (err) {
+          await waitForSettledLocation(page).catch(() => {});
+          const landed = safePageUrl(page);
+          const kind = classifyDocumentRedirect({
+            requestedUrl: url,
+            landedUrl: landed,
+            statuses: response?.status() === undefined ? undefined : [response.status()],
+          });
+          const message = err instanceof Error ? err.message : String(err);
+          const loop = /too many redirects|ERR_TOO_MANY_REDIRECTS|redirect.?loop/i.test(message);
+          if (!loop && kind === 'expected-auth') {
+            return {
+              status: 'passed',
+              observation: authRedirectObservation(url, landed),
+              suggestions: [authRedirectSuggestion(url, landed)],
+            };
+          }
+          throw err;
+        }
         await settleSPA(page).catch(() => {});
+        await waitForSettledLocation(page);
         const guarded = guardAfterNavigation(page, prior);
         if (guarded) return guarded;
+        const landed = safePageUrl(page);
+        const kind = classifyDocumentRedirect({
+          requestedUrl: url,
+          landedUrl: landed,
+          statuses: response?.status() === undefined ? undefined : [response.status()],
+        });
+        if (kind === 'expected-auth') {
+          return {
+            status: 'passed',
+            observation: authRedirectObservation(url, landed),
+            suggestions: [authRedirectSuggestion(url, landed)],
+          };
+        }
         return { status: 'passed', observation: `Navigated to ${url}.` };
       }
 
@@ -591,6 +633,7 @@ export async function executeAction(
       }
 
       case 'press': {
+        await refreshFormActions(page);
         const key = action.value || 'Enter';
         if (action.target){
           const located = await elementFor(page, action, options?.located);

@@ -74,6 +74,13 @@ import { signupSubmitBlock } from '../signup/guard.js';
 import { runSignupCheck } from '../signup/run.js';
 import { emptySignupLedger, noteSignup, signupFields, type SignupLedger } from '../signup/ledger.js';
 import { evaluateOutcomeCheck, snapPage, type PageSnap } from '../outcome/check.js';
+import {
+  authRedirectObservation,
+  authRedirectSuggestion,
+  classifyDocumentRedirect,
+  isPageVisitFlow,
+  waitForSettledLocation,
+} from '../explorer/authRedirect.js';
 import { installDialogPolicy, installSubmissionGuards, setStepIntent, type SensitiveKind } from './sensitive.js';
 
 export interface RunnerOptions {
@@ -422,16 +429,30 @@ async function runFlow(
   const navStarted = Date.now();
   const navStartedAt = new Date().toISOString();
   let navOracleError: string | undefined;
+  let navStatus: number | undefined;
   try {
     evidence.stepIndex = 0;
-    await page.goto(flow.startUrl, { waitUntil: 'domcontentloaded', timeout: opts.stepTimeoutMs });
+    const navResponse = await page.goto(flow.startUrl, { waitUntil: 'domcontentloaded', timeout: opts.stepTimeoutMs });
+    navStatus = navResponse?.status();
     await settleSPA(page);
+    await waitForSettledLocation(page);
+    const landed = safePageUrl(page) || '';
+    const redirectKind = classifyDocumentRedirect({
+      requestedUrl: flow.startUrl,
+      landedUrl: landed,
+      statuses: navStatus === undefined ? undefined : [navStatus],
+    });
+    const signedOut = isPageVisitFlow(flow) && redirectKind === 'expected-auth';
+    if (signedOut) flowSuggestions.push(authRedirectSuggestion(flow.startUrl, landed));
+    const opened = signedOut
+      ? authRedirectObservation(flow.startUrl, landed)
+      : `Navigated to ${flow.startUrl}.`;
     let nav = opts.strictOracles
       ? await applyPassedOracles(page, evidence, 0, {
         status: 'passed',
-        observation: `Navigated to ${flow.startUrl}.`,
+        observation: opened,
       })
-      : { status: 'passed' as const, observation: `Navigated to ${flow.startUrl}.`, error: undefined as string | undefined };
+      : { status: 'passed' as const, observation: opened, error: undefined as string | undefined };
     if (opts.failOn5xx) {
       if (!opts.strictOracles) await flushStepEvents(page);
       nav = outcomeWithSameOrigin5xx(nav, evidence.networkByStep.get(0), origins);
@@ -450,11 +471,33 @@ async function runFlow(
       startedAt: navStartedAt,
       durationMs: Date.now() - navStarted,
       status: 'passed',
-      observation: `Navigated to ${flow.startUrl}.`,
+      observation: opened,
       resolution: 'recorded',
     }));
   } catch (err) {
     const msg = navOracleError || (err instanceof Error ? err.message : String(err));
+    const landed = safePageUrl(page) || '';
+    const kind = classifyDocumentRedirect({
+      requestedUrl: flow.startUrl,
+      landedUrl: landed,
+      statuses: navStatus === undefined ? undefined : [navStatus],
+    });
+    const loop = /too many redirects|ERR_TOO_MANY_REDIRECTS|redirect.?loop/i.test(msg);
+    if (!navOracleError && !loop && isPageVisitFlow(flow) && kind === 'expected-auth') {
+      flowSuggestions.push(authRedirectSuggestion(flow.startUrl, landed));
+      traceSteps.push(serializeTraceStep({
+        index: 0,
+        action: `Open ${flow.startUrl}`,
+        tool: 'goto',
+        locator: { strategy: 'css', target: flow.startUrl },
+        urlAfter: landed,
+        startedAt: navStartedAt,
+        durationMs: Date.now() - navStarted,
+        status: 'passed',
+        observation: authRedirectObservation(flow.startUrl, landed),
+        resolution: 'recorded',
+      }));
+    } else {
     const blockingStep: StepResult = {
       index: 0,
       action: `Open ${flow.startUrl}`,
@@ -508,6 +551,7 @@ async function runFlow(
     signal?.removeEventListener('abort', onAbort);
     await context.close().catch(() => {});
     return finish();
+    }
   }
 
   // 2. Walk the planned steps.
@@ -875,7 +919,20 @@ async function runFlow(
   } else if (oracleFlow) {
     assertion = oracleAssertion(steps);
   } else if (!flowFailed) {
-    const verdict = await evaluateOutcomeCheck(page, flow.outcomeCheck, { startUrl: flow.startUrl, before: beforeLast });
+    const landedNow = safePageUrl(page) || '';
+    const redirectKind = classifyDocumentRedirect({
+      requestedUrl: flow.startUrl,
+      landedUrl: landedNow,
+      statuses: navStatus === undefined ? undefined : [navStatus],
+    });
+    const signedOutVisit = isPageVisitFlow(flow) && redirectKind === 'expected-auth';
+    let verdict = await evaluateOutcomeCheck(page, flow.outcomeCheck, { startUrl: flow.startUrl, before: beforeLast });
+    if (signedOutVisit && verdict.state !== 'verified') {
+      verdict = { state: 'verified', observation: authRedirectObservation(flow.startUrl, landedNow) };
+      if (!flowSuggestions.some(item => item.kind === 'auth-redirect')) {
+        flowSuggestions.push(authRedirectSuggestion(flow.startUrl, landedNow));
+      }
+    }
     const unfinished = steps.some(step => step.index > 0 && (step.status === 'skipped' || step.status === 'blocked'));
     assertion = verdict.state === 'verified'
       ? 'verified'

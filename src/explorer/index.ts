@@ -48,6 +48,7 @@ import {
 import type { SiteMap, SiteMapControl, SiteMapForm, SiteMapFormInput, SiteMapPage, SiteMapInteractive } from '../types.js';
 import { type EventBus, noopBus } from '../events.js';
 import { installPageNameHelper } from '../runner/locate.js';
+import { waitForSettledLocation } from './authRedirect.js';
 import {
   AUTH_LINK_BUDGET,
   canonicalPageUrl,
@@ -165,6 +166,18 @@ export async function explore(
 
       try {
         await page.goto(requestedUrl, { waitUntil: 'domcontentloaded', timeout });
+        // SPAs (CRA, Next dev, Vite) often keep a websocket open for HMR so
+        // networkidle never settles. We give it a brief shot, then fall back
+        // to a `waitForFunction` that polls for actual rendered content.
+        // The URL is read after that, so a client-side redirect to /signin
+        // is the page we store.
+        await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
+        await page.waitForFunction(
+          () => (document.body?.innerText || '').replace(/\s+/g, '').length > 30,
+          undefined,
+          { timeout: 8_000 },
+        ).catch(() => {});
+        await waitForSettledLocation(page);
         const url = crawledPageUrl(requestedUrl, page.url(), startUrl);
         rememberVisited(visited, url);
         if (pages.some(existing => sameCrawlPage(existing.url, url))) {
@@ -172,16 +185,6 @@ export async function explore(
           // Do not spend another page slot on it.
           continue;
         }
-
-        // SPAs (CRA, Next dev, Vite) often keep a websocket open for HMR so
-        // networkidle never settles. We give it a brief shot, then fall back
-        // to a `waitForFunction` that polls for actual rendered content.
-        await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
-        await page.waitForFunction(
-          () => (document.body?.innerText || '').replace(/\s+/g, '').length > 30,
-          undefined,
-          { timeout: 8_000 },
-        ).catch(() => {});
 
         const skeleton = await scrapePageSkeleton(page);
 

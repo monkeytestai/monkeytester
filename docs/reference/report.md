@@ -74,7 +74,7 @@ Found 1 confirmed bug. Open the top one and confirm it on the site before treati
 | --- | --- |
 | `pageUrl` | Page the note is about. Group by this for a per-page list. |
 | `title`, `detail` | What was observed |
-| `kind` | `autocomplete`, `viewport`, `description`, `overflow`, `third-party-error`, `unattributed-error` |
+| `kind` | `autocomplete`, `viewport`, `description`, `overflow`, `third-party-error`, `unattributed-error`, `auth-redirect` |
 | `severity` | Always `info` |
 
 `color-contrast` and `scrollable-region-focusable` are bugs of severity `minor` at most, rolled up by rule id. Other serious axe rules stay bugs, also one per rule.

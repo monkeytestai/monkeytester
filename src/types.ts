@@ -713,7 +713,8 @@ export type SuggestionKind =
   | 'description'
   | 'overflow'
   | 'third-party-error'
-  | 'unattributed-error';
+  | 'unattributed-error'
+  | 'auth-redirect';
 
 export interface Suggestion {
   /** Page the note is about. */

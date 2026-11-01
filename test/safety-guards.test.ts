@@ -3,6 +3,7 @@
  * errors, and public sign-in screens.
  */
 
+import { createServer } from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { chromium } from 'playwright';
 import { judgeConsole } from '../src/checks/console.js';
@@ -13,7 +14,10 @@ import { isThirdPartyPageError, oracleFromEvidence } from '../src/runner/evidenc
 import {
   installDialogPolicy,
   installSubmissionGuards,
+  isAnalyticsBeaconUrl,
+  isUserFormSubmission,
   plansDisallowedSensitiveSubmit,
+  refreshFormActions,
   setStepIntent,
   submissionPolicy,
 } from '../src/runner/sensitive.js';
@@ -47,33 +51,70 @@ describe('sensitive submit guard', () => {
     }
   });
 
-  it('aborts a password-reset POST that carries an email, and lets an empty POST through', async () => {
+  it('aborts a same-origin password-reset POST that carries an email, and lets an empty POST through', async () => {
+    const site = await startGuardSite();
     const browser = await chromium.launch({ headless: true });
     try {
       const page = await browser.newPage();
-      await page.setContent('<p>ready</p>');
       await installSubmissionGuards(page, {});
-      const filled = await page.evaluate(async () => {
+      await page.goto(`${site.url}/home`);
+      const filled = await page.evaluate(async (origin) => {
         try {
-          await fetch('https://example.test/forgot-password', { method: 'POST', body: 'email=you@example.com' });
-          return 'sent';
+          const response = await fetch(`${origin}/forgot-password`, { method: 'POST', body: 'email=you@example.com' });
+          return response.status;
         } catch {
-          return 'blocked';
+          return 0;
         }
-      });
-      expect(filled).toBe('blocked');
+      }, site.url);
+      expect(filled).toBe(0);
       expect(submissionPolicy(page)?.blocked).toMatch(/reset/);
 
       const policy = submissionPolicy(page);
       if (policy) policy.blocked = undefined;
-      await page.evaluate(async () => {
-        try {
-          await fetch('https://example.test/forgot-password', { method: 'POST', body: 'email=' });
-        } catch { /* continued requests can still fail DNS */ }
-      });
+      const empty = await page.evaluate(async (origin) => {
+        const response = await fetch(`${origin}/forgot-password`, { method: 'POST', body: 'email=' });
+        return response.status;
+      }, site.url);
+      expect(empty).toBe(204);
       expect(submissionPolicy(page)?.blocked).toBeUndefined();
     } finally {
       await browser.close();
+      await site.close();
+    }
+  });
+
+  it('still blocks OTP, newsletter, payment, deletion, and a form-action host', async () => {
+    const site = await startGuardSite();
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await installSubmissionGuards(page, {});
+      await page.goto(`${site.url}/home`);
+      await refreshFormActions(page);
+      const cases = [
+        { method: 'POST', url: `${site.url}/send-otp`, body: 'email=you@example.com', kind: /otp/ },
+        { method: 'PUT', url: `${site.url}/newsletter`, body: 'email=you@example.com', kind: /newsletter/ },
+        { method: 'POST', url: `${site.url}/checkout`, body: 'card=4242424242424242', kind: /payment/ },
+        { method: 'PATCH', url: `${site.url}/account`, body: 'confirm=delete account', kind: /deletion/ },
+        { method: 'POST', url: 'https://payments.example/charge', body: 'payment=1', kind: /payment/ },
+      ];
+      for (const item of cases) {
+        const policy = submissionPolicy(page);
+        if (policy) policy.blocked = undefined;
+        const status = await page.evaluate(async (send) => {
+          try {
+            const response = await fetch(send.url, { method: send.method, body: send.body });
+            return response.status;
+          } catch {
+            return 0;
+          }
+        }, item);
+        expect(status).toBe(0);
+        expect(submissionPolicy(page)?.blocked).toMatch(item.kind);
+      }
+    } finally {
+      await browser.close();
+      await site.close();
     }
   });
 
@@ -103,6 +144,108 @@ describe('sensitive submit guard', () => {
       description: 'Place the order',
       steps: [{ action: 'Click Pay now' }],
     }, { allow: ['payment'] })).toBe(false);
+  });
+});
+
+describe('analytics beacons', () => {
+  it('does not classify known collectors or sendBeacon as a sensitive submit', () => {
+    const urls = [
+      'https://clarity.ms/collect',
+      'https://www.clarity.ms/collect',
+      'https://www.google-analytics.com/g/collect',
+      'https://www.googletagmanager.com/g/collect',
+      'https://shop.example/cdn-cgi/rum?x=1',
+      'https://api.segment.io/v1/track',
+      'https://api.mixpanel.com/track',
+      'https://in.hotjar.com/api/v2/client',
+      'https://plausible.io/api/event',
+      'https://us.i.posthog.com/e/',
+      'https://o123.ingest.sentry.io/api/456/envelope/',
+      'https://o123.ingest.us.sentry.io/api/456/envelope/',
+    ];
+    for (const url of urls) {
+      expect(isAnalyticsBeaconUrl(url)).toBe(true);
+      expect(isUserFormSubmission({
+        url,
+        method: 'POST',
+        pageUrl: 'https://shop.example/',
+        resourceType: 'fetch',
+      })).toBe(false);
+    }
+    expect(isUserFormSubmission({
+      url: 'https://collector.example/beacon',
+      method: 'POST',
+      pageUrl: 'https://shop.example/',
+      resourceType: 'ping',
+    })).toBe(false);
+    expect(isUserFormSubmission({
+      url: 'https://shop.example/rum',
+      method: 'POST',
+      pageUrl: 'https://shop.example/',
+      resourceType: 'fetch',
+      headers: { 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'empty' },
+    })).toBe(false);
+    expect(isUserFormSubmission({
+      url: 'https://example.test/forgot-password',
+      method: 'POST',
+      pageUrl: 'https://shop.example/forgot-password',
+      resourceType: 'fetch',
+    })).toBe(false);
+  });
+
+  it('still classifies same-origin and form-action writes', () => {
+    expect(isUserFormSubmission({
+      url: 'https://shop.example/forgot-password',
+      method: 'POST',
+      pageUrl: 'https://shop.example/account',
+      resourceType: 'fetch',
+    })).toBe(true);
+    expect(isUserFormSubmission({
+      url: 'https://shop.example/api/subscribe',
+      method: 'PUT',
+      pageUrl: 'https://shop.example/',
+      resourceType: 'xhr',
+    })).toBe(true);
+    expect(isUserFormSubmission({
+      url: 'https://shop.example/account',
+      method: 'PATCH',
+      pageUrl: 'https://shop.example/account',
+      resourceType: 'fetch',
+    })).toBe(true);
+    expect(isUserFormSubmission({
+      url: 'https://payments.example/charge',
+      method: 'POST',
+      pageUrl: 'https://shop.example/checkout',
+      resourceType: 'document',
+      formActionUrls: ['https://payments.example/charge'],
+    })).toBe(true);
+    expect(isUserFormSubmission({
+      url: 'https://shop.example/forgot-password',
+      method: 'GET',
+      pageUrl: 'https://shop.example/',
+      resourceType: 'document',
+    })).toBe(false);
+  });
+
+  it('does not make a homepage visit or a forgot-password link inconclusive', async () => {
+    const site = await startGuardSite();
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await installSubmissionGuards(page, {});
+      const opened = await executeAction(page, { tool: 'goto', target: `${site.url}/home` }, 5_000);
+      expect(opened.status).toBe('passed');
+      expect(opened.error).toBeUndefined();
+      expect(submissionPolicy(page)?.blocked).toBeUndefined();
+      const clicked = await executeAction(page, { tool: 'click', locator: 'text', target: 'Forgot your password?' }, 5_000);
+      expect(clicked.status).toBe('passed');
+      expect(clicked.error).not.toBe('sensitive-submit');
+      expect(submissionPolicy(page)?.blocked).toBeUndefined();
+      expect(page.url()).toContain('/next');
+    } finally {
+      await browser.close();
+      await site.close();
+    }
   });
 });
 
@@ -260,3 +403,44 @@ describe('public sign-in screens', () => {
       .not.toBe(screenFingerprint({ title: 'Shop', heading: 'Shoes', fields: ['search:q::'] }));
   });
 });
+
+function startGuardSite(): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = createServer((req, res) => {
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (url.pathname === '/next') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><title>Next</title><p>Account</p>');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><title>Home</title>
+      <a id="forgot" href="/next">Forgot your password?</a>
+      <form method="post" action="https://payments.example/charge"><button type="submit">Pay</button></form>
+      <script>
+        navigator.sendBeacon('https://clarity.ms/collect', 'event=payment&page=reset password');
+        fetch('/cdn-cgi/rum', { method: 'POST', body: 'payment reset', keepalive: true }).catch(() => {});
+        document.getElementById('forgot').addEventListener('click', () => {
+          navigator.sendBeacon('https://collector.example/beacon', JSON.stringify({ payment: true, action: 'reset password' }));
+        });
+      </script>`);
+  });
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        reject(new Error('guard site did not bind'));
+        return;
+      }
+      resolve({
+        url: `http://127.0.0.1:${address.port}`,
+        close: () => new Promise((done, fail) => server.close(err => err ? fail(err) : done())),
+      });
+    });
+  });
+}
