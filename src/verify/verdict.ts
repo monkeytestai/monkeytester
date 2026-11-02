@@ -80,7 +80,7 @@ export function classifyAttempt(
 
 function isLocatorMismatch(step: TraceStep): boolean {
   const blob = `${step.error || ''} ${step.observation || ''}`.toLowerCase();
-  return blob.includes('locator_mismatch') || blob.includes('no longer matches');
+  return blob.includes('locator_mismatch') || blob.includes('locator_stale') || blob.includes('no longer matches');
 }
 
 export function aggregateVerdict(attempts: VerifyAttempt[]): VerifyVerdict {

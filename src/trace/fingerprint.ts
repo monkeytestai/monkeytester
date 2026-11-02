@@ -50,7 +50,7 @@ export function normaliseErrorSignal(error: string | undefined): string {
     || raw.includes('contenteditable')
   ) return 'not-editable';
   if (raw.includes('invalid_url') || raw.includes('non-http')) return 'invalid-url';
-  if (raw.includes('locator_mismatch') || raw.includes('no longer matches')) return 'locator-mismatch';
+  if (raw.includes('locator_mismatch') || raw.includes('locator_stale') || raw.includes('no longer matches')) return 'locator-mismatch';
   // Product oracles. These codes are checked before the broad "navigation"
   // substring and the 5xx regex so `http-404` stays a 404 and `pageerror`
   // stays a page error. The exception text itself is not the signal.

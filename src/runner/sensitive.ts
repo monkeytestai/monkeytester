@@ -84,10 +84,11 @@ function hostIs(hostname: string, suffix: string): boolean {
 export function isAnalyticsBeaconUrl(url: string): boolean {
   let parsed: URL;
   try { parsed = new URL(url); }
-  catch { return /clarity\.ms|google-analytics|googletagmanager|cdn-cgi\/rum|segment\.(io|com)|mixpanel|hotjar|plausible\.io|posthog|ingest(?:\.[a-z0-9-]+)?\.sentry\.io/i.test(url); }
+  catch { return /clarity\.ms|google-analytics|googletagmanager|cdn-cgi\/rum|segment\.(io|com)|mixpanel|hotjar|plausible\.io|posthog|ingest(?:\.[a-z0-9-]+)?\.sentry\.io|\/__l5e\/trackevents/i.test(url); }
   const host = parsed.hostname;
   const path = parsed.pathname.toLowerCase();
   if (path.includes('/cdn-cgi/rum') || path.includes('/cdn-cgi/beacon')) return true;
+  if (/^\/__l5e\/trackevents\/?$/.test(path)) return true;
   if (/(^|\.)ingest(?:\.[a-z0-9-]+)?\.sentry\.io$/i.test(host)) return true;
   return ANALYTICS_HOST_SUFFIXES.some(suffix => hostIs(host, suffix));
 }

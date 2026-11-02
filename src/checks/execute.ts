@@ -26,6 +26,7 @@ import { resolveFlowStatus } from '../runner/flowStatus.js';
 import { serializeTrace, serializeTraceStep } from '../trace/serialize.js';
 import { isPageCheck, pageCheckSpec } from './plan.js';
 import { consoleEvidence, judgeConsole, type ConsoleHit } from './console.js';
+import { shouldRunPageLevelChecks } from './html.js';
 import {
   BROKEN_LINK_CAP,
   isBrokenStatus,
@@ -33,12 +34,13 @@ import {
   linkEvidence,
   requestEvidence,
   sameSiteLinks,
+  sitemapDocumentSeverity,
   type ObservedRequest,
 } from './http.js';
 import { axeBugSeverity, readMissingLoginAutocomplete, runAxe } from './axe.js';
 import { judgeMeta, readMetaInPage } from './meta.js';
 import { judgeMobile, MOBILE_VIEWPORT, readMobileInPage } from './mobile.js';
-import { waitForDocumentReady } from './ready.js';
+import { settlePageCheck } from './ready.js';
 
 export interface CheckStepOutcome {
   status: 'passed' | 'failed' | 'skipped';
@@ -177,6 +179,7 @@ export async function replayPageCheck(
   kind: PageCheck,
   url: string,
   timeoutMs: number,
+  opts?: { sitemapOnly?: boolean },
 ): Promise<CheckStepOutcome> {
   const collected = bucket(page);
   resetCollected(collected);
@@ -189,8 +192,12 @@ export async function replayPageCheck(
   } catch (err) {
     return loadFailure(kind, url, err);
   }
-  await page.waitForTimeout(200).catch(() => {});
-  return assessLoadedPage(page, kind, url, collected, { remaining: BROKEN_LINK_CAP }, response?.status());
+  await settlePageCheck(page);
+  const contentType = await documentContentType(page, response);
+  return assessLoadedPage(page, kind, url, collected, { remaining: BROKEN_LINK_CAP }, response?.status(), {
+    contentType,
+    sitemapOnlyUrls: opts?.sitemapOnly ? [url] : [],
+  });
 }
 
 export async function executePageChecks(
@@ -237,8 +244,10 @@ export async function executePageChecks(
       } catch (err) {
         loadError = err;
       }
-      if (!loadError) await waitForDocumentReady(desktopPage, 800);
+      if (!loadError) await settlePageCheck(desktopPage);
       const status = response?.status();
+      const contentType = loadError ? undefined : await documentContentType(desktopPage, response);
+      const pageContext = { contentType, sitemapOnlyUrls: sitemapOnlyUrls(flows) };
 
       for (const flow of flows) {
         const kind = kindOf(flow);
@@ -248,7 +257,7 @@ export async function executePageChecks(
           ? loadFailure(kind, url, loadError)
           : status && status >= 400 && kind !== 'http'
             ? skipped(`Page responded HTTP ${status}, so this check was not run.`)
-            : await assessLoadedPage(desktopPage, kind, url, collected, linkBudget, status);
+            : await assessLoadedPage(desktopPage, kind, url, collected, linkBudget, status, pageContext);
         await record(flow, url, outcome, opts, steps, traces, desktopPage, Date.now() - started);
       }
 
@@ -262,7 +271,7 @@ export async function executePageChecks(
           const started = Date.now();
           try {
             await mobilePage.goto(url, { waitUntil: 'domcontentloaded', timeout: opts.stepTimeoutMs });
-            await waitForDocumentReady(mobilePage, 800);
+            await settlePageCheck(mobilePage);
           } catch (err) {
             mobileError = err;
           }
@@ -316,6 +325,11 @@ export async function executePageChecks(
   });
 }
 
+interface PageContext {
+  contentType?: string;
+  sitemapOnlyUrls?: readonly string[];
+}
+
 async function assessLoadedPage(
   page: Page,
   kind: PageCheck,
@@ -323,12 +337,39 @@ async function assessLoadedPage(
   collected: Collected,
   linkBudget: LinkBudget,
   status?: number,
+  context: PageContext = {},
 ): Promise<CheckStepOutcome> {
+  if ((kind === 'axe' || kind === 'meta') && !pageLevelAllowed(context.contentType, url, page.url())) {
+    return skipped('This response is not HTML, so this check was not run.');
+  }
   if (kind === 'console') return judgeConsoleStep(collected, url);
-  if (kind === 'http') return judgeHttpStep(page, url, collected, linkBudget, status);
+  if (kind === 'http') return judgeHttpStep(page, url, collected, linkBudget, status, context.sitemapOnlyUrls);
   if (kind === 'axe') return judgeAxeStep(page);
   if (kind === 'mobile') return judgeMobileStep(page);
   return judgeMetaStep(page);
+}
+
+function pageLevelAllowed(contentType: string | undefined, requestedUrl: string, landedUrl: string): boolean {
+  if (!shouldRunPageLevelChecks(contentType, requestedUrl)) return false;
+  if (landedUrl && landedUrl !== requestedUrl && !shouldRunPageLevelChecks(contentType, landedUrl)) return false;
+  return true;
+}
+
+async function documentContentType(page: Page, response: Response | null): Promise<string | undefined> {
+  const header = response?.headers()?.['content-type']?.trim();
+  if (header) return header;
+  const sniffed = await page.evaluate(() => document.contentType || '').catch(() => '');
+  return sniffed.trim() || undefined;
+}
+
+function sitemapOnlyUrls(flows: TestFlow[]): string[] {
+  const urls: string[] = [];
+  for (const flow of flows) {
+    for (const step of flow.steps) {
+      if (step.sitemapOnly && step.url && !urls.includes(step.url)) urls.push(step.url);
+    }
+  }
+  return urls;
 }
 
 function judgeConsoleStep(collected: Collected, url: string): CheckStepOutcome {
@@ -372,6 +413,7 @@ async function judgeHttpStep(
   collected: Collected,
   linkBudget: LinkBudget,
   status?: number,
+  sitemapOnlyUrls: readonly string[] = [],
 ): Promise<CheckStepOutcome> {
   const requests = dedupeRequests([
     ...(status && status >= 400 && isBrokenStatus(status)
@@ -395,7 +437,11 @@ async function judgeHttpStep(
   const code = lead?.status;
   const error = code ? `http-${code}` : 'request-failed';
   const network = [...requestEvidence(requests), ...linkEvidence(broken)];
-  return failed(lines.join(' '), error, { networkFailures: network });
+  const severity = sitemapDocumentSeverity(requests, broken, sitemapOnlyUrls);
+  return failed(lines.join(' '), error, {
+    networkFailures: network,
+    ...(severity ? { severity } : {}),
+  });
 }
 
 async function probeLinks(
@@ -592,6 +638,7 @@ async function record(
     ...(outcome.consoleErrors ? { consoleErrors: outcome.consoleErrors } : {}),
     ...(outcome.networkFailures ? { networkFailures: outcome.networkFailures } : {}),
     ...(result.screenshotPath ? { screenshotPath: result.screenshotPath } : {}),
+    ...(flow.steps[index - 1]?.sitemapOnly ? { sitemapOnly: true } : {}),
   };
   traces.get(flow.id)?.push(serializeTraceStep(trace));
   opts.onStep?.(flow, result);

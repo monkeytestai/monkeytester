@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1-beta.1] — 2026-11-02
+
+### Fixed
+
+- Stored-plan replay (`monkeytest rerun` and `replayTraces`) uses the same outcome rules as a live run. A page visit that lands on a same-origin sign-in URL passes, and the `auth-redirect` note is recorded once. Sign-in checks (`auth-neg-*`, including a wrong password) and sign-up validation (`signup-val-*`) are executed by the same checks as a live run. Sensitive submits stay blocked, and OAuth is not clicked.
+- A recorded locator that no longer matches is inconclusive. The step error stays `locator_mismatch` and the flow's `outcome_reason` is `automation_error`. It is not a confirmed site bug, including when the stored step has no locator and the plan severity is critical or major. Replay tries the step's quoted label, role, or text before giving up. `verify` still reports that miss as blocked, so a later bug is not treated as reproduced.
+- A live run no longer lists the `auth-redirect` suggestion twice on the flow. The opening navigation and the planned goto both observe it; the flow keeps one, and so does the step list. The run-level list was already deduped.
+- Replay page checks wait for paint the same way a live check does. A 200ms pause judged `/signup` before it rendered and marked a real color-contrast failure as passed.
+- Replay keeps each page check's axe findings. Triage rolls them up by rule and applies the same minor caps and fingerprints as a live run, instead of one major bug per page.
+- Page checks for accessibility and metadata run only on HTML. The response content-type must be `text/html` or `application/xhtml+xml`. When the content-type is missing, `.xml`, `sitemap*`, `.json`, `.txt`, `.rss`, `.atom`, images, and `.pdf` are skipped. A sitemap such as `/sitemaps/static.xml` is not filed as a missing title or `html-has-lang`.
+- A flow whose only miss is that the URL stayed the same is inconclusive. It is still a bug when the page shows an error, a first-party console error or a failed request was recorded, or the DOM and field state did not change after the action.
+- A 404 on a URL discovered only from a sitemap is minor. A 404 on a link found in the page stays at the check's severity.
+- `POST /__l5e/trackevents` (Lovable analytics) is an analytics beacon, not a sensitive submit.
+
 ## [0.7.0] — 2026-11-01
 
 First stable 0.7.0. It bundles 0.7.0-beta.1 through beta.5 with no code changes since beta.5. Highlights:

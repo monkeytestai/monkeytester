@@ -11,7 +11,7 @@
  * Wrong-password runs at most once per plan.
  */
 
-import type { OutcomeCheck, SiteMap, SiteMapControl, SiteMapFormInput, SiteMapPage, TestFlow, TestStep } from '../types.js';
+import type { AuthCheck, OutcomeCheck, SiteMap, SiteMapControl, SiteMapFormInput, SiteMapPage, TestFlow, TestStep } from '../types.js';
 import { looksLikeAuthUrl } from '../explorer/queue.js';
 
 export const AUTH_NEG_PREFIX = 'auth-neg-';
@@ -36,6 +36,24 @@ const PAYMENT = /\b(card number|credit card|debit card|cvv|cvc|payment|billing)\
 
 export function isAuthNegativeFlowId(id: string): boolean {
   return id.startsWith(AUTH_NEG_PREFIX);
+}
+
+const AUTH_CHECK_BY_ID: Record<string, AuthCheck> = {
+  'auth-neg-empty-submit': 'empty_submit',
+  'auth-neg-invalid-email': 'invalid_email',
+  'auth-neg-wrong-password': 'wrong_password',
+  'auth-neg-password-toggle': 'password_toggle',
+  'auth-neg-forgot-password': 'forgot_link',
+  'auth-neg-signup-link': 'signup_link',
+};
+
+/**
+ * Check id for a reserved `auth-neg-*` flow. Older traces omit `step.check`
+ * and record the step as a click with no locator. Replay uses this map so
+ * it can call `runAuthCheck` instead of hunting for that missing locator.
+ */
+export function authCheckForFlowId(id: string): AuthCheck | undefined {
+  return AUTH_CHECK_BY_ID[id];
 }
 
 export function pageHasPassword(page: Pick<SiteMapPage, 'forms' | 'inputs'>): boolean {

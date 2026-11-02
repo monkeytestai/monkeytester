@@ -86,6 +86,11 @@ export const AUTOMATION_FAULT_SIGNATURES: readonly AutomationFaultSignature[] = 
     description: 'A timeout caused by our selector (locator.fill / locator.click / getBy*), not a server timeout.',
   },
   {
+    id: 'locator-stale',
+    pattern: 'locator_mismatch|locator_stale|recorded locator no longer matches',
+    description: 'Replay could not find the element recorded on an earlier run. The step was not repeated. Not a site bug.',
+  },
+  {
     id: 'client-page-title',
     pattern: '(page title|document title).{0,80}(assert|expected to see|check if)|check if the page title',
     description: 'Same page-title observation mtaiclient drops. Exploratory, not a product bug.',

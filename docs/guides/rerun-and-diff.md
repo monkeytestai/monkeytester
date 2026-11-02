@@ -6,7 +6,7 @@ npx monkeytest rerun
 npx monkeytest diff prev latest
 ```
 
-`run` writes `.monkeytest/plan.json` and a file under `.monkeytest/runs/`. `rerun` replays the action trace on the latest run. It does not crawl again and it does not call the LLM.
+`run` writes `.monkeytest/plan.json` and a file under `.monkeytest/runs/`. `rerun` replays the action trace on the latest run. It does not crawl again and it does not call the LLM. Sign-in checks, sign-up checks, and a signed-out redirect are judged the same way as a live run. A recorded locator that no longer matches is inconclusive, not a site bug.
 
 `--heal` re-resolves a step whose locator missed, marks that step `healed`, and may call the model. If the stored run has no trace, `rerun` says so and re-executes the stored plan with the LLM. Pass a run id to replay that run instead of the latest.
 
