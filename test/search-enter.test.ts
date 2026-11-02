@@ -16,11 +16,12 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { LLM } from '../src/llm/index.js';
 import { clickAsksForButton } from '../src/runner/actions.js';
+import { clickTargetAsksForButton } from '../src/runner/locate.js';
 import { judgeUnchangedUrlEvidence } from '../src/outcome/check.js';
 import { replayTraces } from '../src/runner/replay.js';
 import { runPlan } from '../src/runner/index.js';
 import { triage } from '../src/triager/index.js';
-import type { TestPlan } from '../src/types.js';
+import type { FlowResult, RunResult, TestPlan } from '../src/types.js';
 
 const llm: LLM = {
   providerLabel: 'stub',
@@ -34,12 +35,23 @@ const llm: LLM = {
 };
 
 describe('button intent on a text field', () => {
-  it('recognises a button or Search/Submit/Go click', () => {
+  it('recognises a button or Search/Submit/Go/Find click, including live planner wording', () => {
     expect(clickAsksForButton('Click button Search')).toBe(true);
     expect(clickAsksForButton('Click "Submit"')).toBe(true);
     expect(clickAsksForButton('Click "Go"')).toBe(true);
+    expect(clickAsksForButton(undefined, { tool: 'click', target: 'Search' })).toBe(true);
+    expect(clickAsksForButton('Submit the search form by clicking "Search"', { tool: 'click', target: 'Search' })).toBe(true);
+    expect(clickTargetAsksForButton({ tool: 'click', target: 'Search' })).toBe(true);
+    expect(clickTargetAsksForButton({ tool: 'click', target: 'textbox:Find' })).toBe(true);
+    expect(clickTargetAsksForButton({ tool: 'click', target: 'button:Save' })).toBe(true);
+    expect(clickAsksForButton('clicked the Find button')).toBe(true);
+    expect(clickAsksForButton('Pressing "Go"')).toBe(true);
+    expect(clickAsksForButton('Tap Find')).toBe(true);
+    expect(clickAsksForButton('Hit "Submit"')).toBe(true);
     expect(clickAsksForButton('Fill the "Search" field')).toBe(false);
     expect(clickAsksForButton('Click "Email"')).toBe(false);
+    expect(clickTargetAsksForButton({ tool: 'click', target: 'Email' })).toBe(false);
+    expect(clickTargetAsksForButton({ tool: 'fill', target: 'Search' })).toBe(false);
   });
 
   it('keeps an unchanged URL inconclusive when the page changed, and a bug when it did not', () => {
@@ -59,6 +71,42 @@ describe('button intent on a text field', () => {
       visibleError: false,
     });
     expect(frozen.kind).toBe('failed');
+  });
+
+  it('submits when a live plan says click with a bare Search target', async () => {
+    const site = await startSite();
+    const shots = mkdtempSync(join(tmpdir(), 'monkeytest-search-bare-'));
+    const bare: LLM = {
+      providerLabel: 'stub',
+      async generateJSON() {
+        return { tool: 'click', target: 'Search', rationale: 'Search.' };
+      },
+    };
+    try {
+      const live = triage(await runPlan(
+        plan(site.url, '/form', 'search-clothing', 'Submit the search form by clicking "Search"'),
+        bare,
+        opts(shots),
+      ));
+      expect(live.bugs).toEqual([]);
+      expect(live.flows[0].status).toBe('passed');
+      expect(live.flows[0].steps.some(step => /submitted via Enter/i.test(step.observation))).toBe(true);
+      expect(live.flows[0].trace?.steps.some(step => step.urlAfter?.includes('/search?q=hats'))).toBe(true);
+    } finally {
+      await site.close();
+    }
+  }, 30_000);
+
+  it('does not file a bug when a text-field click only leaves the URL unchanged', () => {
+    const missed = triage(urlMissRun('textbox'));
+    expect(missed.bugs).toEqual([]);
+    expect(missed.flows[0].status).toBe('inconclusive');
+    expect(missed.flows[0].outcome_reason).toBe('automation_error');
+    expect(missed.flows[0].steps.some(step => step.error === 'locator_mismatch')).toBe(true);
+
+    const button = triage(urlMissRun('button'));
+    expect(button.bugs).toHaveLength(1);
+    expect(button.flows[0].status).toBe('failed');
   });
 
   it('submits a search field with Enter and passes the URL check, live and on replay', async () => {
@@ -150,6 +198,52 @@ describe('button intent on a text field', () => {
     }
   }, 30_000);
 });
+
+function urlMissRun(role: 'textbox' | 'button'): RunResult {
+  const flow: FlowResult = {
+    flowId: 'search-clothing',
+    name: 'Search for Clothing Items',
+    description: 'Submit the search form by clicking "Search"',
+    kind: 'happy_path',
+    startUrl: 'https://bananabeings.com/',
+    status: 'failed',
+    assertion: 'failed',
+    severityIfFails: 'major',
+    steps: [
+      {
+        index: 1,
+        action: 'Submit the search form by clicking "Search"',
+        status: 'passed',
+        observation: 'Clicked Search.',
+        tool: 'click',
+        target: 'Search',
+        locator: { strategy: 'css', target: role === 'textbox' ? 'input[type="search"]' : 'button', role, name: 'Search' },
+      },
+      {
+        index: 2,
+        action: 'Check the expected outcome',
+        status: 'failed',
+        observation: 'The page did not change after the action. The URL stayed https://bananabeings.com/.',
+        error: 'The page did not change after the action. The URL stayed https://bananabeings.com/.',
+        tool: 'assert_text',
+      },
+    ],
+    durationMs: 10,
+    bugIds: [],
+  };
+  return {
+    startUrl: flow.startUrl,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    finishedAt: '2026-01-01T00:00:01.000Z',
+    flows: [flow],
+    bugs: [],
+    stats: {
+      flowsTotal: 1, flowsPassed: 0, flowsFailed: 1, flowsBlocked: 0, flowsInconclusive: 0,
+      stepsTotal: 2, stepsPassed: 1, stepsFailed: 1,
+      bugsCritical: 0, bugsMajor: 0, bugsMinor: 0,
+    },
+  };
+}
 
 function plan(origin: string, path: string, id: string, action: string): TestPlan {
   const startUrl = `${origin}${path}`;

@@ -15,7 +15,15 @@ import type {
   TraceLocatorStrategy,
 } from '../types.js';
 import { isAutomationFault } from '../automation/signatures.js';
-import { impliedType, locateActionTarget, pageFn, type LocateHit } from './locate.js';
+import {
+  bareControlName,
+  impliedType,
+  locateActionTarget,
+  nameIsSubmitControl,
+  pageFn,
+  wordingAsksForSubmit,
+  type LocateHit,
+} from './locate.js';
 import {
   authRedirectObservation,
   authRedirectSuggestion,
@@ -164,25 +172,20 @@ export function directActionFromStep(
   return null;
 }
 
-const SUBMIT_NAME = /^(search|submit|go)$/i;
-
 /**
- * A click whose job is to press a button or submit. Role `button`, or a
- * control named Search, Submit, or Go. Used when that click lands on a
- * text field instead of a button.
+ * A click whose job is to press a button or submit. The bare target
+ * (`Search`), a role prefix (`button:Search`, `textbox:Find`), a quoted
+ * label, or the step description can all name it. Search, Submit, Go, and
+ * Find count. The resolved element decides what happens: a text field is
+ * never clicked as if it were that button.
  */
 export function clickAsksForButton(text: string | undefined, action?: ResolvedAction): boolean {
   if (action?.buttonIntent) return true;
   const target = action?.target || '';
   if (/^button\s*:/i.test(target)) return true;
-  const named = target.match(/^[a-z]+\s*:\s*(.+)$/i)?.[1]?.trim() || '';
-  if (SUBMIT_NAME.test(named)) return true;
-  const line = (text || '').replace(/\s+/g, ' ').trim();
-  if (!line) return false;
-  if (/\b(click|press|tap)\b/i.test(line) && /\bbutton\b/i.test(line)) return true;
-  if (/\b(click|press|tap)\b/i.test(line) && /["“'](search|submit|go)["”']/i.test(line)) return true;
-  if (/\b(click|press|tap)\s+(?:the\s+)?(search|submit|go)(?:\s+button)?\b/i.test(line)) return true;
-  return false;
+  if (nameIsSubmitControl(bareControlName(target))) return true;
+  if (wordingAsksForSubmit(text)) return true;
+  return wordingAsksForSubmit(action?.rationale);
 }
 
 function clickAction(role: 'button' | 'link', label: string): ResolvedAction {

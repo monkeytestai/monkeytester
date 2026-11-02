@@ -91,6 +91,48 @@ function isStaleLocatorStep(step: Pick<StepResult, 'error' | 'observation'>): bo
   return raw.includes('locator_mismatch') || raw.includes('locator_stale') || raw.includes('recorded locator no longer matches');
 }
 
+/**
+ * A click that resolved to a text field, search box, or combobox did not
+ * press a button. If the only later miss is that the URL stayed or the
+ * snapshot did not change, that is locator_mismatch, not a site bug.
+ * A real button that leaves the page unchanged is unaffected.
+ */
+function relieveTextFieldUrlMiss(flow: FlowResult): FlowResult {
+  if (!flow.steps.some(isTextLikeClick)) return flow;
+  const misses = flow.steps.filter(step => step.status === 'failed' && isOnlyUnchangedUrlMiss(step));
+  if (misses.length === 0) return flow;
+  if (flow.steps.some(step => step.status === 'failed' && !isOnlyUnchangedUrlMiss(step))) return flow;
+  return {
+    ...flow,
+    assertion: 'unverifiable',
+    steps: flow.steps.map(step => {
+      if (step.status !== 'failed' || !isOnlyUnchangedUrlMiss(step)) return step;
+      return {
+        ...step,
+        status: 'skipped' as const,
+        error: 'locator_mismatch',
+        observation: `${step.observation || ''} The click resolved to a text field, so this is inconclusive (locator_mismatch) rather than a confirmed bug.`.trim(),
+      };
+    }),
+  };
+}
+
+function isTextLikeClick(step: StepResult): boolean {
+  if ((step.tool || '').toLowerCase() !== 'click') return false;
+  const role = (step.locator?.role || '').toLowerCase();
+  if (role === 'textbox' || role === 'searchbox' || role === 'combobox') return true;
+  const css = step.locator?.css || '';
+  if (/\b(?:textarea|input)\b/i.test(css)) return true;
+  const target = `${step.target || ''} ${step.locator?.target || ''}`;
+  return /\b(?:textbox|searchbox|combobox)\s*:/i.test(target);
+}
+
+function isOnlyUnchangedUrlMiss(step: StepResult): boolean {
+  const text = `${step.error || ''}\n${step.observation || ''}`;
+  if (/shows an error|console error was reported|a request failed|net::err_|pageerror|http-5\d\d/i.test(text)) return false;
+  return /url stayed|did not change/i.test(text);
+}
+
 function demoteStep(step: StepResult): StepResult {
   if (step.status !== 'failed') return step;
   if (isRealStep(step)) return step;
@@ -167,7 +209,8 @@ function flowDetail(reason: OutcomeReason, flow: FlowResult): string {
   }
 }
 
-function classifyFlow(flow: FlowResult): FlowResult {
+function classifyFlow(input: FlowResult): FlowResult {
+  const flow = relieveTextFieldUrlMiss(input);
   const contactBlocked = flow.outcome_reason === 'contact_submit_blocked' || flow.steps.some(isContactSubmitBlock);
   const requestBlocked = flow.outcome_reason === 'request_blocked' || flow.steps.some(isRequestBlockedStep);
   const otherFailure = flow.steps.some(step => step.status === 'failed' && !isContactSubmitBlock(step) && !isRequestBlockedStep(step));

@@ -8,7 +8,7 @@ The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/
 - `page_url` is the last real http(s) page, never `chrome-error://`.
 - Live and replay share `fingerprintV2` for the same bug. A test id alone is not the fingerprint. Hashes for bugs that already had a role or name on an http(s) page stay the same.
 - Replay repro steps do not repeat the same `Open <url>` line.
-- A button click that lands on a text or search field submits that field with Enter when it is in a form, and is inconclusive (`locator_mismatch`) when it is not. Contact and sensitive guards still apply. A real button is unchanged. An unchanged URL stays inconclusive unless the page itself did not change.
+- A button click that lands on a text or search field submits that field with Enter when it is in a form, and is inconclusive (`locator_mismatch`) when it is not. A bare target `Search` and `clicking "Search"` count, as do Find, Go, and Submit. Contact and sensitive guards still apply. A real button is unchanged. If that click's only miss is an unchanged URL, the flow is inconclusive, not a bug.
 
 ## 0.7.2-beta.1
 
