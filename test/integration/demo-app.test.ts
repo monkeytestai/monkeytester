@@ -44,19 +44,18 @@ describe('demo app seeded bugs', () => {
     expect(run.stats.flowsFailed).toBe(0);
   }, 60_000);
 
-  it('promotes a same-origin HTTP 500 into a blocking bug without the other strict oracles', async () => {
+  it('does not submit the contact form, and does not file the blocked POST as a bug', async () => {
     await fetch(`${demo.url}/__monkeytest/mode`, { method: 'POST', body: 'buggy' });
-    const run = await execute(demo.url, shots, llm, false, true, 'send-message');
-    expect(run.bugs).toHaveLength(1);
-    expect(run.bugs[0].severity).toBe('critical');
-    expect(run.bugs[0].fingerprintParts).toMatchObject({
-      category: 'network',
-      errorSignal: 'http-5xx',
-    });
-    expect(run.flows[0].status).toBe('failed');
-    expect(run.flows[0].steps.some(step => step.status === 'failed' && step.error === 'http-500')).toBe(true);
-    expect(run.stats.flowsFailed).toBe(1);
-    expect(run.stats.bugsCritical).toBe(1);
+    const before = demo.contactPosts();
+    const run = await execute(demo.url, shots, llm, true, true, 'send-message');
+    expect(demo.contactPosts()).toBe(before);
+    expect(run.bugs).toEqual([]);
+    expect(run.flows[0].status).toBe('inconclusive');
+    expect(run.flows[0].status).not.toBe('passed');
+    expect(run.flows[0].outcome_reason).toBe('contact_submit_blocked');
+    expect(run.flows[0].steps.some(step => step.error === 'sensitive-submit')).toBe(true);
+    expect(run.stats.bugsCritical).toBe(0);
+    expect(run.outcome).not.toBe('bugs_found');
   }, 60_000);
 
   it('finds each seeded category and reports them fixed once the same app is corrected', async () => {
@@ -65,7 +64,12 @@ describe('demo app seeded bugs', () => {
     expect(demo.getMode()).toBe('buggy');
 
     const run = await execute(demo.url, shots, llm, true);
-    expect(run.bugs).toHaveLength(4);
+    expect(demo.contactPosts()).toBe(0);
+    expect(run.bugs).toHaveLength(3);
+    const contact = run.flows.find(flow => flow.flowId === 'send-message');
+    expect(contact?.status).toBe('inconclusive');
+    expect(contact?.outcome_reason).toBe('contact_submit_blocked');
+    expect(contact?.status).not.toBe('passed');
 
     const found = Object.fromEntries(run.bugs.map(bug => [
       bug.fingerprintParts?.errorSignal,
@@ -74,7 +78,6 @@ describe('demo app seeded bugs', () => {
     expect(found).toEqual({
       'page-error': 'page-error',
       'http-4xx': 'navigation',
-      'http-5xx': 'network',
       'element-disabled': 'interaction',
     });
 
@@ -87,7 +90,7 @@ describe('demo app seeded bugs', () => {
       strictOracles: true,
     });
     expect(still.results.map(result => result.verdict).sort()).toEqual([
-      'still_broken', 'still_broken', 'still_broken', 'still_broken',
+      'still_broken', 'still_broken', 'still_broken',
     ]);
     expect(still.exitCode).toBe(1);
     expect(llmCalls.length).toBe(callsBeforeVerify);
@@ -104,7 +107,7 @@ describe('demo app seeded bugs', () => {
       strictOracles: true,
     });
     expect(fixed.results.map(result => result.verdict).sort()).toEqual([
-      'fixed', 'fixed', 'fixed', 'fixed',
+      'fixed', 'fixed', 'fixed',
     ]);
     expect(fixed.exitCode).toBe(0);
     expect(llmCalls.length).toBe(callsBeforeVerify);

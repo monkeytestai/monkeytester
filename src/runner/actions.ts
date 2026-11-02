@@ -22,7 +22,7 @@ import {
   classifyDocumentRedirect,
   waitForSettledLocation,
 } from '../explorer/authRedirect.js';
-import { blockSensitiveClick, isOauthNavigation, refreshFormActions, submissionPolicy } from './sensitive.js';
+import { blockSensitiveClick, contactAbortOutcome, isOauthNavigation, refreshFormActions, submissionPolicy } from './sensitive.js';
 
 const ACTION_TOOLS = ['click', 'fill', 'goto', 'wait', 'assert_text', 'press', 'noop'] as const;
 const ACTION_LOCATORS = ['css', 'role', 'text', 'placeholder', 'label', 'testid'] as const;
@@ -501,7 +501,7 @@ export async function executeAction(
         const disabled = await disabledOutcome(locator, acted, options?.strictOracles);
         if (disabled) return disabled;
         const label = await controlLabel(locator);
-        const blocked = await blockSensitiveClick(page, `${label.text}\n${acted.target || ''}\n${acted.value || ''}`, label);
+        const blocked = await blockSensitiveClick(page, `${label.text}\n${acted.target || ''}\n${acted.value || ''}`, { ...label, locator });
         if (blocked) return guardSkip(blocked, 'sensitive-submit');
         const prior = submissionPolicy(page)?.blocked;
         await locator.click({ timeout: timeoutMs });
@@ -642,7 +642,7 @@ export async function executeAction(
           if (disabled) return disabled;
           const label = await controlLabel(located.locator);
           const blocked = key === 'Enter'
-            ? await blockSensitiveClick(page, `${label.text}\n${located.action.target || ''}`, label)
+            ? await blockSensitiveClick(page, `${label.text}\n${located.action.target || ''}`, { ...label, locator: located.locator })
             : undefined;
           if (blocked) return guardSkip(blocked, 'sensitive-submit');
           const prior = submissionPolicy(page)?.blocked;
@@ -982,6 +982,8 @@ function guardSkip(observation: string, error: 'sensitive-submit' | 'oauth-navig
 }
 
 function guardAfterNavigation(page: Page, prior?: string): ActionOutcome | undefined {
+  const contact = contactAbortOutcome(page, prior);
+  if (contact) return contact;
   const policy = submissionPolicy(page);
   const url = safePageUrl(page);
   const fresh = policy?.blocked && policy.blocked !== prior ? policy.blocked : undefined;

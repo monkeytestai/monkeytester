@@ -5,11 +5,14 @@
  * checkout/payment, and account deletion are not completed unless the host
  * opts in. An inbox allows OTP, reset, and the one sign-up. Empty
  * validation submits (no value in the email field) still run.
+ * Contact, enquiry, feedback, support, quote, and get-in-touch message
+ * forms are never submitted. There is no allow flag for them. An empty
+ * click can still show client-side validation, but the POST is aborted.
  * Same-origin (or form-action) POST/PUT/PATCH submits are aborted before
  * they leave the browser. Analytics beacons are not submits.
  */
 
-import type { Page, Route } from 'playwright';
+import type { Locator, Page, Route } from 'playwright';
 
 export type SensitiveKind = 'signup' | 'reset' | 'otp' | 'newsletter' | 'payment' | 'deletion';
 
@@ -29,10 +32,29 @@ export interface SubmissionPolicy {
   /** Kinds the host explicitly allowed, besides what an inbox unlocks. */
   allow?: SensitiveKind[];
   blocked?: string;
+  /**
+   * The click we are about to run is a contact submit with no user-filled
+   * values. Hidden fields do not count. Cleared after the action.
+   */
+  contactEmpty?: boolean;
 }
 
 const policies = new WeakMap<Page, SubmissionPolicy>();
 const formActions = new WeakMap<Page, string[]>();
+/** Action URLs of forms classified as contact, enquiry, feedback, or quote. */
+const contactActions = new WeakMap<Page, string[]>();
+
+/**
+ * Machine code for a flow that would have sent a contact, enquiry, feedback,
+ * support, quote, or get-in-touch message. Additive. Never a pass, never a bug.
+ */
+export const CONTACT_SUBMIT_BLOCKED = 'contact_submit_blocked';
+
+const CONTACT_FIELD = /(?:^|[^a-z0-9])(messages?|enquiries|enquiry|inquiries|inquiry|subjects?|comments?|feedback)(?:[^a-z0-9]|$)/i;
+const CONTACT_BUTTON = /\b(send(?:\s+us)?(?:\s+an?)?\s+message|submit(?:\s+an?)?\s+enquir(?:y|ies)|submit(?:\s+an?)?\s+inquir(?:y|ies)|contact\s+us|get\s+in\s+touch|request(?:\s+a)?\s+quote|get(?:\s+a)?\s+quote|submit\s+feedback|send\s+feedback|leave(?:\s+an?)?\s+(?:message|feedback|comment)|write\s+to\s+us)\b/i;
+const CONTACT_INTENT = /\b(contact(?:\s+us|\s+form)|enquir(?:y|ies)|inquir(?:y|ies)|feedback|get\s+in\s+touch|request(?:\s+a)?\s+quote|quotes?\s+form|send(?:\s+us)?(?:\s+a)?\s+message|support\s+form|leave(?:\s+a)?\s+(?:message|feedback)|write\s+to\s+us)\b/i;
+const CONTACT_SEGMENT = /(?:^|\/)(contact(?:[-_]us)?|contacts|enquiries|enquiry|inquiries|inquiry|feedback|quotes?|get-in-touch|getintouch|support)(?:\/|$)/i;
+const VALIDATION_PLAN = /without filling|leave .{0,60}empty|do not submit|don't submit|invalid|empty submit|validation only|do not send|don't send/i;
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 
@@ -121,6 +143,203 @@ function normalisePath(pathname: string): string {
   return pathname;
 }
 
+export interface ContactSignals {
+  actionUrl?: string;
+  pageUrl?: string;
+  button?: string;
+  /** Field names, labels, placeholders, and types joined together. */
+  fields?: string;
+  /** Planner step text and the click instruction. */
+  intent?: string;
+  method?: string;
+  inForm?: boolean;
+  tag?: string;
+}
+
+interface DomForm {
+  action: string;
+  method: string;
+  fields: string;
+  button: string;
+  pageUrl: string;
+  inForm: boolean;
+  tag: string;
+}
+
+/** Pathname of a contact, enquiry, feedback, support, quote, or get-in-touch URL. */
+export function contactActionPath(url: string | undefined): boolean {
+  if (!url) return false;
+  let path = url;
+  try { path = new URL(url, 'https://form.invalid').pathname; }
+  catch { /* keep the raw text so a path fragment in a plan still matches */ }
+  if (/\/search(?:\/|$)/i.test(path)) return false;
+  return CONTACT_SEGMENT.test(path);
+}
+
+function isSearchSignals(signals: ContactSignals): boolean {
+  const fields = signals.fields || '';
+  const button = signals.button || '';
+  const action = signals.actionUrl || '';
+  if (CONTACT_FIELD.test(fields) || CONTACT_BUTTON.test(button)) return false;
+  if (/\/search(?:\/|$)/i.test(action)) return true;
+  if (/(?:^|[^a-z0-9])(q|query|search)(?:[^a-z0-9]|$)/i.test(fields)) return true;
+  if (/\btype(?:=|\s)\s*search\b/i.test(fields)) return true;
+  if (/^search$/i.test(button.trim())) return true;
+  return false;
+}
+
+function hasPasswordField(fields: string | undefined): boolean {
+  const value = fields || '';
+  return /(?:^|[^a-z0-9])password(?:[^a-z0-9]|$)/i.test(value) || /\btype(?:=|\s)\s*password\b/i.test(value);
+}
+
+function isNewsletterOnly(signals: ContactSignals): boolean {
+  const blob = `${signals.button || ''}\n${signals.fields || ''}\n${signals.actionUrl || ''}`;
+  if (!/\b(newsletter|subscribe)\b/i.test(blob)) return false;
+  if (CONTACT_FIELD.test(signals.fields || '') || CONTACT_BUTTON.test(signals.button || '')) return false;
+  if (contactActionPath(signals.actionUrl)) return false;
+  return true;
+}
+
+/**
+ * A contact, enquiry, feedback, support, quote, or get-in-touch form.
+ * Search boxes, password forms, and newsletter-only forms are not contact forms.
+ * A link that only opens the page is not a submit.
+ */
+export function isContactSubmit(signals: ContactSignals): boolean {
+  if (hasPasswordField(signals.fields)) return false;
+  if (isSearchSignals(signals)) return false;
+  if (isNewsletterOnly(signals)) return false;
+  if (signals.inForm === false) return false;
+  const fields = signals.fields || '';
+  const button = signals.button || '';
+  const intent = signals.intent || '';
+  if (CONTACT_FIELD.test(fields)) return true;
+  if (contactActionPath(signals.actionUrl)) return true;
+  if (CONTACT_BUTTON.test(button)) return true;
+  if (signals.inForm && contactActionPath(signals.pageUrl)) return true;
+  if (signals.inForm && CONTACT_INTENT.test(intent) && /\b(submit|send)\b/i.test(intent)) return true;
+  return false;
+}
+
+function fieldNamesFromBody(body: string | null | undefined): string {
+  if (!body) return '';
+  let source = body;
+  try { source = decodeURIComponent(body.replace(/\+/g, ' ')); }
+  catch { source = body; }
+  const names: string[] = [];
+  const trimmed = source.trim();
+  if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && /"([^"\\]{1,80})"\s*:/.test(source)) {
+    for (const match of source.matchAll(/"([^"\\]{1,80})"\s*:/g)) names.push(match[1]);
+  } else if (source.includes('=')) {
+    for (const part of source.split('&')) {
+      const eq = part.indexOf('=');
+      const key = (eq >= 0 ? part.slice(0, eq) : '').trim();
+      if (key) names.push(key);
+    }
+  }
+  for (const match of source.matchAll(/\bname="([^"]{1,80})"/gi)) names.push(match[1]);
+  return names.join('\n');
+}
+
+/**
+ * A user-form POST that would deliver a contact message.
+ * Analytics URLs are ignored. Search field names are ignored.
+ * Known contact form actions are included even when the path is generic.
+ */
+export function isContactRequest(input: {
+  url: string;
+  body?: string | null;
+  contactActionUrls?: string[];
+}): boolean {
+  if (isAnalyticsBeaconUrl(input.url)) return false;
+  if (/\/search(?:\/|$)/i.test(input.url)) return false;
+  if (contactActionPath(input.url)) return true;
+  const names = fieldNamesFromBody(input.body).split('\n').map(name => name.trim()).filter(Boolean);
+  const contactName = names.some(name => CONTACT_FIELD.test(name) && !/^(q|query|search)$/i.test(name));
+  if (contactName) return true;
+  if (matchesFormAction(input.url, input.contactActionUrls)) return true;
+  return false;
+}
+
+export function contactBlockObservation(detail: string): string {
+  return `${detail} The message was not sent. The outcome is inconclusive (${CONTACT_SUBMIT_BLOCKED}).`;
+}
+
+/**
+ * Evidence for an empty contact submit that produced no client-side
+ * validation. The request was aborted, so this is a site bug, not a block.
+ */
+export const EMPTY_CONTACT_VALIDATION =
+  'Empty contact form was submitted with no client-side validation (request blocked by monkeytester; nothing sent).';
+
+/** The flow or step is checking that an empty submit shows a validation message. */
+export function expectsValidationMessage(text: string | undefined): boolean {
+  const value = text || '';
+  if (/\bvalidation_visible\b/.test(value)) return true;
+  return /\b(validation(?:\s+message|\s+error)?|required(?:\s+field)?|client-side validation|shows an error|error message)\b/i.test(value);
+}
+
+export interface ContactAbortOutcome {
+  status: 'failed' | 'skipped';
+  observation: string;
+  error: 'missing-validation' | 'sensitive-submit';
+}
+
+/**
+ * Turn a contact abort into a step outcome.
+ * An empty submit that expected a validation message is a failure: the
+ * request leaving the browser means the page did not validate first.
+ * Any other contact abort stays inconclusive.
+ */
+export function contactAbortOutcome(page: Page, prior?: string): ContactAbortOutcome | undefined {
+  const policy = policies.get(page);
+  const fresh = policy?.blocked && policy.blocked !== prior ? policy.blocked : undefined;
+  if (policy) policy.contactEmpty = undefined;
+  if (!fresh) return undefined;
+  if (fresh.startsWith('contact-empty ')) {
+    if (expectsValidationMessage(intents.get(page))) {
+      return {
+        status: 'failed',
+        observation: EMPTY_CONTACT_VALIDATION,
+        error: 'missing-validation',
+      };
+    }
+    return {
+      status: 'skipped',
+      observation: contactBlockObservation(`Blocked ${fresh}.`),
+      error: 'sensitive-submit',
+    };
+  }
+  if (fresh.startsWith('contact ')) {
+    return {
+      status: 'skipped',
+      observation: contactBlockObservation(`Blocked ${fresh}.`),
+      error: 'sensitive-submit',
+    };
+  }
+  return undefined;
+}
+
+/** A step the runner skipped because a contact message would have been sent. */
+export function isContactSubmitBlock(step: { error?: string; observation?: string }): boolean {
+  if (step.error !== 'sensitive-submit') return false;
+  const text = step.observation || '';
+  return text.includes(CONTACT_SUBMIT_BLOCKED)
+    || /refused to submit a contact form/i.test(text)
+    || /\bblocked contact\b/i.test(text);
+}
+
+function plansContactMessage(text: string): boolean {
+  if (VALIDATION_PLAN.test(text)) return false;
+  const send = /\b(submit|send)\b/i.test(text);
+  if (!send) return false;
+  if (/\bsearch\b/i.test(text) && !CONTACT_FIELD.test(text) && !CONTACT_BUTTON.test(text) && !contactActionPath(text)) {
+    return false;
+  }
+  return CONTACT_FIELD.test(text) || CONTACT_BUTTON.test(text) || contactActionPath(text) || CONTACT_INTENT.test(text);
+}
+
 function matchesFormAction(url: string, actions: string[] | undefined): boolean {
   if (!actions?.length) return false;
   let target: URL;
@@ -157,10 +376,41 @@ export function isUserFormSubmission(scan: SubmissionScan): boolean {
 
 /** Read form actions outside a route handler. `page.evaluate` inside a route can deadlock. */
 export async function refreshFormActions(page: Page): Promise<void> {
-  const actions = await page.evaluate(() =>
-    Array.from(document.forms).map(form => form.action).filter(action => /^https?:/i.test(action)),
-  ).catch(() => [] as string[]);
-  formActions.set(page, actions);
+  const forms = await page.evaluate(() => {
+    return Array.from(document.forms).map(form => {
+      const fields = Array.from(form.querySelectorAll('input, textarea, select')).map(input => {
+        const control = input as HTMLInputElement;
+        const labelled = control.labels && control.labels[0] ? control.labels[0].innerText : '';
+        return [
+          input.getAttribute('name') || '',
+          input.id || '',
+          input.getAttribute('type') || input.tagName,
+          labelled,
+          input.getAttribute('placeholder') || '',
+          input.getAttribute('aria-label') || '',
+        ].join(' ');
+      }).join('\n');
+      const button = Array.from(form.querySelectorAll('button, input[type="submit"], [role="button"]')).map(control => (
+        (control as HTMLElement).innerText || (control as HTMLInputElement).value || control.getAttribute('aria-label') || ''
+      )).join('\n');
+      return {
+        action: form.action || '',
+        method: form.method || 'get',
+        fields,
+        button,
+        pageUrl: location.href,
+      };
+    });
+  }).catch(() => [] as Array<{ action: string; method: string; fields: string; button: string; pageUrl: string }>);
+  formActions.set(page, forms.map(form => form.action).filter(action => /^https?:/i.test(action)));
+  contactActions.set(page, forms.filter(form => isContactSubmit({
+    actionUrl: form.action,
+    pageUrl: form.pageUrl,
+    button: form.button,
+    fields: form.fields,
+    method: form.method,
+    inForm: true,
+  })).map(form => form.action).filter(action => /^https?:/i.test(action)));
 }
 
 function pageUrlOf(page: Page): string {
@@ -219,6 +469,16 @@ export async function installSubmissionGuards(page: Page, policy: SubmissionPoli
     };
     if (isUserFormSubmission(scan)) {
       const body = request.postData();
+      if (isContactRequest({
+        url,
+        body,
+        contactActionUrls: contactActions.get(page),
+      })) {
+        const empty = policy.contactEmpty === true || !submissionHasPayload(body);
+        policy.blocked = empty ? `contact-empty ${url}` : `contact ${url}`;
+        await route.abort('blockedbyclient').catch(() => {});
+        return;
+      }
       const kind = sensitiveKindFromText(`${url}\n${body || ''}`);
       const validation = kind ? isValidationPayload(body || '', kind) : false;
       const payload = kind === 'payment' || kind === 'deletion' || (Boolean(kind) && submissionHasPayload(body) && !validation);
@@ -239,8 +499,10 @@ export async function installSubmissionGuards(page: Page, policy: SubmissionPoli
 export async function blockSensitiveClick(
   page: Page,
   actionText: string,
-  control?: { tag?: string; inForm?: boolean },
+  control?: { tag?: string; inForm?: boolean; text?: string; locator?: Locator },
 ): Promise<string | undefined> {
+  const contact = await contactClickRefusal(page, actionText, control);
+  if (contact) return contact;
   const kind = sensitiveKindFromText(actionText);
   if (!kind) return undefined;
   const policy = policies.get(page);
@@ -263,6 +525,146 @@ export async function blockSensitiveClick(
     if (!filled) return undefined;
   }
   return `Refused to submit a ${kind} form. Without an explicit allow (an inbox for OTP or password reset), only validation is run.`;
+}
+
+async function contactClickRefusal(
+  page: Page,
+  actionText: string,
+  control?: { tag?: string; inForm?: boolean; text?: string; locator?: Locator },
+): Promise<string | undefined> {
+  const signals = await contactSignalsFor(page, actionText, control);
+  if (!isContactSubmit(signals)) return undefined;
+  const filled = await controlFormFilled(page, control?.locator);
+  if (!filled) {
+    const policy = policies.get(page);
+    if (policy) policy.contactEmpty = true;
+    return undefined;
+  }
+  return contactBlockObservation('Refused to submit a contact form.');
+}
+
+async function contactSignalsFor(
+  page: Page,
+  actionText: string,
+  control?: { tag?: string; inForm?: boolean; text?: string; locator?: Locator },
+): Promise<ContactSignals> {
+  const intent = `${intents.get(page) || ''}\n${actionText}`;
+  const dom = await readControlForm(page, control?.locator);
+  return {
+    actionUrl: dom?.action,
+    pageUrl: dom?.pageUrl || pageUrlOf(page),
+    button: [dom?.button, control?.text, actionText].filter(Boolean).join('\n'),
+    fields: dom?.fields,
+    intent,
+    method: dom?.method,
+    inForm: dom ? dom.inForm : control?.inForm,
+    tag: dom?.tag || control?.tag,
+  };
+}
+
+async function readControlForm(page: Page, locator?: Locator): Promise<DomForm | undefined> {
+  const read = (el: Element | null) => {
+    const node = el as (Element & { closest?: (selector: string) => Element | null }) | null;
+    const form = node && typeof node.closest === 'function' ? node.closest('form') : null;
+    const tag = node && node.tagName ? node.tagName.toLowerCase() : '';
+    const pageUrl = location.href;
+    if (!form) {
+      return { action: '', method: '', fields: '', button: '', pageUrl, inForm: false, tag };
+    }
+    const fields = Array.from(form.querySelectorAll('input, textarea, select')).map(input => {
+      const labelled = (input as HTMLInputElement).labels && (input as HTMLInputElement).labels?.[0]
+        ? ((input as HTMLInputElement).labels?.[0]?.innerText || '')
+        : '';
+      return [
+        input.getAttribute('name') || '',
+        input.id || '',
+        input.getAttribute('type') || input.tagName,
+        labelled,
+        input.getAttribute('placeholder') || '',
+        input.getAttribute('aria-label') || '',
+      ].join(' ');
+    }).join('\n');
+    const button = Array.from(form.querySelectorAll('button, input[type="submit"], [role="button"]')).map(control => (
+      (control as HTMLElement).innerText || (control as HTMLInputElement).value || control.getAttribute('aria-label') || ''
+    )).join('\n');
+    return {
+      action: (form as HTMLFormElement).action || '',
+      method: (form as HTMLFormElement).method || 'get',
+      fields,
+      button,
+      pageUrl,
+      inForm: true,
+      tag,
+    };
+  };
+  if (locator) return locator.evaluate(read).catch(() => undefined);
+  return page.evaluate(() => {
+    const active = document.activeElement;
+    const node = active as Element | null;
+    const form = node && typeof node.closest === 'function' ? node.closest('form') : null;
+    const tag = node && node.tagName ? node.tagName.toLowerCase() : '';
+    const pageUrl = location.href;
+    if (!form) return { action: '', method: '', fields: '', button: '', pageUrl, inForm: false, tag };
+    const fields = Array.from(form.querySelectorAll('input, textarea, select')).map(input => {
+      const labelled = (input as HTMLInputElement).labels && (input as HTMLInputElement).labels?.[0]
+        ? ((input as HTMLInputElement).labels?.[0]?.innerText || '')
+        : '';
+      return [
+        input.getAttribute('name') || '',
+        input.id || '',
+        input.getAttribute('type') || input.tagName,
+        labelled,
+        input.getAttribute('placeholder') || '',
+        input.getAttribute('aria-label') || '',
+      ].join(' ');
+    }).join('\n');
+    const button = Array.from(form.querySelectorAll('button, input[type="submit"], [role="button"]')).map(control => (
+      (control as HTMLElement).innerText || (control as HTMLInputElement).value || control.getAttribute('aria-label') || ''
+    )).join('\n');
+    return {
+      action: (form as HTMLFormElement).action || '',
+      method: (form as HTMLFormElement).method || 'get',
+      fields,
+      button,
+      pageUrl,
+      inForm: true,
+      tag,
+    };
+  }).catch(() => undefined);
+}
+
+async function controlFormFilled(page: Page, locator?: Locator): Promise<boolean> {
+  const read = (el: Element | null) => {
+    const node = el as Element | null;
+    const form = node && typeof node.closest === 'function' ? node.closest('form') : null;
+    const root: ParentNode = form || document;
+    const fields = Array.from(root.querySelectorAll('input, textarea, select')) as HTMLInputElement[];
+    const values = fields.filter(input => {
+      const type = (input.type || '').toLowerCase();
+      if (type === 'hidden' || type === 'submit' || type === 'button' || type === 'image' || type === 'reset') return false;
+      return Boolean((input.value || '').trim());
+    });
+    if (values.some(input => /not-an-email/i.test(input.value || ''))) return false;
+    const passwords = values.filter(input => (input.type || '').toLowerCase() === 'password').map(input => input.value);
+    if (passwords.length >= 2 && new Set(passwords).size > 1) return false;
+    return values.some(input => (input.type || '').toLowerCase() !== 'password');
+  };
+  if (locator) return locator.evaluate(read).catch(() => false);
+  return page.evaluate(() => {
+    const active = document.activeElement;
+    const form = active && typeof (active as Element).closest === 'function' ? (active as Element).closest('form') : null;
+    const root: ParentNode = form || document;
+    const fields = Array.from(root.querySelectorAll('input, textarea, select')) as HTMLInputElement[];
+    const values = fields.filter(input => {
+      const type = (input.type || '').toLowerCase();
+      if (type === 'hidden' || type === 'submit' || type === 'button' || type === 'image' || type === 'reset') return false;
+      return Boolean((input.value || '').trim());
+    });
+    if (values.some(input => /not-an-email/i.test(input.value || ''))) return false;
+    const passwords = values.filter(input => (input.type || '').toLowerCase() === 'password').map(input => input.value);
+    if (passwords.length >= 2 && new Set(passwords).size > 1) return false;
+    return values.some(input => (input.type || '').toLowerCase() !== 'password');
+  }).catch(() => false);
 }
 
 /**
@@ -301,6 +703,7 @@ export function plansDisallowedSensitiveSubmit(
   policy?: SubmissionPolicy,
 ): boolean {
   const text = [flow.name, flow.description, ...flow.steps.map(step => `${step.action} ${step.value || ''}`)].join('\n');
+  if (plansContactMessage(text)) return true;
   const kind = sensitiveKindFromText(text);
   if (!kind || kind === 'signup') return false;
   if (allowsSensitiveSubmit(kind, policy)) return false;

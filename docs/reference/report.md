@@ -11,7 +11,7 @@ The file under `.monkeytest/runs/` is a stored run: `{ schema, id, createdAt, en
 | Field | Values |
 | --- | --- |
 | `outcome` | `bugs_found`, `clean`, `inconclusive`, `could_not_test` |
-| `outcome_reason` | `login_required`, `blocked_by_bot_protection`, `site_unreachable`, `invalid_url`, `llm_error`, `all_flows_skipped`, `timeout`, `automation_error`, `not_attempted`, `nothing_tested`, `no_assertion`, `assertion_unverifiable`, `budget_exhausted` |
+| `outcome_reason` | `login_required`, `blocked_by_bot_protection`, `site_unreachable`, `invalid_url`, `llm_error`, `all_flows_skipped`, `timeout`, `automation_error`, `not_attempted`, `nothing_tested`, `no_assertion`, `assertion_unverifiable`, `budget_exhausted`, `contact_submit_blocked` |
 | `outcome_detail` | One or two sentences that match the bug count, plus a next step |
 | `public_screens` | Crawled pages that are not auth-gated. Omitted when the run did not crawl. |
 | `engine_version` | `ENGINE_VERSION`, for example the package version |
@@ -47,7 +47,7 @@ Found 1 confirmed bug. Open the top one and confirm it on the site before treati
 | `bugIds` | Bugs produced from this flow |
 | `severityIfFails` | Copied from the plan so triage can rank a bug |
 
-`passed` is not "the steps ran". `no_assertion` and `assertion_unverifiable` are never paired with `passed`.
+`passed` is not "the steps ran". `no_assertion`, `assertion_unverifiable`, and `contact_submit_blocked` are never paired with `passed`. `contact_submit_blocked` means a contact, enquiry, feedback, support, quote, or get-in-touch submit was not sent. It is not a site bug.
 
 ## `BugReport`
 

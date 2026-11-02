@@ -550,7 +550,13 @@ export type OutcomeReason =
    * A page check was not started because the run's wall clock was already
    * spent. Not "couldn't confirm". Additive in 0.7.0-beta.4.
    */
-  | 'budget_exhausted';
+  | 'budget_exhausted'
+  /**
+   * A contact, enquiry, feedback, support, quote, or get-in-touch submit
+   * was not sent. Inconclusive, and not a site bug. Additive in 0.7.2-beta.1.
+   * There is no allow flag for this reason.
+   */
+  | 'contact_submit_blocked';
 
 /**
  * Phase 3 signup result. Reserved in 0.7.0-beta.1 and left unset.

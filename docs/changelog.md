@@ -1,6 +1,10 @@
 # Changelog
 
-The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.7.1.
+The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.7.1. `next` will publish 0.7.2-beta.1.
+
+## 0.7.2-beta.1
+
+- Contact, enquiry, feedback, support, quote, and get-in-touch forms are not submitted. The POST is aborted. The flow is inconclusive with `contact_submit_blocked`, not a pass and not a bug. Search and analytics beacons are unchanged. Replay uses the same guard. There is no allow flag.
 
 ## 0.7.1
 

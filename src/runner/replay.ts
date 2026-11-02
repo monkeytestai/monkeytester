@@ -56,7 +56,7 @@ import { signupSubmitBlock } from '../signup/guard.js';
 import { emptySignupLedger, signupFields, type SignupLedger } from '../signup/ledger.js';
 import { isPageVisitFlow } from '../explorer/authRedirect.js';
 import { evaluateOutcomeCheck, snapPage, type PageSnap } from '../outcome/check.js';
-import { installDialogPolicy, installSubmissionGuards, setStepIntent, type SensitiveKind } from './sensitive.js';
+import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, setStepIntent, type SensitiveKind } from './sensitive.js';
 import { authCheckForFlowId, isAuthNegativeFlowId } from '../planner/authNegative.js';
 import { isSignupFlowId, signupCheckForFlowId } from '../signup/plan.js';
 import { runAuthCheck } from './authNegative.js';
@@ -240,7 +240,15 @@ async function replayFlow(
       const urlBefore = page.url();
       const startedAt = new Date().toISOString();
       const stepStart = Date.now();
-      setStepIntent(page, `${recorded.action || ''}\n${recorded.expectation || ''}`);
+      const checkKinds = [trace.outcomeCheck?.kind, ...(trace.outcomeCheck?.also || []).map(item => item.kind)].filter(Boolean).join(' ');
+      setStepIntent(page, [
+        trace.name,
+        trace.description,
+        trace.expectation,
+        checkKinds,
+        recorded.action,
+        recorded.expectation,
+      ].filter(Boolean).join('\n'));
       if (!beforeLast && recorded.index > 0) beforeLast = await snapPage(page);
       if (recorded.index === lastActionIndex) beforeAction = await snapPage(page);
       const played = await playStep(page, trace, recorded, opts, stepTimeout, evidence, signal);
@@ -359,9 +367,12 @@ async function replayFlow(
     }
   }
 
+  const contactBlocked = steps.some(isContactSubmitBlock);
   const status = assertion === 'blocked'
     ? 'blocked' as const
-    : resolveFlowStatus(steps, failed, assertion);
+    : contactBlocked && !failed
+      ? 'inconclusive' as const
+      : resolveFlowStatus(steps, failed, assertion);
   return {
     flowId: trace.flowId,
     name: trace.name || trace.flowId,
@@ -369,9 +380,10 @@ async function replayFlow(
     kind: trace.kind || 'happy_path',
     startUrl: trace.startUrl,
     status,
-    assertion,
-    ...(status === 'inconclusive' && assertion === 'missing' ? { outcome_reason: 'no_assertion' as const } : {}),
-    ...(status === 'inconclusive' && assertion === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
+    assertion: contactBlocked && !failed ? 'unverifiable' as const : assertion,
+    ...(contactBlocked ? { outcome_reason: 'contact_submit_blocked' as const } : {}),
+    ...(!contactBlocked && status === 'inconclusive' && assertion === 'missing' ? { outcome_reason: 'no_assertion' as const } : {}),
+    ...(!contactBlocked && status === 'inconclusive' && assertion === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
     failureReason,
     ...(trace.severityIfFails ? { severityIfFails: trace.severityIfFails } : {}),
     steps,
