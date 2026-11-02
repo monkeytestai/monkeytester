@@ -65,6 +65,7 @@ import {
   appendSuggestions,
   applySubmissionGuard,
   assertionFromVerdict,
+  isOutcomeAssertAction,
   oracleAssertion,
   passSignedOutVisit,
 } from './flowJudge.js';
@@ -613,7 +614,8 @@ async function runFlow(
     const startedAt = new Date().toISOString();
     const urlBefore = page.url();
     const upcoming = flow.steps.slice(i).map(item => `${item.action}\n${item.expectation || ''}`).join('\n');
-    setStepIntent(page, `${flow.name}\n${flow.description}\n${upcoming}`);
+    const checkKinds = [flow.outcomeCheck?.kind, ...(flow.outcomeCheck?.also || []).map(item => item.kind)].filter(Boolean).join(' ');
+    setStepIntent(page, `${flow.name}\n${flow.description}\n${flow.expectation}\n${checkKinds}\n${upcoming}`);
 
     if (step.check) {
       const outcome = await runAuthCheck(page, flow, step, evidence, stepIndex, {
@@ -975,6 +977,15 @@ async function runFlow(
     assertion = guarded.assertion;
     flowFailed = guarded.failed;
     if (!flowFailed) firstFailureReason = undefined;
+    for (const step of steps) {
+      if (!isOutcomeAssertAction(step.action)) continue;
+      const traced = traceSteps.find(item => item.index === step.index);
+      if (!traced) continue;
+      traced.status = step.status;
+      traced.observation = step.observation;
+      if (step.error) traced.error = step.error;
+      else delete traced.error;
+    }
   }
 
   // Grab the video path before closing — Playwright finalises the file on close.

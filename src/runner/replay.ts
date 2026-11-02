@@ -240,7 +240,15 @@ async function replayFlow(
       const urlBefore = page.url();
       const startedAt = new Date().toISOString();
       const stepStart = Date.now();
-      setStepIntent(page, `${trace.name || ''}\n${trace.description || ''}\n${recorded.action || ''}\n${recorded.expectation || ''}`);
+      const checkKinds = [trace.outcomeCheck?.kind, ...(trace.outcomeCheck?.also || []).map(item => item.kind)].filter(Boolean).join(' ');
+      setStepIntent(page, [
+        trace.name,
+        trace.description,
+        trace.expectation,
+        checkKinds,
+        recorded.action,
+        recorded.expectation,
+      ].filter(Boolean).join('\n'));
       if (!beforeLast && recorded.index > 0) beforeLast = await snapPage(page);
       if (recorded.index === lastActionIndex) beforeAction = await snapPage(page);
       const played = await playStep(page, trace, recorded, opts, stepTimeout, evidence, signal);

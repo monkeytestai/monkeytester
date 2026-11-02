@@ -223,7 +223,7 @@ describe('contact submit guard', () => {
         }
       }, site.url);
       expect(emptyFetch).toBe(0);
-      expect(submissionPolicy(page)?.blocked).toMatch(/^contact /);
+      expect(submissionPolicy(page)?.blocked).toMatch(/^contact-empty /);
       expect(site.posts['/api/contact'] || []).toEqual([]);
 
       const policy = submissionPolicy(page);
@@ -305,7 +305,59 @@ describe('contact submit guard', () => {
       expect(run.flows[0].status).toBe('inconclusive');
       expect(run.flows[0].status).not.toBe('passed');
       expect(run.flows[0].outcome_reason).toBe('contact_submit_blocked');
+      expect(run.flows[0].steps.find(step => /expected outcome/i.test(step.action))?.status).not.toBe('passed');
       expect(run.outcome).not.toBe('bugs_found');
+    } finally {
+      await site.close();
+    }
+  }, 30_000);
+
+  it('files a bug when an empty novalidate contact form shows no validation, and sends nothing', async () => {
+    const site = await startSite();
+    const shots = mkdtempSync(join(tmpdir(), 'monkeytest-contact-empty-'));
+    const llm: LLM = {
+      providerLabel: 'stub',
+      async generateJSON() {
+        throw new Error('contact guard test must not call the model');
+      },
+    };
+    try {
+      const plan: TestPlan = {
+        startUrl: `${site.url}/novalidate`,
+        siteType: 'fixture',
+        flows: [{
+          id: 'empty-contact',
+          name: 'Empty contact validation',
+          description: 'Submit the empty contact form and expect a validation message.',
+          kind: 'edge_case',
+          startUrl: `${site.url}/novalidate`,
+          steps: [{
+            action: 'Click "Submit"',
+            expectation: 'A validation message is shown.',
+          }],
+          expectation: 'Submitting the empty contact form shows a validation message.',
+          outcomeCheck: { kind: 'validation_visible' },
+          severityIfFails: 'major',
+        }],
+      };
+      const run = triage(await runPlan(plan, llm, {
+        screenshotsDir: shots,
+        headless: true,
+        recordVideo: false,
+        strictOracles: true,
+        failOn5xx: true,
+        stepTimeoutMs: 8_000,
+      }));
+      expect(site.posts['/api/contact'] || []).toEqual([]);
+      expect(run.flows[0].status).toBe('failed');
+      expect(run.flows[0].outcome_reason).not.toBe('contact_submit_blocked');
+      expect(run.flows[0].steps.some(step => step.error === 'sensitive-submit')).toBe(false);
+      expect(run.flows[0].steps.some(step => /no client-side validation/i.test(step.observation))).toBe(true);
+      expect(run.bugs).toHaveLength(1);
+      expect(run.bugs[0].severity).toBe('major');
+      expect(run.bugs[0].observed).toMatch(/no client-side validation/i);
+      expect(run.bugs[0].observed).toMatch(/nothing sent/i);
+      expect(run.outcome).toBe('bugs_found');
     } finally {
       await site.close();
     }
@@ -366,12 +418,114 @@ describe('contact submit guard', () => {
       expect(run.flows[0].status).not.toBe('passed');
       expect(run.flows[0].outcome_reason).toBe('contact_submit_blocked');
       expect(run.flows[0].steps.some(step => step.error === 'sensitive-submit')).toBe(true);
+      expect(run.flows[0].steps.find(step => /expected outcome/i.test(step.action))?.status).not.toBe('passed');
       expect(run.outcome).not.toBe('bugs_found');
     } finally {
       await site.close();
     }
   }, 30_000);
+
+  it('replays an empty novalidate contact form as a bug and a validating form as a pass', async () => {
+    const site = await startSite();
+    const shots = mkdtempSync(join(tmpdir(), 'monkeytest-contact-replay-empty-'));
+    try {
+      const empty = triage(await replayTraces([emptyContactTrace(site.url)], {
+        screenshotsDir: shots,
+        headless: true,
+        recordVideo: false,
+        strictOracles: true,
+        failOn5xx: true,
+        stepTimeoutMs: 8_000,
+      }));
+      expect(site.posts['/api/contact'] || []).toEqual([]);
+      expect(empty.flows[0].status).toBe('failed');
+      expect(empty.flows[0].outcome_reason).not.toBe('contact_submit_blocked');
+      expect(empty.bugs).toHaveLength(1);
+      expect(empty.bugs[0].severity).toBe('major');
+      expect(empty.bugs[0].observed).toMatch(/nothing sent/i);
+      expect(empty.outcome).toBe('bugs_found');
+
+      const validated = triage(await replayTraces([requiredContactTrace(site.url)], {
+        screenshotsDir: shots,
+        headless: true,
+        recordVideo: false,
+        strictOracles: true,
+        failOn5xx: true,
+        stepTimeoutMs: 8_000,
+      }));
+      expect(site.posts['/api/contact'] || []).toEqual([]);
+      expect(validated.bugs).toEqual([]);
+      expect(validated.flows[0].status).toBe('passed');
+      expect(validated.flows[0].outcome_reason).not.toBe('contact_submit_blocked');
+    } finally {
+      await site.close();
+    }
+  }, 30_000);
 });
+
+function emptyContactTrace(origin: string): FlowTrace {
+  const startUrl = `${origin}/novalidate`;
+  return {
+    version: 1,
+    flowId: 'empty-contact',
+    name: 'Empty contact validation',
+    description: 'Submit the empty contact form and expect a validation message.',
+    kind: 'edge_case',
+    startUrl,
+    expectation: 'Submitting the empty contact form shows a validation message.',
+    outcomeCheck: { kind: 'validation_visible' },
+    severityIfFails: 'major',
+    steps: [
+      {
+        index: 0,
+        action: `Open ${startUrl}`,
+        tool: 'goto',
+        status: 'passed',
+        locator: { strategy: 'css', target: startUrl },
+      },
+      {
+        index: 1,
+        action: 'Click "Submit"',
+        expectation: 'A validation message is shown.',
+        tool: 'click',
+        status: 'passed',
+        locator: { strategy: 'role', target: 'button:Submit', role: 'button', name: 'Submit' },
+      },
+    ],
+  };
+}
+
+function requiredContactTrace(origin: string): FlowTrace {
+  const startUrl = `${origin}/required`;
+  return {
+    version: 1,
+    flowId: 'required-contact',
+    name: 'Required contact validation',
+    description: 'Submit the empty contact form and expect a validation message.',
+    kind: 'edge_case',
+    startUrl,
+    expectation: 'Submitting the empty contact form shows a validation message.',
+    outcomeCheck: { kind: 'validation_visible' },
+    severityIfFails: 'major',
+    steps: [
+      {
+        index: 0,
+        action: `Open ${startUrl}`,
+        tool: 'goto',
+        status: 'passed',
+        locator: { strategy: 'css', target: startUrl },
+      },
+      {
+        index: 1,
+        action: 'Click "Send message"',
+        expectation: 'A validation message is shown.',
+        tool: 'click',
+        status: 'passed',
+        locator: { strategy: 'role', target: 'button:Send message', role: 'button', name: 'Send message' },
+      },
+    ],
+  };
+}
 
 function startSite(): Promise<{
   url: string;
@@ -424,6 +578,12 @@ function startSite(): Promise<{
         <label for="message">Message</label>
         <textarea id="message" name="message" required></textarea>
         <button type="submit">Send message</button>
+      </form>`,
+      '/novalidate': `<form method="post" action="/api/contact" novalidate>
+        <input type="hidden" name="csrf" value="token-123">
+        <label for="note">Message</label>
+        <textarea id="note" name="message"></textarea>
+        <button type="submit">Submit</button>
       </form>`,
       '/find': `<form method="post" action="/search">
         <label for="q">Search</label>

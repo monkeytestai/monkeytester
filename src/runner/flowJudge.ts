@@ -7,6 +7,7 @@
  */
 
 import type { CheckVerdict } from '../outcome/check.js';
+import { isContactSubmitBlock } from './sensitive.js';
 import {
   authRedirectObservation,
   authRedirectSuggestion,
@@ -94,8 +95,13 @@ export function applySubmissionGuard(
       failed: steps.some(step => step.status === 'failed') || assertion === 'failed',
     };
   }
-  const outcomeStep = steps.find(step => isOutcomeAssertAction(step.action) && step.status === 'failed');
+  const contactBlock = steps.some(isContactSubmitBlock);
+  const outcomeStep = steps.find(step => isOutcomeAssertAction(step.action)
+    && (step.status === 'failed' || (contactBlock && step.status === 'passed')));
   if (outcomeStep) {
+    if (outcomeStep.status === 'passed') {
+      outcomeStep.observation = 'The outcome check was not confirmed because the contact submit was refused.';
+    }
     outcomeStep.status = 'skipped';
     delete outcomeStep.error;
   }

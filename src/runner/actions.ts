@@ -22,7 +22,7 @@ import {
   classifyDocumentRedirect,
   waitForSettledLocation,
 } from '../explorer/authRedirect.js';
-import { blockSensitiveClick, contactBlockObservation, isOauthNavigation, refreshFormActions, submissionPolicy } from './sensitive.js';
+import { blockSensitiveClick, contactAbortOutcome, isOauthNavigation, refreshFormActions, submissionPolicy } from './sensitive.js';
 
 const ACTION_TOOLS = ['click', 'fill', 'goto', 'wait', 'assert_text', 'press', 'noop'] as const;
 const ACTION_LOCATORS = ['css', 'role', 'text', 'placeholder', 'label', 'testid'] as const;
@@ -982,6 +982,8 @@ function guardSkip(observation: string, error: 'sensitive-submit' | 'oauth-navig
 }
 
 function guardAfterNavigation(page: Page, prior?: string): ActionOutcome | undefined {
+  const contact = contactAbortOutcome(page, prior);
+  if (contact) return contact;
   const policy = submissionPolicy(page);
   const url = safePageUrl(page);
   const fresh = policy?.blocked && policy.blocked !== prior ? policy.blocked : undefined;
@@ -992,9 +994,6 @@ function guardAfterNavigation(page: Page, prior?: string): ActionOutcome | undef
         : `Navigation to ${url} is an OAuth page. The outcome is inconclusive.`,
       'oauth-navigation',
     );
-  }
-  if (fresh && /^contact\b/i.test(fresh)) {
-    return guardSkip(contactBlockObservation(`Blocked ${fresh}.`), 'sensitive-submit');
   }
   if (fresh) return guardSkip(`Blocked ${fresh}. The outcome is inconclusive.`, 'sensitive-submit');
   return undefined;

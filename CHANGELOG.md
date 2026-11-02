@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The engine no longer submits a contact, enquiry, feedback, support, quote, or get-in-touch message form. Detection uses field names and labels (`message`, `enquiry`, `inquiry`, `subject`, `comments`, `feedback`), button text (`Send message`, `Submit enquiry`, `Contact us`, `Get in touch`), the action URL (`/contact`, `/api/contact`, `/enquiry`, `/feedback`, `/support`), the page URL, and the planner's flow intent. A search box is not a contact form. Analytics beacons are still not sensitive submits.
 - The real POST, PUT, or PATCH is aborted, including an empty body. A filled click is refused before it runs. A click that only shows client-side validation, and does not send a request, can still be checked. The flow is inconclusive with `outcome_reason` `contact_submit_blocked`. It is not a pass and not a bug. Live runs and replay (`rerun`) use the same guard. There is no allow flag for this submit.
+- An empty contact submit that the flow expected to show a validation message, and that sent no client-side check before the request, is a failed step. The evidence is that monkeytester blocked the request and nothing was sent. The bug keeps the plan's severity. A filled submit stays `contact_submit_blocked`. Replay does not leave the outcome check as passed after a refused contact submit.
 
 ### Added
 

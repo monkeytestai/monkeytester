@@ -32,6 +32,11 @@ export interface SubmissionPolicy {
   /** Kinds the host explicitly allowed, besides what an inbox unlocks. */
   allow?: SensitiveKind[];
   blocked?: string;
+  /**
+   * The click we are about to run is a contact submit with no user-filled
+   * values. Hidden fields do not count. Cleared after the action.
+   */
+  contactEmpty?: boolean;
 }
 
 const policies = new WeakMap<Page, SubmissionPolicy>();
@@ -261,6 +266,61 @@ export function contactBlockObservation(detail: string): string {
   return `${detail} The message was not sent. The outcome is inconclusive (${CONTACT_SUBMIT_BLOCKED}).`;
 }
 
+/**
+ * Evidence for an empty contact submit that produced no client-side
+ * validation. The request was aborted, so this is a site bug, not a block.
+ */
+export const EMPTY_CONTACT_VALIDATION =
+  'Empty contact form was submitted with no client-side validation (request blocked by monkeytester; nothing sent).';
+
+/** The flow or step is checking that an empty submit shows a validation message. */
+export function expectsValidationMessage(text: string | undefined): boolean {
+  const value = text || '';
+  if (/\bvalidation_visible\b/.test(value)) return true;
+  return /\b(validation(?:\s+message|\s+error)?|required(?:\s+field)?|client-side validation|shows an error|error message)\b/i.test(value);
+}
+
+export interface ContactAbortOutcome {
+  status: 'failed' | 'skipped';
+  observation: string;
+  error: 'missing-validation' | 'sensitive-submit';
+}
+
+/**
+ * Turn a contact abort into a step outcome.
+ * An empty submit that expected a validation message is a failure: the
+ * request leaving the browser means the page did not validate first.
+ * Any other contact abort stays inconclusive.
+ */
+export function contactAbortOutcome(page: Page, prior?: string): ContactAbortOutcome | undefined {
+  const policy = policies.get(page);
+  const fresh = policy?.blocked && policy.blocked !== prior ? policy.blocked : undefined;
+  if (policy) policy.contactEmpty = undefined;
+  if (!fresh) return undefined;
+  if (fresh.startsWith('contact-empty ')) {
+    if (expectsValidationMessage(intents.get(page))) {
+      return {
+        status: 'failed',
+        observation: EMPTY_CONTACT_VALIDATION,
+        error: 'missing-validation',
+      };
+    }
+    return {
+      status: 'skipped',
+      observation: contactBlockObservation(`Blocked ${fresh}.`),
+      error: 'sensitive-submit',
+    };
+  }
+  if (fresh.startsWith('contact ')) {
+    return {
+      status: 'skipped',
+      observation: contactBlockObservation(`Blocked ${fresh}.`),
+      error: 'sensitive-submit',
+    };
+  }
+  return undefined;
+}
+
 /** A step the runner skipped because a contact message would have been sent. */
 export function isContactSubmitBlock(step: { error?: string; observation?: string }): boolean {
   if (step.error !== 'sensitive-submit') return false;
@@ -414,7 +474,8 @@ export async function installSubmissionGuards(page: Page, policy: SubmissionPoli
         body,
         contactActionUrls: contactActions.get(page),
       })) {
-        policy.blocked = `contact ${url}`;
+        const empty = policy.contactEmpty === true || !submissionHasPayload(body);
+        policy.blocked = empty ? `contact-empty ${url}` : `contact ${url}`;
         await route.abort('blockedbyclient').catch(() => {});
         return;
       }
@@ -474,7 +535,11 @@ async function contactClickRefusal(
   const signals = await contactSignalsFor(page, actionText, control);
   if (!isContactSubmit(signals)) return undefined;
   const filled = await controlFormFilled(page, control?.locator);
-  if (!filled) return undefined;
+  if (!filled) {
+    const policy = policies.get(page);
+    if (policy) policy.contactEmpty = true;
+    return undefined;
+  }
   return contactBlockObservation('Refused to submit a contact form.');
 }
 
