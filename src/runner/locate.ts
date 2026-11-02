@@ -56,6 +56,9 @@ export async function locateActionTarget(page: Page, action: ResolvedAction): Pr
   if (action.tool === 'goto' || action.tool === 'noop' || action.tool === 'assert_text') {
     return { reason: 'This action has no element.' };
   }
+  if (!action.buttonIntent && clickTargetAsksForButton(action)) {
+    action = { ...action, buttonIntent: true };
+  }
 
   const { strategy, text } = queryText(action);
   const described = describe(action);
@@ -208,6 +211,45 @@ export function impliedType(text: string): string | undefined {
 }
 
 const CLICK_ROLES = ['button', 'link', 'searchbox'] as const;
+
+const SUBMIT_NAME = /^(search|submit|go|find)$/i;
+const CLICK_VERB = /\b(?:clicks?|clicking|clicked|press(?:es|ing|ed)?|taps?|tapping|tapped|hits?|hitting)\b/i;
+
+/** `button:Search` → `Search`. A bare `Search` stays `Search`. Quotes are removed. */
+export function bareControlName(target: string | undefined): string {
+  let value = (target || '').trim().replace(/^["“']+|["”']+$/g, '').trim();
+  const prefixed = value.match(/^[a-z]+\s*:\s*(.+)$/i);
+  if (prefixed) value = prefixed[1].trim().replace(/^["“']+|["”']+$/g, '').trim();
+  return value;
+}
+
+export function nameIsSubmitControl(name: string | undefined): boolean {
+  return SUBMIT_NAME.test((name || '').trim());
+}
+
+/**
+ * A sentence that is trying to activate Search, Submit, Go, Find, or a button.
+ * Verbs cover click/clicking/clicked, press/pressing/pressed, tap/tapping/tapped, and hit.
+ */
+export function wordingAsksForSubmit(text: string | undefined): boolean {
+  const line = (text || '').replace(/\s+/g, ' ').trim();
+  if (!line) return false;
+  const hasVerb = CLICK_VERB.test(line) || /\bsubmit(?:ting|ted|s)?\b/i.test(line);
+  if (!hasVerb) return false;
+  const quoted = [...line.matchAll(/["“']([^"”']+)["”']/g)].map(match => match[1].trim());
+  if (quoted.some(nameIsSubmitControl)) return true;
+  if (/\bbutton\b/i.test(line)) return true;
+  return /\b(?:search|submit|go|find)\b/i.test(line);
+}
+
+/** `button:Search`, a bare `Search`, or a submit-like rationale. Kept across retarget. */
+export function clickTargetAsksForButton(action: ResolvedAction): boolean {
+  if (action.tool && action.tool !== 'click') return false;
+  const target = action.target || '';
+  if (/^button\s*:/i.test(target)) return true;
+  if (nameIsSubmitControl(bareControlName(target))) return true;
+  return wordingAsksForSubmit(action.rationale);
+}
 
 async function matchRole(
   page: Page,

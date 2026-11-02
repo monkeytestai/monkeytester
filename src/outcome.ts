@@ -19,6 +19,7 @@ import {
 import { isPublicAuthScreen } from './explorer/screens.js';
 import type { BugText } from './automation/signatures.js';
 import { resolveFlowStatus } from './runner/flowStatus.js';
+import { isRequestBlockedStep, isRequestBlockedText } from './runner/browserError.js';
 import { isContactSubmitBlock } from './runner/sensitive.js';
 import type {
   FlowResult,
@@ -72,6 +73,7 @@ export function reasonForText(text: string | undefined): OutcomeReason | undefin
   const raw = text || '';
   if (!raw.trim()) return undefined;
   if (isRealSiteFailureText(raw)) return undefined;
+  if (isRequestBlockedText(raw)) return 'request_blocked';
   if (UNREACHABLE.test(raw)) return 'site_unreachable';
   if (INVALID_URL.test(raw)) return 'invalid_url';
   if (BOT_WALL.test(raw)) return 'blocked_by_bot_protection';
@@ -87,6 +89,48 @@ export function reasonForText(text: string | undefined): OutcomeReason | undefin
 function isStaleLocatorStep(step: Pick<StepResult, 'error' | 'observation'>): boolean {
   const raw = `${step.error || ''}\n${step.observation || ''}`.toLowerCase();
   return raw.includes('locator_mismatch') || raw.includes('locator_stale') || raw.includes('recorded locator no longer matches');
+}
+
+/**
+ * A click that resolved to a text field, search box, or combobox did not
+ * press a button. If the only later miss is that the URL stayed or the
+ * snapshot did not change, that is locator_mismatch, not a site bug.
+ * A real button that leaves the page unchanged is unaffected.
+ */
+function relieveTextFieldUrlMiss(flow: FlowResult): FlowResult {
+  if (!flow.steps.some(isTextLikeClick)) return flow;
+  const misses = flow.steps.filter(step => step.status === 'failed' && isOnlyUnchangedUrlMiss(step));
+  if (misses.length === 0) return flow;
+  if (flow.steps.some(step => step.status === 'failed' && !isOnlyUnchangedUrlMiss(step))) return flow;
+  return {
+    ...flow,
+    assertion: 'unverifiable',
+    steps: flow.steps.map(step => {
+      if (step.status !== 'failed' || !isOnlyUnchangedUrlMiss(step)) return step;
+      return {
+        ...step,
+        status: 'skipped' as const,
+        error: 'locator_mismatch',
+        observation: `${step.observation || ''} The click resolved to a text field, so this is inconclusive (locator_mismatch) rather than a confirmed bug.`.trim(),
+      };
+    }),
+  };
+}
+
+function isTextLikeClick(step: StepResult): boolean {
+  if ((step.tool || '').toLowerCase() !== 'click') return false;
+  const role = (step.locator?.role || '').toLowerCase();
+  if (role === 'textbox' || role === 'searchbox' || role === 'combobox') return true;
+  const css = step.locator?.css || '';
+  if (/\b(?:textarea|input)\b/i.test(css)) return true;
+  const target = `${step.target || ''} ${step.locator?.target || ''}`;
+  return /\b(?:textbox|searchbox|combobox)\s*:/i.test(target);
+}
+
+function isOnlyUnchangedUrlMiss(step: StepResult): boolean {
+  const text = `${step.error || ''}\n${step.observation || ''}`;
+  if (/shows an error|console error was reported|a request failed|net::err_|pageerror|http-5\d\d/i.test(text)) return false;
+  return /url stayed|did not change/i.test(text);
 }
 
 function demoteStep(step: StepResult): StepResult {
@@ -117,6 +161,7 @@ const REASON_PRIORITY: OutcomeReason[] = [
   'nothing_tested',
   'no_assertion',
   'contact_submit_blocked',
+  'request_blocked',
   'assertion_unverifiable',
   'budget_exhausted',
 ];
@@ -157,14 +202,18 @@ function flowDetail(reason: OutcomeReason, flow: FlowResult): string {
       return `Our test didn't run ${name} because the run finished its time budget. This is not a failure to confirm the page.`;
     case 'contact_submit_blocked':
       return `Our test couldn't complete ${name} because submitting the contact form would send a real message. The message was not sent. This is not a bug in the site.`;
+    case 'request_blocked':
+      return `Our test couldn't complete ${name} because a request was blocked and the browser showed an error page. This is not a bug in the site.`;
     default:
       return `Our test couldn't complete ${name}. Check the URL and run again.`;
   }
 }
 
-function classifyFlow(flow: FlowResult): FlowResult {
+function classifyFlow(input: FlowResult): FlowResult {
+  const flow = relieveTextFieldUrlMiss(input);
   const contactBlocked = flow.outcome_reason === 'contact_submit_blocked' || flow.steps.some(isContactSubmitBlock);
-  const otherFailure = flow.steps.some(step => step.status === 'failed' && !isContactSubmitBlock(step));
+  const requestBlocked = flow.outcome_reason === 'request_blocked' || flow.steps.some(isRequestBlockedStep);
+  const otherFailure = flow.steps.some(step => step.status === 'failed' && !isContactSubmitBlock(step) && !isRequestBlockedStep(step));
   if (contactBlocked && !otherFailure) {
     return {
       ...flow,
@@ -172,6 +221,18 @@ function classifyFlow(flow: FlowResult): FlowResult {
       bugIds: [],
       outcome_reason: 'contact_submit_blocked',
       outcome_detail: flowDetail('contact_submit_blocked', flow),
+    };
+  }
+  if (requestBlocked && !otherFailure) {
+    return {
+      ...flow,
+      status: 'inconclusive',
+      steps: flow.steps.map(step => isRequestBlockedStep(step) && step.status === 'failed'
+        ? { ...step, status: 'skipped' as const }
+        : step),
+      bugIds: [],
+      outcome_reason: 'request_blocked',
+      outcome_detail: flowDetail('request_blocked', flow),
     };
   }
   if (flow.outcome_reason === 'budget_exhausted') {
@@ -258,9 +319,12 @@ function classifyFlow(flow: FlowResult): FlowResult {
 
   if (flow.assertion === 'missing' || flow.assertion === 'unverifiable') {
     const stale = steps.some(step => isStaleLocatorStep(step));
-    const reason = stale
-      ? 'automation_error'
-      : flow.assertion === 'missing' ? 'no_assertion' : 'assertion_unverifiable';
+    const blockedRequest = steps.some(isRequestBlockedStep) || flow.outcome_reason === 'request_blocked';
+    const reason = blockedRequest
+      ? 'request_blocked'
+      : stale
+        ? 'automation_error'
+        : flow.assertion === 'missing' ? 'no_assertion' : 'assertion_unverifiable';
     return {
       ...flow,
       status: 'inconclusive',
@@ -382,6 +446,8 @@ function runDetail(outcome: RunOutcome, reason: OutcomeReason | undefined, bugCo
       return 'Page checks were not run because the run finished its time budget. This is not a failure to confirm the page.';
     case 'contact_submit_blocked':
       return 'Our test couldn\'t complete a journey because submitting a contact, enquiry, or feedback form would send a real message. The message was not sent. This is not a bug in the site.';
+    case 'request_blocked':
+      return 'Our test couldn\'t complete a journey because a request was blocked and the browser showed an error page. This is not a bug in the site.';
     default:
       return 'Our test couldn\'t complete a visit because nothing was executed. Check the URL and run again.';
   }

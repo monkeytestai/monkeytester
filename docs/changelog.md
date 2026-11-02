@@ -1,6 +1,14 @@
 # Changelog
 
-The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.7.1. `next` will publish 0.7.2-beta.1.
+The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.7.1. `next` will publish 0.7.2-beta.2.
+
+## 0.7.2-beta.2
+
+- A browser error page (`chrome-error://`, `about:neterror`, and the same kind of internal page) is never a pass. A request our guard aborted is inconclusive (`request_blocked`, or `contact_submit_blocked` for a contact form). Any other `net::ERR_*` is a failure and the evidence names it.
+- `page_url` is the last real http(s) page, never `chrome-error://`.
+- Live and replay share `fingerprintV2` for the same bug. A test id alone is not the fingerprint. Hashes for bugs that already had a role or name on an http(s) page stay the same.
+- Replay repro steps do not repeat the same `Open <url>` line.
+- A button click that lands on a text or search field submits that field with Enter when it is in a form, and is inconclusive (`locator_mismatch`) when it is not. A bare target `Search` and `clicking "Search"` count, as do Find, Go, and Submit. Contact and sensitive guards still apply. A real button is unchanged. If that click's only miss is an unchanged URL, the flow is inconclusive, not a bug.
 
 ## 0.7.2-beta.1
 

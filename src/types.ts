@@ -556,7 +556,13 @@ export type OutcomeReason =
    * was not sent. Inconclusive, and not a site bug. Additive in 0.7.2-beta.1.
    * There is no allow flag for this reason.
    */
-  | 'contact_submit_blocked';
+  | 'contact_submit_blocked'
+  /**
+   * A sensitive submit, OAuth navigation, or other blocked network request
+   * left the browser on an error page. Inconclusive, and not a site bug.
+   * Contact submits keep `contact_submit_blocked`. Additive in 0.7.2-beta.2.
+   */
+  | 'request_blocked';
 
 /**
  * Phase 3 signup result. Reserved in 0.7.0-beta.1 and left unset.

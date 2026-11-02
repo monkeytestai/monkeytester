@@ -21,6 +21,7 @@ A flow is `passed` only when its outcome check verifies. These two reasons are n
 | `assertion_unverifiable` | A check was present and could not be decided. A missing invented success sentence is this, not a failed flow. |
 | `budget_exhausted` | The run finished its time budget before this check. Not a failure to confirm the page. |
 | `contact_submit_blocked` | A contact, enquiry, feedback, support, quote, or get-in-touch message was not sent. Not a pass and not a bug. |
+| `request_blocked` | A sensitive submit or other blocked request left the browser on an error page. Not a pass and not a bug. |
 
 When one confirmed bug is filed, `outcome_detail` is:
 

@@ -38,6 +38,7 @@ import type {
   AxeRuleFinding,
 } from '../types.js';
 import { type EventBus, noopBus } from '../events.js';
+import { firstHttpPageUrl, isBrowserInternalUrl } from '../runner/browserError.js';
 import { failureLocation, fingerprintFailure, fingerprintFromParts, legacyFingerprint } from '../trace/fingerprint.js';
 import { httpFailureIdentity, httpFailureKey } from '../trace/httpIdentity.js';
 import { humanStepLabel } from '../trace/stepLabel.js';
@@ -331,13 +332,13 @@ function bugFromStep(flow: FlowResult, step: StepResult): BugReport {
     networkFailures: step.networkFailures ? [...step.networkFailures] : [],
   };
 
-  const reproSteps = [
+  const reproSteps = dedupeConsecutiveOpens([
     `Open ${flow.startUrl}`,
     ...flow.steps
       .filter(s => s.index < step.index && s.status !== 'blocked')
       .map(s => s.action),
     step.action,
-  ];
+  ]);
 
   const severity = inferSeverity(flow, step);
 
@@ -359,7 +360,7 @@ function bugFromStep(flow: FlowResult, step: StepResult): BugReport {
     evidence,
     triageNotes: explain(step),
     impact: fallbackImpact(flow, step),
-    page_url: pageUrlFor(flow, traceStep?.urlAfter, traceStep?.urlBefore),
+    page_url: pageUrlFor(flow, step, traceStep),
     step_index: Math.max(0, step.index - 1),
     flow_id: flow.flowId,
     ...(element ? { element } : {}),
@@ -417,17 +418,73 @@ function axeBug(flow: FlowResult, step: StepResult, rule: AxeRuleFinding): BugRe
     severity,
     fingerprintV2: fingerprintFromParts(parts),
     fingerprintParts: parts,
-    page_url: pageUrl,
-    affectedPages: pageUrl ? [pageUrl] : [],
+    page_url: firstHttpPageUrl([pageUrl, flow.startUrl]) || flow.startUrl,
+    affectedPages: [firstHttpPageUrl([pageUrl, flow.startUrl]) || flow.startUrl],
     impact: severity === 'minor'
       ? `${rule.help} This is a minor accessibility note.`
       : rule.help,
   };
 }
 
-function pageUrlFor(flow: FlowResult, urlAfter?: string, urlBefore?: string): string {
-  const candidate = urlAfter || urlBefore || flow.startUrl;
-  return candidate || flow.startUrl;
+function pageUrlFor(flow: FlowResult, step: StepResult, traceStep?: { index: number; urlAfter?: string; urlBefore?: string }): string {
+  const index = traceStep?.index ?? step.index;
+  const earlier: string[] = [];
+  for (const item of [...(flow.trace?.steps || [])].reverse()) {
+    if (item.index >= index) continue;
+    if (item.urlAfter) earlier.push(item.urlAfter);
+    if (item.urlBefore) earlier.push(item.urlBefore);
+  }
+  const after = isBrowserInternalUrl(traceStep?.urlAfter) ? undefined : traceStep?.urlAfter;
+  return firstHttpPageUrl([
+    after,
+    traceStep?.urlBefore,
+    ...earlier,
+    isHttpTarget(step.target) ? step.target : undefined,
+    flow.startUrl,
+  ]) || flow.startUrl;
+}
+
+function isHttpTarget(target: string | undefined): target is string {
+  return !!target && /^https?:\/\//i.test(target);
+}
+
+/**
+ * Replay records the opening navigation as its own step, and bug reports
+ * also start with `Open <startUrl>`. The same open must not appear twice
+ * in a row.
+ */
+function dedupeConsecutiveOpens(steps: string[]): string[] {
+  const out: string[] = [];
+  for (const step of steps) {
+    const prev = out[out.length - 1];
+    if (prev && sameOpenStep(prev, step)) continue;
+    out.push(step);
+  }
+  return out;
+}
+
+function sameOpenStep(a: string, b: string): boolean {
+  const left = openTarget(a);
+  const right = openTarget(b);
+  if (!left || !right) return false;
+  return canonicalOpen(left) === canonicalOpen(right);
+}
+
+function openTarget(step: string): string | undefined {
+  const match = step.trim().match(/^open\s+(\S+)/i);
+  return match?.[1];
+}
+
+function canonicalOpen(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    let path = url.pathname;
+    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+    return `${url.origin}${path}${url.search}`.toLowerCase();
+  } catch {
+    return value.replace(/\/+$/, '').toLowerCase();
+  }
 }
 
 function bugElement(step: StepResult): BugElement | undefined {

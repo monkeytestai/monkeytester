@@ -39,8 +39,10 @@ import type {
 import {
   buildLocator,
   captureLocator,
+  clickAsksForButton,
   directActionFromStep,
   executeAction,
+  mergeLocatorIdentity,
   resolveAction,
   skeletonForLLM,
   type ResolvedAction,
@@ -56,6 +58,12 @@ import { signupSubmitBlock } from '../signup/guard.js';
 import { emptySignupLedger, signupFields, type SignupLedger } from '../signup/ledger.js';
 import { isPageVisitFlow } from '../explorer/authRedirect.js';
 import { evaluateOutcomeCheck, snapPage, type PageSnap } from '../outcome/check.js';
+import {
+  ensureNetErrorEvidence,
+  isRequestBlockedStep,
+  netEvidenceFor,
+  settleActionBrowserError,
+} from './browserError.js';
 import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, setStepIntent, type SensitiveKind } from './sensitive.js';
 import { authCheckForFlowId, isAuthNegativeFlowId } from '../planner/authNegative.js';
 import { isSignupFlowId, signupCheckForFlowId } from '../signup/plan.js';
@@ -253,8 +261,16 @@ async function replayFlow(
       if (recorded.index === lastActionIndex) beforeAction = await snapPage(page);
       const played = await playStep(page, trace, recorded, opts, stepTimeout, evidence, signal);
       if (played.skip) continue;
+      const actionToolName = played.action.tool;
+      if (actionToolName === 'click' || actionToolName === 'fill' || actionToolName === 'goto' || actionToolName === 'press') {
+        played.outcome = settleActionBrowserError(
+          played.outcome,
+          safeUrl(page),
+          evidence.networkByStep.get(recorded.index),
+        );
+      }
       if (played.halted) halted = true;
-      if (played.outcome.error === 'sensitive-submit' || played.outcome.error === 'oauth-navigation') {
+      if (played.outcome.error === 'sensitive-submit' || played.outcome.error === 'oauth-navigation' || played.outcome.error === 'request_blocked') {
         guarded = true;
       }
       if (!played.engine && recorded.tool !== 'check' && opts.strictOracles) {
@@ -288,9 +304,13 @@ async function replayFlow(
         consoleErrors: played.outcome.consoleErrors?.length
           ? played.outcome.consoleErrors
           : evidence.consoleByStep.get(recorded.index),
-        networkFailures: played.outcome.networkFailures?.length
-          ? played.outcome.networkFailures
-          : evidence.networkByStep.get(recorded.index),
+        networkFailures: ensureNetErrorEvidence(
+          played.outcome.networkFailures?.length
+            ? played.outcome.networkFailures
+            : evidence.networkByStep.get(recorded.index),
+          `${played.outcome.error || ''}\n${played.outcome.observation}`,
+          urlBefore,
+        ),
         ...(played.outcome.error ? { error: played.outcome.error } : {}),
         ...(played.outcome.severity ? { severity: played.outcome.severity } : {}),
         ...(played.outcome.axeRules?.length ? { axeRules: played.outcome.axeRules } : {}),
@@ -368,11 +388,14 @@ async function replayFlow(
   }
 
   const contactBlocked = steps.some(isContactSubmitBlock);
+  const requestBlocked = !contactBlocked && steps.some(isRequestBlockedStep);
   const status = assertion === 'blocked'
     ? 'blocked' as const
     : contactBlocked && !failed
       ? 'inconclusive' as const
-      : resolveFlowStatus(steps, failed, assertion);
+      : requestBlocked && !failed
+        ? 'inconclusive' as const
+        : resolveFlowStatus(steps, failed, assertion);
   return {
     flowId: trace.flowId,
     name: trace.name || trace.flowId,
@@ -382,8 +405,9 @@ async function replayFlow(
     status,
     assertion: contactBlocked && !failed ? 'unverifiable' as const : assertion,
     ...(contactBlocked ? { outcome_reason: 'contact_submit_blocked' as const } : {}),
-    ...(!contactBlocked && status === 'inconclusive' && assertion === 'missing' ? { outcome_reason: 'no_assertion' as const } : {}),
-    ...(!contactBlocked && status === 'inconclusive' && assertion === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
+    ...(requestBlocked && !failed ? { outcome_reason: 'request_blocked' as const } : {}),
+    ...(!contactBlocked && !requestBlocked && status === 'inconclusive' && assertion === 'missing' ? { outcome_reason: 'no_assertion' as const } : {}),
+    ...(!contactBlocked && !requestBlocked && status === 'inconclusive' && assertion === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
     failureReason,
     ...(trace.severityIfFails ? { severityIfFails: trace.severityIfFails } : {}),
     steps,
@@ -600,29 +624,42 @@ async function playStep(
     const action = actionFromRecorded(recorded);
     const blocked = await blockRecordedSubmit(page, action, opts);
     if (blocked) return blocked;
-    const outcome = await executeAction(page, action, timeoutMs, { strictOracles: opts.strictOracles });
+    const outcome = await executeAction(page, action, timeoutMs, {
+      strictOracles: opts.strictOracles,
+      intent: recorded.action,
+    });
     return { action, locator: recorded.locator, outcome, resolution: 'recorded' };
   }
 
   const matched = await firstMatch(page, recorded);
   if (matched){
+    const identified = await captureLocator(page, matched).catch(() => undefined);
+    const locator = mergeLocatorIdentity(identified, recorded.locator);
     const blocked = await blockRecordedSubmit(page, matched, opts);
-    if (blocked) return blocked;
-    const outcome = await executeAction(page, matched, timeoutMs, { strictOracles: opts.strictOracles });
-    const locator = await captureLocator(page, matched).catch(() => recorded.locator);
-    return { action: matched, locator: locator || recorded.locator, outcome, resolution: 'recorded' };
+    if (blocked) return { ...blocked, locator };
+    const asked = clickAsksForButton(recorded.action, matched) ? { ...matched, buttonIntent: true } : matched;
+    const outcome = await executeAction(page, asked, timeoutMs, {
+      strictOracles: opts.strictOracles,
+      intent: recorded.action,
+    });
+    return { action: matched, locator, outcome, resolution: 'recorded' };
   }
 
   if (recorded.status !== 'skipped' && recorded.action) {
     const recovered = await recoverByInstruction(page, recorded);
     if (recovered) {
+      const identified = await captureLocator(page, recovered).catch(() => undefined);
+      const locator = mergeLocatorIdentity(identified, recorded.locator);
       const blocked = await blockRecordedSubmit(page, recovered, opts);
-      if (blocked) return blocked;
-      const outcome = await executeAction(page, recovered, timeoutMs, { strictOracles: opts.strictOracles });
-      const locator = await captureLocator(page, recovered).catch(() => recorded.locator);
+      if (blocked) return { ...blocked, locator };
+      const asked = clickAsksForButton(recorded.action, recovered) ? { ...recovered, buttonIntent: true } : recovered;
+      const outcome = await executeAction(page, asked, timeoutMs, {
+        strictOracles: opts.strictOracles,
+        intent: recorded.action,
+      });
       return {
         action: recovered,
-        locator: locator || recorded.locator,
+        locator,
         outcome: {
           ...outcome,
           observation: `Re-resolved from the step text. ${outcome.observation}`,
@@ -650,10 +687,15 @@ async function playStep(
         },
       };
     }
+    const identified = await captureLocator(page, healed).catch(() => undefined);
+    const locator = mergeLocatorIdentity(identified, recorded.locator);
     const blocked = await blockRecordedSubmit(page, healed, opts);
-    if (blocked) return blocked;
-    const outcome = await executeAction(page, healed, timeoutMs, { strictOracles: opts.strictOracles });
-    const locator = await captureLocator(page, healed).catch(() => undefined);
+    if (blocked) return { ...blocked, locator };
+    const asked = clickAsksForButton(recorded.action, healed) ? { ...healed, buttonIntent: true } : healed;
+    const outcome = await executeAction(page, asked, timeoutMs, {
+      strictOracles: opts.strictOracles,
+      intent: recorded.action,
+    });
     return {
       action: healed,
       locator,
@@ -811,12 +853,15 @@ async function replayAssertion(
   const planSteps = trace.steps
     .filter(step => step.index > 0 && !isOutcomeAssertAction(step.action))
     .map(step => ({ action: step.action || '' }));
+  const networkFailures = steps.flatMap(step => step.networkFailures ?? []);
   let verdict = await evaluateOutcomeCheck(page, trace.outcomeCheck, {
     startUrl: trace.startUrl,
     before: flags.beforeLast,
     beforeAction: flags.beforeAction ?? flags.beforeLast,
     consoleErrors: steps.flatMap(step => step.consoleErrors ?? []),
-    networkFailures: steps.flatMap(step => step.networkFailures ?? []),
+    networkFailures,
+    guardCaused: flags.guarded || steps.some(step => isContactSubmitBlock(step) || isRequestBlockedStep(step)),
+    navigationError: [...steps].reverse().find(step => step.error)?.error,
   });
   verdict = passSignedOutVisit(verdict, {
     name: trace.name || trace.flowId,
@@ -835,6 +880,7 @@ async function replayAssertion(
     tool: 'assert_text',
     target: trace.outcomeCheck.kind,
     ...(assertion === 'failed' ? { error: verdict.observation } : {}),
+    ...netEvidenceFor(verdict.observation, networkFailures, flags.beforeLast?.url || trace.startUrl),
   };
   steps.push(outcomeStep);
   const judged = finish(assertion, verdict.observation);

@@ -46,6 +46,7 @@ import { type EventBus, noopBus } from '../events.js';
 import { logModelDetail } from '../llm/coerce.js';
 import {
   captureLocator,
+  clickAsksForButton,
   directActionFromStep,
   executeAction,
   groundFillAction,
@@ -89,6 +90,12 @@ import {
   isPageVisitFlow,
   waitForSettledLocation,
 } from '../explorer/authRedirect.js';
+import {
+  ensureNetErrorEvidence,
+  isRequestBlockedStep,
+  netEvidenceFor,
+  settleActionBrowserError,
+} from './browserError.js';
 import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, setStepIntent, type SensitiveKind } from './sensitive.js';
 
 export interface RunnerOptions {
@@ -831,6 +838,7 @@ async function runFlow(
       continue;
     }
 
+    if (clickAsksForButton(step.action, resolved)) resolved = { ...resolved, buttonIntent: true };
     const locatedNow = await locateActionTarget(page, resolved);
     const settled = 'reason' in locatedNow ? undefined : locatedNow;
     if (settled) resolved = settled.action;
@@ -838,10 +846,11 @@ async function runFlow(
       ? await captureElementRing(settled.locator, resolved.locator === 'css' ? resolved.target : undefined)
       : undefined;
     const locator = await captureLocator(page, resolved);
-    const executed = await executeAction(page, resolved, opts.stepTimeoutMs, {
+    const executed = settleActionBrowserError(await executeAction(page, resolved, opts.stepTimeoutMs, {
       strictOracles: opts.strictOracles,
+      intent: step.action,
       ...(settled ? { located: settled } : {}),
-    });
+    }), safePageUrl(page), evidence.networkByStep.get(stepIndex));
     if (executed.resolved) resolved = executed.resolved;
     let exec = opts.strictOracles
       ? await applyPassedOracles(page, evidence, stepIndex, executed)
@@ -850,7 +859,7 @@ async function runFlow(
       if (!opts.strictOracles) await flushStepEvents(page);
       exec = outcomeWithSameOrigin5xx(exec, evidence.networkByStep.get(stepIndex), origins);
     }
-    if (exec.error === 'sensitive-submit' || exec.error === 'oauth-navigation') {
+    if (exec.error === 'sensitive-submit' || exec.error === 'oauth-navigation' || exec.error === 'request_blocked') {
       guardedReason = exec.observation;
     }
     const screenshotPath = await safeShot(page, opts.screenshotsDir, flow.id, stepIndex, exec.status);
@@ -869,7 +878,11 @@ async function runFlow(
       durationMs,
       screenshotPath,
       consoleErrors: evidence.consoleByStep.get(stepIndex),
-      networkFailures: evidence.networkByStep.get(stepIndex),
+      networkFailures: ensureNetErrorEvidence(
+        evidence.networkByStep.get(stepIndex),
+        `${exec.error || ''}\n${exec.observation}`,
+        urlBefore,
+      ),
       ...(exec.error ? { error: exec.error } : {}),
       ...(ring ? { element: ring } : {}),
       ...(exec.suggestions?.length ? { suggestions: exec.suggestions } : {}),
@@ -929,12 +942,15 @@ async function runFlow(
     assertion = oracleAssertion(steps);
   } else if (!flowFailed) {
     const landedNow = safePageUrl(page) || '';
+    const networkFailures = steps.flatMap(step => step.networkFailures ?? []);
     let verdict = await evaluateOutcomeCheck(page, flow.outcomeCheck, {
       startUrl: flow.startUrl,
       before: beforeLast,
       beforeAction: beforeLast,
       consoleErrors: steps.flatMap(step => step.consoleErrors ?? []),
-      networkFailures: steps.flatMap(step => step.networkFailures ?? []),
+      networkFailures,
+      guardCaused: Boolean(guardedReason) || steps.some(step => isContactSubmitBlock(step) || isRequestBlockedStep(step)),
+      navigationError: [...steps].reverse().find(step => step.error)?.error,
     });
     verdict = passSignedOutVisit(verdict, flow, landedNow, navStatus, flowSuggestions);
     const unfinished = steps.some(step => step.index > 0 && (step.status === 'skipped' || step.status === 'blocked'));
@@ -950,6 +966,7 @@ async function runFlow(
       tool: 'assert_text',
       target: flow.outcomeCheck?.kind,
       ...(assertion === 'failed' ? { error: verdict.observation } : {}),
+      ...netEvidenceFor(verdict.observation, networkFailures, beforeLast?.url || flow.startUrl),
     };
     steps.push(result);
     traceSteps.push(serializeTraceStep({
@@ -1126,17 +1143,24 @@ function finaliseFlow(
     ? failureReason
     : failureReason;
   const contactBlocked = steps.some(isContactSubmitBlock);
+  const requestBlocked = !contactBlocked && steps.some(isRequestBlockedStep);
+  const failedFlow = status === 'failed';
   return {
     flowId: flow.id,
     name: flow.name,
     description: flow.description,
     kind: flow.kind,
     startUrl: flow.startUrl,
-    status: contactBlocked && status !== 'failed' ? 'inconclusive' as const : status,
+    status: contactBlocked && status !== 'failed'
+      ? 'inconclusive' as const
+      : requestBlocked && !failedFlow
+        ? 'inconclusive' as const
+        : status,
     ...(reason ? { failureReason: reason } : {}),
     ...(contactBlocked ? { outcome_reason: 'contact_submit_blocked' as const } : {}),
-    ...(!contactBlocked && status === 'inconclusive' && decided === 'missing' ? { outcome_reason: 'no_assertion' as const } : {}),
-    ...(!contactBlocked && status === 'inconclusive' && decided === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
+    ...(requestBlocked && !failedFlow ? { outcome_reason: 'request_blocked' as const } : {}),
+    ...(!contactBlocked && !requestBlocked && status === 'inconclusive' && decided === 'missing' ? { outcome_reason: 'no_assertion' as const } : {}),
+    ...(!contactBlocked && !requestBlocked && status === 'inconclusive' && decided === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
     assertion: decided,
     severityIfFails: flow.severityIfFails,
     steps: labelled,

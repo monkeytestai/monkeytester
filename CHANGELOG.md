@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2-beta.2] — 2026-11-02
+
+### Fixed
+
+- A browser error page is never a pass. After an action or navigation, if the page URL is `chrome-error://chromewebdata/`, `about:neterror`, `about:certerror`, or `edge-error://`, every outcome check on that page fails to verify. Live runs and replay (`rerun`) use the same rule. A request aborted by our own guard (a sensitive or contact submit, or `net::ERR_BLOCKED_BY_CLIENT`) leaves the flow inconclusive. Any other `net::ERR_*` is a failure, and the evidence names that error. The opening "could not load the starting page" case stays `site_unreachable`.
+- A bug's `page_url` is never a `chrome-error://` or other browser-internal URL. It is the last real http(s) page before the action, for example `/help`.
+- Replay keeps the recorded role and accessible name when it finds the element by test id. `fingerprintV2` ignores a test id on its own, so the same bug (the empty contact form on `/help`) now hashes the same way on a live run and on replay. Bugs that already had an http(s) location and a role or name keep their `fingerprintV2`. A bug whose location was a browser error URL now uses the last http(s) page, so that hash can change.
+- Replay repro steps do not list the same `Open <url>` step twice in a row. The stored opening navigation and the report's opening step are one step.
+- A click that asks for a button, or for Search, Submit, Go, or Find, and resolves to a text field, search box, textarea, or combobox no longer counts as a click on that field. The bare target `Search` counts, and so does a description such as `Submit the search form by clicking "Search"`. Verbs include click/clicking/clicked, press/pressing/pressed, tap/tapping/tapped, and hit. Inside a form, the field is submitted with Enter (a textarea or select uses `requestSubmit`). The step says the button was absent and the input was submitted via Enter. Sensitive and contact guards run on that Enter the same way they run on a click. A text field that is not in a form is `locator_mismatch`, so the flow is inconclusive and is not a site bug. A real button is still clicked. This was a false positive on bananabeings.com: `click button Search` hit the header text field, nothing was submitted, and the planner's `url_changed` check then failed because the URL stayed and the page snapshot did not change. That check does not override the 0.7.1 rule. A URL that stays put is still inconclusive when the page changed, and it is still a bug when a real control leaves the page unchanged. The no-op click never reaches that check. If a click still resolves to a text field and the only later miss is that the URL stayed or the snapshot did not change, the flow is inconclusive (`locator_mismatch`), not a bug. A real button that leaves the page unchanged is still a bug.
+
+### Added
+
+- `OutcomeReason` `request_blocked`. Additive. A blocked network request that is not a contact submit. Contact submits stay `contact_submit_blocked`. Existing reason codes are unchanged.
+
 ## [0.7.2-beta.1] — 2026-11-02
 
 ### Fixed

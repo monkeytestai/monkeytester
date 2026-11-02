@@ -7,6 +7,7 @@
  */
 
 import type { CheckVerdict } from '../outcome/check.js';
+import { isBrowserInternalUrl } from './browserError.js';
 import { isContactSubmitBlock } from './sensitive.js';
 import {
   authRedirectObservation,
@@ -65,6 +66,15 @@ export function passSignedOutVisit(
   navStatus: number | undefined,
   suggestions: Suggestion[],
 ): CheckVerdict {
+  if (isBrowserInternalUrl(landedUrl)) {
+    if (verdict.state === 'verified') {
+      return {
+        state: 'failed',
+        observation: 'The page showed a browser error (net::ERR_FAILED).',
+      };
+    }
+    return verdict;
+  }
   const visit = isPageVisitFlow({
     name: flow.name,
     description: flow.description,
