@@ -927,7 +927,13 @@ async function runFlow(
     assertion = oracleAssertion(steps);
   } else if (!flowFailed) {
     const landedNow = safePageUrl(page) || '';
-    let verdict = await evaluateOutcomeCheck(page, flow.outcomeCheck, { startUrl: flow.startUrl, before: beforeLast });
+    let verdict = await evaluateOutcomeCheck(page, flow.outcomeCheck, {
+      startUrl: flow.startUrl,
+      before: beforeLast,
+      beforeAction: beforeLast,
+      consoleErrors: steps.flatMap(step => step.consoleErrors ?? []),
+      networkFailures: steps.flatMap(step => step.networkFailures ?? []),
+    });
     verdict = passSignedOutVisit(verdict, flow, landedNow, navStatus, flowSuggestions);
     const unfinished = steps.some(step => step.index > 0 && (step.status === 'skipped' || step.status === 'blocked'));
     assertion = assertionFromVerdict(verdict, unfinished);

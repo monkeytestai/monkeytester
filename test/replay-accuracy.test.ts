@@ -132,6 +132,17 @@ describe('stored-plan replay', () => {
     expect(stale.flows[0].steps.some(step => step.error === 'locator_mismatch')).toBe(true);
     expect(stale.outcome).not.toBe('bugs_found');
 
+    const missing = triage(await replayTraces([missingLocatorTrace(site.url)], replayOpts(shots)));
+    expect(missing.bugs).toEqual([]);
+    expect(missing.bugs.map(bug => bug.severity)).toEqual([]);
+    expect(missing.stats.bugsCritical).toBe(0);
+    expect(missing.stats.bugsMajor).toBe(0);
+    expect(missing.stats.bugsMinor).toBe(0);
+    expect(missing.flows[0].status).toBe('inconclusive');
+    expect(missing.flows[0].outcome_reason).toBe('automation_error');
+    expect(missing.flows[0].steps.some(step => step.error === 'locator_mismatch' && /no locator/i.test(step.observation || ''))).toBe(true);
+    expect(missing.outcome).not.toBe('bugs_found');
+
     const refused = triage(await replayTraces([refusedSignupTrace(site.url)], replayOpts(shots)));
     expect(refused.bugs).toEqual([]);
     expect(refused.flows[0].status).not.toBe('failed');
@@ -384,6 +395,36 @@ function staleTrace(origin: string): FlowTrace {
         tool: 'click',
         status: 'passed',
         locator: { strategy: 'css', target: '#missing-save', css: '#missing-save' },
+      },
+    ],
+  };
+}
+
+function missingLocatorTrace(origin: string): FlowTrace {
+  const startUrl = `${origin}/signin`;
+  return {
+    version: 1,
+    flowId: 'missing-locator',
+    name: 'Click a control',
+    description: 'The stored step has no locator.',
+    kind: 'happy_path',
+    startUrl,
+    expectation: 'The control is clicked.',
+    outcomeCheck: { kind: 'url_unchanged' },
+    severityIfFails: 'critical',
+    steps: [
+      {
+        index: 0,
+        action: `Open ${startUrl}`,
+        tool: 'goto',
+        status: 'passed',
+        locator: { strategy: 'css', target: startUrl },
+      },
+      {
+        index: 1,
+        action: 'Click the missing control',
+        tool: 'click',
+        status: 'passed',
       },
     ],
   };

@@ -112,6 +112,7 @@ export function buildPageCheckFlows(siteMap: SiteMap, maxPages?: number): PageCh
       expectation: spec.expectation,
       pageCheck: spec.pageCheck,
       url: page.url,
+      ...(spec.pageCheck === 'http' && page.sitemapOnly ? { sitemapOnly: true } : {}),
     }));
     return {
       id: spec.id,

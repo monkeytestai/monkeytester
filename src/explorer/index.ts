@@ -144,7 +144,7 @@ export async function explore(
     authUrlsQueued = enqueueLinks(
       queue,
       visited,
-      listed.slice(0, room).map(url => ({ url })),
+      listed.slice(0, room).map(item => ({ url: item.url, fromSitemap: item.fromSitemap })),
       authUrlsQueued,
       AUTH_LINK_BUDGET,
     );
@@ -271,6 +271,7 @@ export async function explore(
           authGated,
           ...(screenshotPath ? { screenshotPath } : {}),
           ...(pageWarnings?.length ? { warnings: pageWarnings } : {}),
+          ...(next.fromSitemap ? { sitemapOnly: true } : {}),
         };
 
         pages.push(sm);
@@ -292,6 +293,14 @@ export async function explore(
         // budget so a sign-in page can still reach signup and forgot-password
         // without filling the whole crawl with account screens.
         authUrlsQueued = enqueueLinks(queue, visited, outbound, authUrlsQueued, AUTH_LINK_BUDGET);
+        for (const link of outbound) {
+          if (sameCrawlPage(link.url, sm.url)) continue;
+          for (const existing of pages) {
+            if (existing.sitemapOnly && sameCrawlPage(existing.url, link.url)) {
+              delete existing.sitemapOnly;
+            }
+          }
+        }
 
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
@@ -353,28 +362,36 @@ export async function explore(
  * Same-origin URLs published in robots.txt and sitemap.xml. Missing files
  * are ignored. Nested sitemap indexes are followed one level.
  */
-async function listedSiteUrls(request: APIRequestContext, startUrl: string, cap: number): Promise<string[]> {
+async function listedSiteUrls(
+  request: APIRequestContext,
+  startUrl: string,
+  cap: number,
+): Promise<{ url: string; fromSitemap: boolean }[]> {
   if (cap < 1) return [];
   let origin: string;
   try { origin = new URL(startUrl).origin; }
   catch { return []; }
 
-  const found: string[] = [];
-  const push = (value: string) => {
+  const found: { url: string; fromSitemap: boolean }[] = [];
+  const push = (value: string, fromSitemap: boolean) => {
     if (found.length >= cap) return;
     let absolute: string;
     try { absolute = new URL(value, origin).href; }
     catch { return; }
     if (!isSameCrawlSite(absolute, startUrl)) return;
     const canonical = canonicalPageUrl(absolute);
-    if (found.some(existing => sameCrawlPage(existing, canonical))) return;
-    found.push(canonical);
+    const existing = found.find(item => sameCrawlPage(item.url, canonical));
+    if (existing) {
+      if (!fromSitemap) existing.fromSitemap = false;
+      return;
+    }
+    found.push({ url: canonical, fromSitemap });
   };
 
   const robotsText = await readDiscoveryText(request, `${origin}/robots.txt`);
   const robotUrls = robotsText ? urlsFromRobots(robotsText, startUrl) : [];
   for (const url of robotUrls) {
-    if (!/sitemap/i.test(url)) push(url);
+    if (!/sitemap/i.test(url)) push(url, false);
   }
 
   const sitemapTargets = [`${origin}/sitemap.xml`, ...robotUrls.filter(url => /sitemap/i.test(url))];
@@ -389,9 +406,9 @@ async function listedSiteUrls(request: APIRequestContext, startUrl: string, cap:
       if (/sitemap[^/]*\.xml(?:\?|$)/i.test(loc) && !seenSitemaps.has(loc)) {
         seenSitemaps.add(loc);
         const nested = await readDiscoveryText(request, loc);
-        if (nested) for (const inner of urlsFromSitemap(nested)) push(inner);
+        if (nested) for (const inner of urlsFromSitemap(nested)) push(inner, true);
       } else {
-        push(loc);
+        push(loc, true);
       }
     }
   }

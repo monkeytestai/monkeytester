@@ -162,6 +162,8 @@ describe('analytics beacons', () => {
       'https://us.i.posthog.com/e/',
       'https://o123.ingest.sentry.io/api/456/envelope/',
       'https://o123.ingest.us.sentry.io/api/456/envelope/',
+      'https://shop.example/__l5e/trackevents',
+      'https://kiraayasense.com/__l5e/trackevents?x=1',
     ];
     for (const url of urls) {
       expect(isAnalyticsBeaconUrl(url)).toBe(true);

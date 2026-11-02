@@ -186,6 +186,12 @@ export interface SiteMapPage {
    * summary parsed. Additive in 0.7.0-beta.4.
    */
   warnings?: string[];
+  /**
+   * True when this URL was listed in a sitemap and no crawled page linked
+   * to it. Omitted for the start URL and for links found in the DOM.
+   * Additive in 0.7.1-beta.1.
+   */
+  sitemapOnly?: boolean;
 }
 
 export interface SiteMapInteractive {
@@ -356,6 +362,11 @@ export interface TestStep {
    * planner omits one. Additive in 0.7.0-beta.4.
    */
   label?: string;
+  /**
+   * The page-check URL was discovered only from a sitemap. A 404 on that
+   * URL is minor. Omitted for DOM links. Additive in 0.7.1-beta.1.
+   */
+  sitemapOnly?: boolean;
 }
 
 export interface TestFlow {
@@ -799,6 +810,11 @@ export interface TraceStep {
   networkFailures?: NetworkFailureEvidence[];
   /** Absent or `recorded` on the original capture. `healed` is a replay annotation. */
   resolution?: TraceResolution;
+  /**
+   * Page-check URL came only from a sitemap. Replay uses it so a 404 stays
+   * minor. Omitted otherwise. Additive in 0.7.1-beta.1.
+   */
+  sitemapOnly?: boolean;
 }
 
 export interface FlowTrace {

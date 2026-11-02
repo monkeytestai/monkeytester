@@ -213,7 +213,11 @@ async function replayFlow(
   let halted = false;
   let guarded = false;
   let beforeLast: PageSnap | undefined;
+  let beforeAction: PageSnap | undefined;
   let assertion: FlowAssertion = 'missing';
+  const lastActionIndex = [...trace.steps].reverse().find(step =>
+    step.index > 0 && step.tool !== 'check' && !isOutcomeAssertAction(step.action),
+  )?.index;
 
   try {
     for (const recorded of trace.steps){
@@ -238,6 +242,7 @@ async function replayFlow(
       const stepStart = Date.now();
       setStepIntent(page, `${recorded.action || ''}\n${recorded.expectation || ''}`);
       if (!beforeLast && recorded.index > 0) beforeLast = await snapPage(page);
+      if (recorded.index === lastActionIndex) beforeAction = await snapPage(page);
       const played = await playStep(page, trace, recorded, opts, stepTimeout, evidence, signal);
       if (played.skip) continue;
       if (played.halted) halted = true;
@@ -317,6 +322,7 @@ async function replayFlow(
       failed,
       guarded,
       beforeLast,
+      beforeAction,
       suggestions: flowSuggestions,
     });
     assertion = judged.assertion;
@@ -717,7 +723,9 @@ async function playRecordedCheck(page: Page, recorded: TraceStep, timeoutMs: num
       },
     };
   }
-  const outcome = await replayPageCheck(page, kind, url, timeoutMs);
+  const outcome = await replayPageCheck(page, kind, url, timeoutMs, {
+    sitemapOnly: recorded.sitemapOnly,
+  });
   return {
     action: { tool: 'check', target: url, value: kind },
     locator: recorded.locator ?? { strategy: 'css', target: url },
@@ -754,6 +762,7 @@ async function replayAssertion(
     failed: boolean;
     guarded: boolean;
     beforeLast?: PageSnap;
+    beforeAction?: PageSnap;
     suggestions: Suggestion[];
   },
 ): Promise<{ assertion: FlowAssertion; observation: string; failed: boolean; outcomeStep?: StepResult }> {
@@ -790,7 +799,13 @@ async function replayAssertion(
   const planSteps = trace.steps
     .filter(step => step.index > 0 && !isOutcomeAssertAction(step.action))
     .map(step => ({ action: step.action || '' }));
-  let verdict = await evaluateOutcomeCheck(page, trace.outcomeCheck, { startUrl: trace.startUrl, before: flags.beforeLast });
+  let verdict = await evaluateOutcomeCheck(page, trace.outcomeCheck, {
+    startUrl: trace.startUrl,
+    before: flags.beforeLast,
+    beforeAction: flags.beforeAction ?? flags.beforeLast,
+    consoleErrors: steps.flatMap(step => step.consoleErrors ?? []),
+    networkFailures: steps.flatMap(step => step.networkFailures ?? []),
+  });
   verdict = passSignedOutVisit(verdict, {
     name: trace.name || trace.flowId,
     description: trace.description,

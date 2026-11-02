@@ -52,6 +52,7 @@ export function serializeTraceStep(step: TraceStep): TraceStep {
   if (step.consoleErrors?.length) out.consoleErrors = step.consoleErrors.map(c => ({ ...c }));
   if (step.networkFailures?.length) out.networkFailures = step.networkFailures.map(n => ({ ...n }));
   if (step.resolution) out.resolution = step.resolution;
+  if (step.sitemapOnly) out.sitemapOnly = true;
   return out;
 }
 

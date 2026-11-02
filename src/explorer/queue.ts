@@ -15,12 +15,19 @@
 export interface DiscoveredLink {
   url: string;
   text?: string;
+  /**
+   * True when the URL was published by a sitemap and has not been seen as a
+   * link in a page. A later page link clears it.
+   */
+  fromSitemap?: boolean;
 }
 
 export interface CrawlQueueItem {
   url: string;
   /** True when the URL or its anchor text looks like a public form surface. */
   surface: boolean;
+  /** True when the URL is queued only because a sitemap listed it. */
+  fromSitemap?: boolean;
 }
 
 const SURFACE_PATH = /(?:^|\/)(contact|contacts|help|support|about|faq|faqs|feedback|quote|enquiries|enquiry|inquiries|inquiry|customer-service|customer-care|get-in-touch|newsletter|subscribe)(?:\/|$|[?#])/i;
@@ -292,13 +299,24 @@ export function enqueueLinks(
   let authQueued = authUrlsQueued;
   for (const link of links) {
     const url = canonicalPageUrl(link.url);
-    if (!url || wasVisited(visited, url) || queueHas(queue, url)) continue;
+    if (!url) continue;
+    const existing = queue.find(item => sameCrawlPage(item.url, url));
+    if (existing) {
+      // A link in the page DOM is not sitemap-only, even if a sitemap listed it first.
+      if (!link.fromSitemap) existing.fromSitemap = false;
+      continue;
+    }
+    if (wasVisited(visited, url)) continue;
     const auth = looksLikeAuthUrl(url);
     if (auth) {
       if (authQueued >= authLimit) continue;
       authQueued += 1;
     }
-    queue.push({ url, surface: isFormSurfaceLink({ url, text: link.text }) });
+    queue.push({
+      url,
+      surface: isFormSurfaceLink({ url, text: link.text }),
+      ...(link.fromSitemap ? { fromSitemap: true } : {}),
+    });
   }
   return authQueued;
 }
@@ -349,9 +367,4 @@ function edgesFor(edges: Record<string, DiscoveredLink[]>, url: string): Discove
     if (crawlPathKey(candidate) === key) return links;
   }
   return [];
-}
-
-function queueHas(queue: CrawlQueueItem[], url: string): boolean {
-  const key = crawlPathKey(url);
-  return queue.some(item => item.url === url || (key !== undefined && crawlPathKey(item.url) === key));
 }

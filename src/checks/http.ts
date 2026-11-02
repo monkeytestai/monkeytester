@@ -5,7 +5,7 @@
  */
 
 import type { NetworkFailureEvidence } from '../types.js';
-import { isSameCrawlSite } from '../explorer/queue.js';
+import { isSameCrawlSite, sameCrawlPage } from '../explorer/queue.js';
 
 /** About 20 link probes per run, shared across pages. */
 export const BROKEN_LINK_CAP = 20;
@@ -92,4 +92,33 @@ export function isBrokenStatus(status: number | undefined): boolean {
   if (status === undefined) return true;
   if (status < 400) return false;
   return !SKIP_STATUS.has(status);
+}
+
+export interface HttpFailureSource {
+  url: string;
+  status?: number;
+  resourceType?: string;
+}
+
+/**
+ * A 404 on a document discovered only through a sitemap is minor.
+ * A link found in the page DOM keeps the check's own severity (`undefined`
+ * here, so the flow severity still applies). A 5xx is not capped.
+ */
+export function sitemapDocumentSeverity(
+  requests: readonly HttpFailureSource[],
+  probedLinks: readonly { url: string }[],
+  sitemapOnlyUrls: readonly string[],
+): 'minor' | undefined {
+  if (probedLinks.length > 0) return undefined;
+  if (sitemapOnlyUrls.length === 0) return undefined;
+  if (requests.some(item => (item.status || 0) >= 500)) return undefined;
+  const documents = requests.filter(item =>
+    item.status === 404 && (item.resourceType || 'document') === 'document',
+  );
+  if (documents.length === 0) return undefined;
+  const onlySitemap = documents.every(item =>
+    sitemapOnlyUrls.some(candidate => sameCrawlPage(candidate, item.url)),
+  );
+  return onlySitemap ? 'minor' : undefined;
 }

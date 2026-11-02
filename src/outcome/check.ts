@@ -7,7 +7,9 @@
  */
 
 import type { Page } from 'playwright';
-import type { OutcomeCheck, OutcomeCheckKind, TestFlow, TestStep } from '../types.js';
+import { isIgnoredConsoleMessage } from '../checks/noise.js';
+import { isAnalyticsBeaconUrl } from '../runner/sensitive.js';
+import type { ConsoleErrorEvidence, NetworkFailureEvidence, OutcomeCheck, OutcomeCheckKind, TestFlow, TestStep } from '../types.js';
 
 const AUTH_ERROR = /incorrect|not match|wrong password|invalid credentials|invalid (?:email|login|username|user|password)|email or password|couldn'?t (?:sign|log) in|could not (?:sign|log) in|try again|no account|does not exist|doesn't exist|unsuccessful/i;
 
@@ -158,10 +160,23 @@ export async function snapPage(page: Page): Promise<PageSnap> {
   return { url, signal };
 }
 
+export interface OutcomeCheckContext {
+  startUrl: string;
+  before?: PageSnap;
+  /**
+   * Page state immediately before the last action. When omitted, `before`
+   * is used. A URL that stayed the same is a bug only when this snapshot
+   * shows no DOM or state change, or other evidence corroborates it.
+   */
+  beforeAction?: PageSnap;
+  consoleErrors?: ConsoleErrorEvidence[];
+  networkFailures?: NetworkFailureEvidence[];
+}
+
 export async function evaluateOutcomeCheck(
   page: Page,
   check: OutcomeCheck | undefined,
-  ctx: { startUrl: string; before?: PageSnap },
+  ctx: OutcomeCheckContext,
 ): Promise<CheckVerdict> {
   if (!check) {
     return { state: 'missing', observation: 'This flow has no outcome check, so it cannot pass.' };
@@ -181,7 +196,7 @@ export async function evaluateOutcomeCheck(
 async function evaluateOne(
   page: Page,
   check: OutcomeCheck,
-  ctx: { startUrl: string; before?: PageSnap },
+  ctx: OutcomeCheckContext,
 ): Promise<CheckVerdict> {
   const now = await snapPage(page);
   switch (check.kind) {
@@ -193,18 +208,39 @@ async function evaluateOne(
       return includesText(now.signal, check.value || '')
         ? { state: 'unverifiable', observation: `Text "${check.value}" is still visible. Text checks are weak, so this is inconclusive rather than a failed flow.` }
         : { state: 'verified', observation: `Text "${check.value}" is not visible.` };
-    case 'url_changed':
-      return sameUrl(now.url, ctx.startUrl)
-        ? { state: 'failed', observation: `The URL stayed ${now.url}.` }
-        : { state: 'verified', observation: `The URL changed to ${now.url}.` };
+    case 'url_changed': {
+      if (!sameUrl(now.url, ctx.startUrl)) {
+        return { state: 'verified', observation: `The URL changed to ${now.url}.` };
+      }
+      const stay = await judgeUnchangedUrl(page, now, ctx);
+      return stay.kind === 'failed'
+        ? { state: 'failed', observation: stay.observation }
+        : { state: 'unverifiable', observation: stay.observation };
+    }
     case 'url_unchanged':
       return sameUrl(now.url, ctx.startUrl)
         ? { state: 'verified', observation: 'The URL stayed on the starting page.' }
         : { state: 'failed', observation: `The URL changed from ${ctx.startUrl} to ${now.url}.` };
-    case 'url_includes':
-      return now.url.toLowerCase().includes((check.value || '').toLowerCase())
-        ? { state: 'verified', observation: `The URL includes "${check.value}".` }
-        : { state: 'failed', observation: `The URL ${now.url} does not include "${check.value}".` };
+    case 'url_includes': {
+      const value = check.value || '';
+      if (now.url.toLowerCase().includes(value.toLowerCase())) {
+        return { state: 'verified', observation: `The URL includes "${value}".` };
+      }
+      if (sameUrl(now.url, ctx.startUrl)) {
+        const stay = await judgeUnchangedUrl(page, now, ctx);
+        if (stay.kind === 'failed') {
+          return {
+            state: 'failed',
+            observation: `${stay.because} The URL stayed ${now.url} and does not include "${value}".`,
+          };
+        }
+        return {
+          state: 'unverifiable',
+          observation: `The URL stayed ${now.url}. That alone does not show a failure to reach "${value}".`,
+        };
+      }
+      return { state: 'failed', observation: `The URL ${now.url} does not include "${value}".` };
+    }
     case 'element_visible':
       return (await countNamed(page, check.value || '')) > 0
         ? { state: 'verified', observation: `"${check.value}" is visible.` }
@@ -236,6 +272,111 @@ async function evaluateOne(
     default:
       return { state: 'unverifiable', observation: 'The outcome check kind is not one this engine evaluates.' };
   }
+}
+
+export interface UnchangedUrlInput {
+  startUrl: string;
+  url: string;
+  /** Omitted when the runner had no snapshot from before the action. */
+  beforeSignal?: string;
+  afterSignal: string;
+  visibleError: boolean;
+  consoleErrors?: ConsoleErrorEvidence[];
+  networkFailures?: NetworkFailureEvidence[];
+}
+
+export type UnchangedUrlJudgement =
+  | { kind: 'changed' }
+  | { kind: 'inconclusive'; observation: string }
+  | { kind: 'failed'; observation: string; because: string };
+
+/**
+ * A flow whose only evidence is "the URL stayed the same" is inconclusive.
+ * It is a failure when an error is visible, a first-party console error or
+ * a failed request was recorded, or the DOM and field state did not change.
+ */
+export function judgeUnchangedUrlEvidence(input: UnchangedUrlInput): UnchangedUrlJudgement {
+  if (!sameUrl(input.url, input.startUrl)) return { kind: 'changed' };
+  const stayed = `The URL stayed ${input.url}.`;
+  if (input.visibleError) {
+    const because = 'The page shows an error.';
+    return { kind: 'failed', observation: `${because} ${stayed}`, because };
+  }
+  if (hasCorroboratingConsole(input.consoleErrors, input.url)) {
+    const because = 'A console error was reported.';
+    return { kind: 'failed', observation: `${because} ${stayed}`, because };
+  }
+  if (hasCorroboratingNetwork(input.networkFailures)) {
+    const because = 'A request failed.';
+    return { kind: 'failed', observation: `${because} ${stayed}`, because };
+  }
+  if (input.beforeSignal !== undefined && normalise(input.beforeSignal) === normalise(input.afterSignal)) {
+    const because = 'The page did not change after the action.';
+    return { kind: 'failed', observation: `${because} ${stayed}`, because };
+  }
+  const observation = input.beforeSignal === undefined
+    ? `${stayed} There was no error message, console error, or failed request, so this is inconclusive rather than a confirmed bug.`
+    : `${stayed} The page changed after the action, with no error message, console error, or failed request, so this is inconclusive rather than a confirmed bug.`;
+  return { kind: 'inconclusive', observation };
+}
+
+async function judgeUnchangedUrl(
+  page: Page,
+  now: PageSnap,
+  ctx: OutcomeCheckContext,
+): Promise<Exclude<UnchangedUrlJudgement, { kind: 'changed' }>> {
+  const basis = ctx.beforeAction ?? ctx.before;
+  const visibleError = await seesVisibleError(page);
+  const judged = judgeUnchangedUrlEvidence({
+    startUrl: ctx.startUrl,
+    url: now.url,
+    ...(basis ? { beforeSignal: basis.signal } : {}),
+    afterSignal: now.signal,
+    visibleError,
+    consoleErrors: ctx.consoleErrors,
+    networkFailures: ctx.networkFailures,
+  });
+  if (judged.kind === 'changed') {
+    return {
+      kind: 'inconclusive',
+      observation: `The URL stayed ${now.url}. There was no error message, console error, or failed request, so this is inconclusive rather than a confirmed bug.`,
+    };
+  }
+  return judged;
+}
+
+function hasCorroboratingConsole(errors: ConsoleErrorEvidence[] | undefined, pageUrl: string): boolean {
+  return (errors || []).some(item => {
+    if (item.level && item.level !== 'error') return false;
+    return !isIgnoredConsoleMessage(item.message, item.url, pageUrl);
+  });
+}
+
+function hasCorroboratingNetwork(failures: NetworkFailureEvidence[] | undefined): boolean {
+  return (failures || []).some(item => {
+    if (!item.url || isAnalyticsBeaconUrl(item.url)) return false;
+    if (/favicon\.ico|apple-touch-icon/i.test(item.url)) return false;
+    if (item.failureText && /ERR_ABORTED|ERR_BLOCKED_BY_CLIENT|ERR_FAILED/i.test(item.failureText)) return false;
+    const type = (item.resourceType || '').toLowerCase();
+    const actionable = !type || type === 'document' || type === 'xhr' || type === 'fetch' || type === 'script' || type === 'stylesheet';
+    if (!actionable) return false;
+    if ((item.status || 0) >= 400 && item.status !== 401 && item.status !== 403 && item.status !== 429) return true;
+    return Boolean(item.failureText);
+  });
+}
+
+async function seesVisibleError(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const errorish = /\b(error|invalid|failed|unable to|could not|couldn't|not found|something went wrong|try again|went wrong)\b/i;
+    const shown = (el: Element) => {
+      const style = getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      return ((el.textContent || '').replace(/\s+/g, ' ').trim()).length > 0;
+    };
+    const alerts = Array.from(document.querySelectorAll('[role="alert"]')).filter(shown);
+    if (alerts.some(el => errorish.test(el.textContent || ''))) return true;
+    return Array.from(document.querySelectorAll('[aria-invalid="true"]')).some(shown);
+  }).catch(() => false);
 }
 
 function observable(before: PageSnap | undefined, now: PageSnap): CheckVerdict {

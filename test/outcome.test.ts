@@ -74,6 +74,26 @@ describe('our Playwright errors are inconclusive', () => {
     expect(run.outcome_detail?.toLowerCase()).not.toMatch(/major bug/);
   });
 
+  it('does not file a critical or major bug when the stored step has no locator', () => {
+    const base = runWith(failedStep(
+      'locator_mismatch',
+      'Recorded locator no longer matches for click (no locator).',
+    ));
+    base.flows[0].severityIfFails = 'critical';
+    base.flows[0].assertion = 'unverifiable';
+    base.flows[0].status = 'failed';
+    const run = triage(base);
+    expect(run.bugs).toEqual([]);
+    expect(run.bugs.map(bug => bug.severity)).toEqual([]);
+    expect(run.stats.bugsCritical).toBe(0);
+    expect(run.stats.bugsMajor).toBe(0);
+    expect(run.stats.bugsMinor).toBe(0);
+    expect(run.flows[0].status).toBe('inconclusive');
+    expect(run.flows[0].outcome_reason).toBe('automation_error');
+    expect(run.outcome).toBe('inconclusive');
+    expect(run.outcome).not.toBe('bugs_found');
+  });
+
   it('stays inconclusive when replay already marked a stale locator unverifiable', () => {
     const base = runWith(failedStep(
       'locator_mismatch',
