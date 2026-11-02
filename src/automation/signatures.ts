@@ -173,6 +173,12 @@ export function isRealSiteFailureText(text: string | undefined): boolean {
   if (raw.includes('pageerror') || raw.includes('uncaught page error')) return true;
   if (raw.includes('element-disabled') || raw.includes('control is disabled')) return true;
   if (raw.includes('http-404') || /returned http 404/.test(raw) || /document .{0,80}http 404/.test(raw)) return true;
+  // A navigation that died with net::ERR_* is a site failure, except the
+  // opening "could not load the starting page" case (still site_unreachable)
+  // and a request our own guard blocked.
+  if (/net::err_blocked_by_client/.test(raw) || /request was blocked/.test(raw) || /\brequest_blocked\b/.test(raw)) return false;
+  if (/net::err_[a-z0-9_]+/.test(raw) && !/could not load the starting page/.test(raw)) return true;
+  if (/browser error page/.test(raw) && !/request was blocked/.test(raw)) return true;
   return false;
 }
 

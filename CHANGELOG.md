@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2-beta.2] — 2026-11-02
+
+### Fixed
+
+- A browser error page is never a pass. After an action or navigation, if the page URL is `chrome-error://chromewebdata/`, `about:neterror`, `about:certerror`, or `edge-error://`, every outcome check on that page fails to verify. Live runs and replay (`rerun`) use the same rule. A request aborted by our own guard (a sensitive or contact submit, or `net::ERR_BLOCKED_BY_CLIENT`) leaves the flow inconclusive. Any other `net::ERR_*` is a failure, and the evidence names that error. The opening "could not load the starting page" case stays `site_unreachable`.
+- A bug's `page_url` is never a `chrome-error://` or other browser-internal URL. It is the last real http(s) page before the action, for example `/help`.
+- Replay keeps the recorded role and accessible name when it finds the element by test id. `fingerprintV2` ignores a test id on its own, so the same bug (the empty contact form on `/help`) now hashes the same way on a live run and on replay. Bugs that already had an http(s) location and a role or name keep their `fingerprintV2`. A bug whose location was a browser error URL now uses the last http(s) page, so that hash can change.
+- Replay repro steps do not list the same `Open <url>` step twice in a row. The stored opening navigation and the report's opening step are one step.
+
+### Added
+
+- `OutcomeReason` `request_blocked`. Additive. A blocked network request that is not a contact submit. Contact submits stay `contact_submit_blocked`. Existing reason codes are unchanged.
+
 ## [0.7.2-beta.1] — 2026-11-02
 
 ### Fixed

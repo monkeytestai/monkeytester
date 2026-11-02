@@ -1,6 +1,6 @@
 {
   "name": "@monkeytestai/monkeytester",
-  "version": "0.7.2-beta.1",
+  "version": "0.7.2-beta.2",
   "description": "Open-source agent that explores a URL, finds bugs your scripts did not cover, and proves a fix with rerun and diff. Playwright and your LLM.",
   "license": "AGPL-3.0-only",
   "author": "MonkeyTest",

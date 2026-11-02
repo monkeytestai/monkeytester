@@ -18,6 +18,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { isBrowserInternalUrl } from '../runner/browserError.js';
 import type { FingerprintParts, TraceLocator } from '../types.js';
 
 export const FINGERPRINT_VERSION = 2 as const;
@@ -177,6 +178,7 @@ export function failureLocation(input: {
   const pick = (value: string | undefined): string | undefined => {
     if (!value) return undefined;
     if (value.startsWith('about:')) return undefined;
+    if (isBrowserInternalUrl(value)) return undefined;
     return value;
   };
 

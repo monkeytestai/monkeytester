@@ -780,6 +780,31 @@ export async function captureLocator(page: Page, action: ResolvedAction): Promis
   }
 }
 
+/**
+ * Replay prefers a test id to find the element, then reads it again. If that
+ * read happens after the page has gone to a browser error, only the test id
+ * remains. The fingerprint uses role and name, so keep those from the
+ * recording (or from the read taken before the action).
+ */
+export function mergeLocatorIdentity(
+  captured: TraceLocator | undefined,
+  recorded: TraceLocator | undefined,
+): TraceLocator | undefined {
+  if (!captured) return recorded;
+  if (!recorded) return captured;
+  return {
+    ...recorded,
+    ...captured,
+    role: captured.role || recorded.role,
+    name: captured.name || recorded.name,
+    label: captured.label || recorded.label,
+    text: captured.text || recorded.text,
+    placeholder: captured.placeholder || recorded.placeholder,
+    css: captured.css || recorded.css,
+    testId: captured.testId || recorded.testId,
+  };
+}
+
 export async function skeletonForLLM(page: Page): Promise<PageSkeletonForLLM> {
 
   const url = page.url();

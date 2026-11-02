@@ -1,6 +1,13 @@
 # Changelog
 
-The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.7.1. `next` will publish 0.7.2-beta.1.
+The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.7.1. `next` will publish 0.7.2-beta.2.
+
+## 0.7.2-beta.2
+
+- A browser error page (`chrome-error://`, `about:neterror`, and the same kind of internal page) is never a pass. A request our guard aborted is inconclusive (`request_blocked`, or `contact_submit_blocked` for a contact form). Any other `net::ERR_*` is a failure and the evidence names it.
+- `page_url` is the last real http(s) page, never `chrome-error://`.
+- Live and replay share `fingerprintV2` for the same bug. A test id alone is not the fingerprint. Hashes for bugs that already had a role or name on an http(s) page stay the same.
+- Replay repro steps do not repeat the same `Open <url>` line.
 
 ## 0.7.2-beta.1
 

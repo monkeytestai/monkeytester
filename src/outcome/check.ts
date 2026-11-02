@@ -8,6 +8,11 @@
 
 import type { Page } from 'playwright';
 import { isIgnoredConsoleMessage } from '../checks/noise.js';
+import {
+  browserErrorVerdict,
+  isBrowserInternalUrl,
+  netErrorCode,
+} from '../runner/browserError.js';
 import { isAnalyticsBeaconUrl } from '../runner/sensitive.js';
 import type { ConsoleErrorEvidence, NetworkFailureEvidence, OutcomeCheck, OutcomeCheckKind, TestFlow, TestStep } from '../types.js';
 
@@ -171,6 +176,13 @@ export interface OutcomeCheckContext {
   beforeAction?: PageSnap;
   consoleErrors?: ConsoleErrorEvidence[];
   networkFailures?: NetworkFailureEvidence[];
+  /**
+   * The runner aborted the request (sensitive submit, contact submit, or
+   * `net::ERR_BLOCKED_BY_CLIENT`). An error page is then inconclusive.
+   */
+  guardCaused?: boolean;
+  /** Action or navigation error, used to name a `net::ERR_*` code. */
+  navigationError?: string;
 }
 
 export async function evaluateOutcomeCheck(
@@ -184,6 +196,8 @@ export async function evaluateOutcomeCheck(
   if (!isConcreteOutcomeCheck(check)) {
     return { state: 'unverifiable', observation: 'The outcome check is missing a value, so it was not treated as a pass.' };
   }
+  const blocked = await browserErrorOnPage(page, ctx);
+  if (blocked) return blocked;
   const own = await evaluateOne(page, check, ctx);
   if (own.state !== 'verified') return own;
   for (const extra of check.also ?? []) {
@@ -191,6 +205,15 @@ export async function evaluateOutcomeCheck(
     if (next.state !== 'verified') return next;
   }
   return own;
+}
+
+async function browserErrorOnPage(page: Page, ctx: OutcomeCheckContext): Promise<CheckVerdict | undefined> {
+  let url = '';
+  try { url = page.url(); } catch { /* page closing */ }
+  if (!isBrowserInternalUrl(url)) return undefined;
+  const text = await page.locator('body').innerText().catch(() => '');
+  const net = netErrorCode(text) || netErrorCode(ctx.navigationError);
+  return browserErrorVerdict(url, ctx, net);
 }
 
 async function evaluateOne(
