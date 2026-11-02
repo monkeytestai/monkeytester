@@ -1,6 +1,10 @@
 # Changelog
 
-The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.6.1. Newer entries below are the pre-release on `main`, published under the npm `next` tag.
+The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.7.1.
+
+## 0.7.1
+
+Stable release of 0.7.1-beta.1, with no code changes.
 
 ## 0.7.1-beta.1
 
