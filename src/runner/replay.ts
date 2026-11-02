@@ -39,6 +39,7 @@ import type {
 import {
   buildLocator,
   captureLocator,
+  clickAsksForButton,
   directActionFromStep,
   executeAction,
   mergeLocatorIdentity,
@@ -623,7 +624,10 @@ async function playStep(
     const action = actionFromRecorded(recorded);
     const blocked = await blockRecordedSubmit(page, action, opts);
     if (blocked) return blocked;
-    const outcome = await executeAction(page, action, timeoutMs, { strictOracles: opts.strictOracles });
+    const outcome = await executeAction(page, action, timeoutMs, {
+      strictOracles: opts.strictOracles,
+      intent: recorded.action,
+    });
     return { action, locator: recorded.locator, outcome, resolution: 'recorded' };
   }
 
@@ -633,7 +637,11 @@ async function playStep(
     const locator = mergeLocatorIdentity(identified, recorded.locator);
     const blocked = await blockRecordedSubmit(page, matched, opts);
     if (blocked) return { ...blocked, locator };
-    const outcome = await executeAction(page, matched, timeoutMs, { strictOracles: opts.strictOracles });
+    const asked = clickAsksForButton(recorded.action, matched) ? { ...matched, buttonIntent: true } : matched;
+    const outcome = await executeAction(page, asked, timeoutMs, {
+      strictOracles: opts.strictOracles,
+      intent: recorded.action,
+    });
     return { action: matched, locator, outcome, resolution: 'recorded' };
   }
 
@@ -644,7 +652,11 @@ async function playStep(
       const locator = mergeLocatorIdentity(identified, recorded.locator);
       const blocked = await blockRecordedSubmit(page, recovered, opts);
       if (blocked) return { ...blocked, locator };
-      const outcome = await executeAction(page, recovered, timeoutMs, { strictOracles: opts.strictOracles });
+      const asked = clickAsksForButton(recorded.action, recovered) ? { ...recovered, buttonIntent: true } : recovered;
+      const outcome = await executeAction(page, asked, timeoutMs, {
+        strictOracles: opts.strictOracles,
+        intent: recorded.action,
+      });
       return {
         action: recovered,
         locator,
@@ -679,7 +691,11 @@ async function playStep(
     const locator = mergeLocatorIdentity(identified, recorded.locator);
     const blocked = await blockRecordedSubmit(page, healed, opts);
     if (blocked) return { ...blocked, locator };
-    const outcome = await executeAction(page, healed, timeoutMs, { strictOracles: opts.strictOracles });
+    const asked = clickAsksForButton(recorded.action, healed) ? { ...healed, buttonIntent: true } : healed;
+    const outcome = await executeAction(page, asked, timeoutMs, {
+      strictOracles: opts.strictOracles,
+      intent: recorded.action,
+    });
     return {
       action: healed,
       locator,

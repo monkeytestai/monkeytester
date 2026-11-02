@@ -46,6 +46,7 @@ import { type EventBus, noopBus } from '../events.js';
 import { logModelDetail } from '../llm/coerce.js';
 import {
   captureLocator,
+  clickAsksForButton,
   directActionFromStep,
   executeAction,
   groundFillAction,
@@ -837,6 +838,7 @@ async function runFlow(
       continue;
     }
 
+    if (clickAsksForButton(step.action, resolved)) resolved = { ...resolved, buttonIntent: true };
     const locatedNow = await locateActionTarget(page, resolved);
     const settled = 'reason' in locatedNow ? undefined : locatedNow;
     if (settled) resolved = settled.action;
@@ -846,6 +848,7 @@ async function runFlow(
     const locator = await captureLocator(page, resolved);
     const executed = settleActionBrowserError(await executeAction(page, resolved, opts.stepTimeoutMs, {
       strictOracles: opts.strictOracles,
+      intent: step.action,
       ...(settled ? { located: settled } : {}),
     }), safePageUrl(page), evidence.networkByStep.get(stepIndex));
     if (executed.resolved) resolved = executed.resolved;

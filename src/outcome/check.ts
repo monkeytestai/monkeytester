@@ -235,6 +235,11 @@ async function evaluateOne(
       if (!sameUrl(now.url, ctx.startUrl)) {
         return { state: 'verified', observation: `The URL changed to ${now.url}.` };
       }
+      // The planner's url_changed check uses the same rule as every other
+      // unchanged URL. Staying put is inconclusive unless an error, a failed
+      // request, or an unchanged page corroborates it. A click that only
+      // focused a text field never reaches this check: that miss is Enter
+      // or locator_mismatch, decided before the outcome.
       const stay = await judgeUnchangedUrl(page, now, ctx);
       return stay.kind === 'failed'
         ? { state: 'failed', observation: stay.observation }

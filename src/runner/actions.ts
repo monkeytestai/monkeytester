@@ -93,6 +93,12 @@ export type ResolvedAction = z.infer<typeof ActionSchema> & {
    * an invalid email is not rewritten into `qa@example.com`.
    */
   preserveValue?: boolean;
+  /**
+   * The step asked for a button or a Search/Submit/Go control. Set when a
+   * click resolves, so a later retarget onto a text field still knows.
+   * Internal. Not part of the public step result.
+   */
+  buttonIntent?: boolean;
 };
 
 export interface PageSkeletonForLLM {
@@ -156,6 +162,27 @@ export function directActionFromStep(
   if (link) return clickAction('link', link.text);
   if (button) return clickAction('button', button);
   return null;
+}
+
+const SUBMIT_NAME = /^(search|submit|go)$/i;
+
+/**
+ * A click whose job is to press a button or submit. Role `button`, or a
+ * control named Search, Submit, or Go. Used when that click lands on a
+ * text field instead of a button.
+ */
+export function clickAsksForButton(text: string | undefined, action?: ResolvedAction): boolean {
+  if (action?.buttonIntent) return true;
+  const target = action?.target || '';
+  if (/^button\s*:/i.test(target)) return true;
+  const named = target.match(/^[a-z]+\s*:\s*(.+)$/i)?.[1]?.trim() || '';
+  if (SUBMIT_NAME.test(named)) return true;
+  const line = (text || '').replace(/\s+/g, ' ').trim();
+  if (!line) return false;
+  if (/\b(click|press|tap)\b/i.test(line) && /\bbutton\b/i.test(line)) return true;
+  if (/\b(click|press|tap)\b/i.test(line) && /["“'](search|submit|go)["”']/i.test(line)) return true;
+  if (/\b(click|press|tap)\s+(?:the\s+)?(search|submit|go)(?:\s+button)?\b/i.test(line)) return true;
+  return false;
 }
 
 function clickAction(role: 'button' | 'link', label: string): ResolvedAction {
@@ -485,7 +512,7 @@ export async function executeAction(
   page: Page,
   action: ResolvedAction,
   timeoutMs: number,
-  options?: { strictOracles?: boolean; located?: LocateHit },
+  options?: { strictOracles?: boolean; located?: LocateHit; intent?: string },
 ): Promise<ActionOutcome> {
 
   try {
@@ -501,6 +528,32 @@ export async function executeAction(
         const disabled = await disabledOutcome(locator, acted, options?.strictOracles);
         if (disabled) return disabled;
         const label = await controlLabel(locator);
+        const field = await readTextField(locator);
+        if (field?.textLike && (acted.buttonIntent || clickAsksForButton(options?.intent, action) || clickAsksForButton(options?.intent, acted))) {
+          if (!field.inForm) {
+            return {
+              status: 'failed',
+              observation: `The step asked for a button, but the only match is a text field that is not in a form (${describeTarget(acted)}). Recorded locator no longer matches.`,
+              error: 'locator_mismatch',
+            };
+          }
+          const blocked = await blockSensitiveClick(
+            page,
+            `${label.text}\n${acted.target || ''}\n${options?.intent || ''}`,
+            { ...label, locator },
+          );
+          if (blocked) return guardSkip(blocked, 'sensitive-submit');
+          const prior = submissionPolicy(page)?.blocked;
+          await submitTextField(page, locator, field, timeoutMs);
+          await settleSPA(page).catch(() => {});
+          const guarded = guardAfterNavigation(page, prior);
+          if (guarded) return guarded;
+          return done(
+            'passed',
+            `The button was absent and the input was submitted via Enter. Pressed Enter on ${describeTarget(acted)}.`,
+            acted,
+          );
+        }
         const blocked = await blockSensitiveClick(page, `${label.text}\n${acted.target || ''}\n${acted.value || ''}`, { ...label, locator });
         if (blocked) return guardSkip(blocked, 'sensitive-submit');
         const prior = submissionPolicy(page)?.blocked;
@@ -1026,6 +1079,51 @@ function guardAfterNavigation(page: Page, prior?: string): ActionOutcome | undef
 
 function safePageUrl(page: Page): string {
   try { return page.url(); } catch { return ''; }
+}
+
+interface TextFieldHit {
+  textLike: boolean;
+  inForm: boolean;
+  multiline: boolean;
+}
+
+/**
+ * A click aimed at a button can land on the text field that would have
+ * submitted. Single-line fields submit on Enter. A textarea or select does
+ * not, so those use `requestSubmit`.
+ */
+async function readTextField(locator: Locator): Promise<TextFieldHit | undefined> {
+  return locator.evaluate(el => {
+    const tag = el.tagName.toLowerCase();
+    const type = ((el as HTMLInputElement).type || '').toLowerCase();
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    const textType = type === '' || type === 'text' || type === 'search' || type === 'email'
+      || type === 'tel' || type === 'url' || type === 'number' || type === 'password';
+    const textLike = tag === 'textarea'
+      || tag === 'select'
+      || role === 'combobox'
+      || role === 'searchbox'
+      || role === 'textbox'
+      || (tag === 'input' && textType);
+    const multiline = tag === 'textarea' || tag === 'select' || role === 'combobox';
+    return {
+      textLike,
+      inForm: Boolean((el as HTMLInputElement).form),
+      multiline,
+    };
+  }).catch(() => undefined);
+}
+
+async function submitTextField(page: Page, locator: Locator, field: TextFieldHit, timeoutMs: number): Promise<void> {
+  if (!field.multiline) {
+    await locator.press('Enter', { timeout: timeoutMs });
+    return;
+  }
+  await locator.evaluate(el => {
+    const form = (el as HTMLTextAreaElement).form;
+    if (form) form.requestSubmit();
+  });
+  await page.waitForLoadState('domcontentloaded', { timeout: Math.min(timeoutMs, 2_000) }).catch(() => {});
 }
 
 async function controlLabel(locator: Locator): Promise<{ text: string; tag?: string; inForm?: boolean }> {

@@ -56,6 +56,9 @@ export async function locateActionTarget(page: Page, action: ResolvedAction): Pr
   if (action.tool === 'goto' || action.tool === 'noop' || action.tool === 'assert_text') {
     return { reason: 'This action has no element.' };
   }
+  if (!action.buttonIntent && clickTargetAsksForButton(action)) {
+    action = { ...action, buttonIntent: true };
+  }
 
   const { strategy, text } = queryText(action);
   const described = describe(action);
@@ -208,6 +211,14 @@ export function impliedType(text: string): string | undefined {
 }
 
 const CLICK_ROLES = ['button', 'link', 'searchbox'] as const;
+
+/** `button:Search` or a click aimed at Search, Submit, or Go. Kept across retarget. */
+function clickTargetAsksForButton(action: ResolvedAction): boolean {
+  const target = action.target || '';
+  if (/^button\s*:/i.test(target)) return true;
+  const named = target.match(/^[a-z]+\s*:\s*(.+)$/i)?.[1]?.trim() || '';
+  return action.tool === 'click' && /^(search|submit|go)$/i.test(named);
+}
 
 async function matchRole(
   page: Page,
