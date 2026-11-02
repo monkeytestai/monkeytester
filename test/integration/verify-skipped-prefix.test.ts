@@ -1,9 +1,13 @@
 /**
- * Live e2e on gpt-4o-mini (run 40075464666) filed http-5xx on the contact
- * form after a placeholder fill timed out and was skipped. Replay treated
- * that miss as locator_mismatch, so verify reported the 500 as blocked on
- * both the buggy and fixed fixture (seededFixed 2/3). A skipped prefix must
- * stay skipped. A prefix that originally passed still blocks the flow.
+ * Live e2e on gpt-4o-mini (run 40075464666) filed http-5xx after a
+ * placeholder fill timed out and was skipped. Replay treated that miss as
+ * locator_mismatch, so verify reported the 500 as blocked on both the buggy
+ * and fixed fixture (seededFixed 2/3). A skipped prefix must stay skipped.
+ * A prefix that originally passed still blocks the flow.
+ *
+ * The later failure is a non-contact note form. Contact, enquiry, and
+ * feedback submits are refused before the POST, so they cannot be the
+ * vehicle for this check.
  */
 
 import { mkdtempSync } from 'node:fs';
@@ -30,7 +34,7 @@ describe('verify after a skipped prefix step', () => {
   it('reaches the HTTP 500 and reports it fixed once the form succeeds', async () => {
     const posted = await fetch(`${demo.url}/__monkeytest/mode`, { method: 'POST', body: 'buggy' });
     expect(posted.status).toBe(204);
-    const run = contactRun(demo.url, 'skipped');
+    const run = noteRun(demo.url, 'skipped');
 
     const replay = await replayTraces([traceOf(run)], {
       screenshotsDir: shots,
@@ -74,7 +78,7 @@ describe('verify after a skipped prefix step', () => {
   it('still blocks when a prefix step that originally passed no longer matches', async () => {
     const posted = await fetch(`${demo.url}/__monkeytest/mode`, { method: 'POST', body: 'buggy' });
     expect(posted.status).toBe(204);
-    const run = contactRun(demo.url, 'passed');
+    const run = noteRun(demo.url, 'passed');
 
     const replay = await replayTraces([traceOf(run)], {
       screenshotsDir: shots,
@@ -106,14 +110,14 @@ function traceOf(run: RunResult) {
   return {
     version: 1 as const,
     flowId: bug.trace!.flowId,
-    name: 'Submit a contact inquiry',
+    name: 'Save a note',
     startUrl: bug.trace!.startUrl,
     steps: bug.trace!.steps,
   };
 }
 
-function contactRun(origin: string, fillStatus: 'skipped' | 'passed'): RunResult {
-  const contact = `${origin}/contact`;
+function noteRun(origin: string, fillStatus: 'skipped' | 'passed'): RunResult {
+  const pageUrl = `${origin}/note`;
   const fill: TraceStep = {
     index: 1,
     action: "input 'Email'",
@@ -132,67 +136,67 @@ function contactRun(origin: string, fillStatus: 'skipped' | 'passed'): RunResult
   const steps: TraceStep[] = [
     {
       index: 0,
-      action: `Open ${contact}`,
+      action: `Open ${pageUrl}`,
       tool: 'goto',
       status: 'passed',
-      observation: `Navigated to ${contact}.`,
-      locator: { strategy: 'css', target: contact },
+      observation: `Navigated to ${pageUrl}.`,
+      locator: { strategy: 'css', target: pageUrl },
     },
     fill,
     {
       index: 2,
-      action: "button 'Send message'",
+      action: "button 'Save note'",
       tool: 'click',
       status: 'failed',
       error: 'http-500',
-      observation: 'Clicked role:button:Send message. POST /api/contact returned HTTP 500.',
+      observation: 'Clicked role:button:Save note. POST /api/note returned HTTP 500.',
       locator: {
         strategy: 'role',
-        target: 'button:Send message',
+        target: 'button:Save note',
         role: 'button',
-        name: 'Send message',
-        testId: 'send-message',
+        name: 'Save note',
+        testId: 'save-note',
       },
     },
   ];
   const bug: BugReport = {
-    id: 'bug-contact-form-submit-2',
+    id: 'bug-note-form-submit-2',
     fingerprint: '81360c3a479cf43a',
     fingerprintV2: '581f35a57d26a1df',
     fingerprintParts: {
       version: 2,
       category: 'network',
-      location: contact,
+      location: pageUrl,
       role: 'button',
-      name: 'send message',
+      name: 'save note',
       errorSignal: 'http-5xx',
     },
-    trace: { version: 1, flowId: 'contact-form-submit', startUrl: contact, steps },
-    title: "Submit a contact inquiry: button 'Send message'",
+    trace: { version: 1, flowId: 'note-form-submit', startUrl: pageUrl, steps },
+    title: "Save a note: button 'Save note'",
     severity: 'critical',
-    affectedFlow: 'Submit a contact inquiry',
-    reproSteps: [`Open ${contact}`, "input 'Email'", "button 'Send message'"],
-    observed: 'POST /api/contact returned HTTP 500.',
+    affectedFlow: 'Save a note',
+    reproSteps: [`Open ${pageUrl}`, "input 'Email'", "button 'Save note'"],
+    observed: 'POST /api/note returned HTTP 500.',
     expected: 'The form submits without a server error.',
     evidence: { screenshots: [], consoleErrors: [], networkFailures: [] },
-    triageNotes: 'The runner attempted a click on button:Send message. Underlying error: http-500.',
+    triageNotes: 'The runner attempted a click on button:Save note. Underlying error: http-500.',
   };
   return {
     startUrl: origin,
     startedAt: '2026-10-24T07:48:43.000Z',
     finishedAt: '2026-10-24T07:48:43.000Z',
     flows: [{
-      flowId: 'contact-form-submit',
-      name: 'Submit a contact inquiry',
-      description: 'Submit the contact form.',
+      flowId: 'note-form-submit',
+      name: 'Save a note',
+      description: 'Submit the note form.',
       kind: 'happy_path',
-      startUrl: contact,
+      startUrl: pageUrl,
       status: 'failed',
       failureReason: 'http-500',
       steps: [],
       durationMs: 1,
       bugIds: [bug.id],
-      trace: { version: 1, flowId: 'contact-form-submit', name: 'Submit a contact inquiry', startUrl: contact, steps },
+      trace: { version: 1, flowId: 'note-form-submit', name: 'Save a note', startUrl: pageUrl, steps },
     }],
     bugs: [bug],
     stats: {

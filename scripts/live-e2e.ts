@@ -19,7 +19,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSyn
 import { join } from 'node:path';
 import { startDemoServer } from '../test/fixtures/demo-app/server.ts';
 
-const SEEDED = new Set(['page-error', 'http-4xx', 'http-5xx', 'element-disabled']);
+const SEEDED = new Set(['page-error', 'http-4xx', 'element-disabled']);
 const MIN_SEEDED = 2;
 const DIR = 'e2e-artifacts';
 const LOG = join(DIR, 'live-e2e.log');
@@ -104,7 +104,8 @@ function latestRunId(): string {
 
 interface StoredBug {
   fingerprint?: string;
-  fingerprintParts?: { errorSignal?: string };
+  observed?: string;
+  fingerprintParts?: { errorSignal?: string; location?: string };
 }
 
 function readRun(id: string): { bugs: StoredBug[] } {
@@ -162,6 +163,10 @@ async function main(): Promise<void> {
     if (seeded.length < MIN_SEEDED) {
       const seen = bugs.map(bug => bug.fingerprintParts?.errorSignal || '(none)').join(', ');
       throw new Error(`expected at least ${MIN_SEEDED} seeded bugs, found ${seeded.length} (signals: ${seen || 'none'})`);
+    }
+    const contactBug = bugs.find(bug => /contact/i.test(`${bug.fingerprintParts?.location || ''} ${bug.observed || ''}`));
+    if (contactBug) {
+      throw new Error(`contact form submit was reported as a site bug (${contactBug.fingerprintParts?.errorSignal || 'unknown'})`);
     }
 
     const stripped = stripSecrets(process.env);

@@ -69,7 +69,7 @@ const { siteMap, plan, run } = await monkey.executeAndTriage(url, {
 | `strictOracles` | on via `new Monkey()` | Page error, document HTTP 404, action HTTP ≥500, or a disabled control fails the step |
 | `failOn5xx` | on via `new Monkey()` | A same-origin HTTP ≥500 on document, xhr, or fetch fails the step |
 | `inbox` | | `InboxProvider`. Allows the one sign-up, plus OTP and password-reset submits. |
-| `allowSensitive` | | Extra final submits: `newsletter`, `payment`, `deletion`. `signup`, `reset`, and `otp` are already allowed when `inbox` is set. |
+| `allowSensitive` | | Extra final submits: `newsletter`, `payment`, `deletion`. `signup`, `reset`, and `otp` are already allowed when `inbox` is set. Contact, enquiry, feedback, support, quote, and get-in-touch submits are never allowed. |
 
 `runPlan`, `replayTraces`, and a direct `triage(run)` leave `strictOracles` and `failOn5xx` off unless the caller passes them. `new Monkey()` turns both on and passes them through.
 

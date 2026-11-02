@@ -46,4 +46,6 @@ One sign-up per run. The name typed into the form is `MonkeyTest QA`. The passwo
 
 The same hard guard covers password reset, OTP / magic-link / send-code, newsletter subscribe, checkout/payment, and account deletion. Without an allow, those forms get validation only (an empty submit). An inbox allows OTP and password reset as well as the one sign-up. Newsletter, payment, and account deletion need `run.allowSensitive`. The runner also aborts the POST. OAuth buttons (`Use Facebook`, `Continue with`, `/auth/<provider>`) are not clicked, and a navigation to an OAuth host is inconclusive.
 
+Contact, enquiry, feedback, support, quote, and get-in-touch message forms are never submitted. Field labels, the button, the action URL, the page, and the planned step are all signals. A search box is not one of these forms. The POST is aborted, including an empty body. The flow is inconclusive with `contact_submit_blocked`. A click that only shows a client-side required-field message, and does not send a request, can still be checked. There is no allow flag for this.
+
 Sign-in and sign-up pages are public screens. They are not auth-gated, and `/` and `/signin` that render the same form are stored once.

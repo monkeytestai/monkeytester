@@ -21,7 +21,7 @@ import { triage } from '../../src/triager/index.js';
 import type { RunResult } from '../../src/types.js';
 import { startDemoServer, type DemoServer } from '../fixtures/demo-app/server.ts';
 
-const SEEDED = ['page-error', 'http-4xx', 'http-5xx', 'element-disabled'] as const;
+const SEEDED = ['page-error', 'http-4xx', 'element-disabled'] as const;
 
 describe('live fixture path', () => {
   let demo: DemoServer;
@@ -102,6 +102,12 @@ describe('live fixture path', () => {
     const run = triage(raw, { failOn5xx: oracles.failOn5xx });
     const signals = seededSignals(run);
     expect(signals).toEqual([...SEEDED].sort());
+    expect(demo.contactPosts()).toBe(0);
+    const contact = run.flows.find(flow => flow.steps.some(step => /send message/i.test(step.action)));
+    expect(contact?.status).toBe('inconclusive');
+    expect(contact?.outcome_reason).toBe('contact_submit_blocked');
+    expect(contact?.status).not.toBe('passed');
+    expect(run.bugs.some(bug => /\/api\/contact/i.test(`${bug.observed} ${bug.fingerprintParts?.location || ''}`))).toBe(false);
     expect(run.bugs.filter(bug => bug.severity !== 'minor').length).toBeGreaterThanOrEqual(2);
     expect(labels).not.toContain('runner.resolveAction');
 

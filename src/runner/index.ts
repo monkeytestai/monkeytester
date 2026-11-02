@@ -88,7 +88,7 @@ import {
   isPageVisitFlow,
   waitForSettledLocation,
 } from '../explorer/authRedirect.js';
-import { installDialogPolicy, installSubmissionGuards, setStepIntent, type SensitiveKind } from './sensitive.js';
+import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, setStepIntent, type SensitiveKind } from './sensitive.js';
 
 export interface RunnerOptions {
   /**
@@ -613,7 +613,7 @@ async function runFlow(
     const startedAt = new Date().toISOString();
     const urlBefore = page.url();
     const upcoming = flow.steps.slice(i).map(item => `${item.action}\n${item.expectation || ''}`).join('\n');
-    setStepIntent(page, upcoming);
+    setStepIntent(page, `${flow.name}\n${flow.description}\n${upcoming}`);
 
     if (step.check) {
       const outcome = await runAuthCheck(page, flow, step, evidence, stepIndex, {
@@ -1114,16 +1114,18 @@ function finaliseFlow(
   const reason = status === 'blocked'
     ? failureReason
     : failureReason;
+  const contactBlocked = steps.some(isContactSubmitBlock);
   return {
     flowId: flow.id,
     name: flow.name,
     description: flow.description,
     kind: flow.kind,
     startUrl: flow.startUrl,
-    status,
+    status: contactBlocked && status !== 'failed' ? 'inconclusive' as const : status,
     ...(reason ? { failureReason: reason } : {}),
-    ...(status === 'inconclusive' && decided === 'missing' ? { outcome_reason: 'no_assertion' as const } : {}),
-    ...(status === 'inconclusive' && decided === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
+    ...(contactBlocked ? { outcome_reason: 'contact_submit_blocked' as const } : {}),
+    ...(!contactBlocked && status === 'inconclusive' && decided === 'missing' ? { outcome_reason: 'no_assertion' as const } : {}),
+    ...(!contactBlocked && status === 'inconclusive' && decided === 'unverifiable' ? { outcome_reason: 'assertion_unverifiable' as const } : {}),
     assertion: decided,
     severityIfFails: flow.severityIfFails,
     steps: labelled,

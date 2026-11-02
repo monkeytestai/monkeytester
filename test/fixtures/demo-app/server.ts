@@ -3,8 +3,11 @@
  *
  *   Save order      click throws an uncaught exception     (page-error)
  *   Track shipment  link targets a missing document        (navigation / http-4xx)
- *   Send message    form POST returns HTTP 500             (network / http-5xx)
  *   Apply coupon    button is disabled                     (interaction / element-disabled)
+ *
+ *   Send message    contact form. The engine must not POST it. The handler
+ *                   still returns HTTP 500 in buggy mode so a test can prove
+ *                   the request never arrived (`contactPosts`).
  *
  * Labels and test ids stay the same in both modes so a recorded trace still
  * hits the control after the fix. POST /__monkeytest/mode with the body
@@ -28,6 +31,8 @@ export interface DemoServer {
   port: number;
   getMode: () => DemoMode;
   setMode: (mode: DemoMode) => void;
+  /** POSTs that reached `/api/contact`. The engine must leave this at 0. */
+  contactPosts: () => number;
   close: () => Promise<void>;
 }
 
@@ -35,9 +40,10 @@ const COPY = 'Orders, shipment tracking, and the contact form live on this shop.
 
 export async function startDemoServer(opts: { port?: number; host?: string; mode?: DemoMode } = {}): Promise<DemoServer> {
   let mode: DemoMode = opts.mode === 'fixed' ? 'fixed' : 'buggy';
+  let contactPosts = 0;
   const host = opts.host ?? '127.0.0.1';
   const server = createServer((req, res) => {
-    handle(req, res, () => mode, (next) => { mode = next; });
+    handle(req, res, () => mode, (next) => { mode = next; }, () => { contactPosts += 1; });
   });
 
   await new Promise<void>((resolveListen, reject) => {
@@ -55,6 +61,7 @@ export async function startDemoServer(opts: { port?: number; host?: string; mode
     port: address.port,
     getMode: () => mode,
     setMode: (next) => { mode = next === 'fixed' ? 'fixed' : 'buggy'; },
+    contactPosts: () => contactPosts,
     close: () => new Promise((resolveClose, reject) => {
       server.close(err => err ? reject(err) : resolveClose());
     }),
@@ -66,6 +73,7 @@ function handle(
   res: ServerResponse,
   getMode: () => DemoMode,
   setMode: (mode: DemoMode) => void,
+  noteContactPost: () => void,
 ): void {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
   const mode = getMode();
@@ -96,7 +104,17 @@ function handle(
     }
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/note') {
+    if (mode === 'buggy') {
+      sendHtml(res, 500, 'Error', mode, '<p>The note could not be saved.</p>');
+    } else {
+      sendHtml(res, 200, 'Saved', mode, '<p>Note saved.</p>');
+    }
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/contact') {
+    noteContactPost();
     if (mode === 'buggy') {
       sendHtml(res, 500, 'Error', mode, '<p>The contact form could not be saved. Please try again later today.</p>');
     } else {
@@ -135,6 +153,18 @@ function handle(
           document.getElementById('status').textContent = 'Coupon applied';
         });
       </script>
+    `);
+    return;
+  }
+
+  if (url.pathname === '/note') {
+    sendHtml(res, 200, 'Note', mode, `
+      <h1>Note</h1>
+      <form method="post" action="/api/note">
+        <label for="title">Title</label>
+        <input id="title" name="title" type="text" placeholder="Title" />
+        <button type="submit" data-testid="save-note">Save note</button>
+      </form>
     `);
     return;
   }

@@ -22,7 +22,7 @@ import {
   classifyDocumentRedirect,
   waitForSettledLocation,
 } from '../explorer/authRedirect.js';
-import { blockSensitiveClick, isOauthNavigation, refreshFormActions, submissionPolicy } from './sensitive.js';
+import { blockSensitiveClick, contactBlockObservation, isOauthNavigation, refreshFormActions, submissionPolicy } from './sensitive.js';
 
 const ACTION_TOOLS = ['click', 'fill', 'goto', 'wait', 'assert_text', 'press', 'noop'] as const;
 const ACTION_LOCATORS = ['css', 'role', 'text', 'placeholder', 'label', 'testid'] as const;
@@ -501,7 +501,7 @@ export async function executeAction(
         const disabled = await disabledOutcome(locator, acted, options?.strictOracles);
         if (disabled) return disabled;
         const label = await controlLabel(locator);
-        const blocked = await blockSensitiveClick(page, `${label.text}\n${acted.target || ''}\n${acted.value || ''}`, label);
+        const blocked = await blockSensitiveClick(page, `${label.text}\n${acted.target || ''}\n${acted.value || ''}`, { ...label, locator });
         if (blocked) return guardSkip(blocked, 'sensitive-submit');
         const prior = submissionPolicy(page)?.blocked;
         await locator.click({ timeout: timeoutMs });
@@ -642,7 +642,7 @@ export async function executeAction(
           if (disabled) return disabled;
           const label = await controlLabel(located.locator);
           const blocked = key === 'Enter'
-            ? await blockSensitiveClick(page, `${label.text}\n${located.action.target || ''}`, label)
+            ? await blockSensitiveClick(page, `${label.text}\n${located.action.target || ''}`, { ...label, locator: located.locator })
             : undefined;
           if (blocked) return guardSkip(blocked, 'sensitive-submit');
           const prior = submissionPolicy(page)?.blocked;
@@ -992,6 +992,9 @@ function guardAfterNavigation(page: Page, prior?: string): ActionOutcome | undef
         : `Navigation to ${url} is an OAuth page. The outcome is inconclusive.`,
       'oauth-navigation',
     );
+  }
+  if (fresh && /^contact\b/i.test(fresh)) {
+    return guardSkip(contactBlockObservation(`Blocked ${fresh}.`), 'sensitive-submit');
   }
   if (fresh) return guardSkip(`Blocked ${fresh}. The outcome is inconclusive.`, 'sensitive-submit');
   return undefined;

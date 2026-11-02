@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2-beta.1] — 2026-11-02
+
+### Fixed
+
+- The engine no longer submits a contact, enquiry, feedback, support, quote, or get-in-touch message form. Detection uses field names and labels (`message`, `enquiry`, `inquiry`, `subject`, `comments`, `feedback`), button text (`Send message`, `Submit enquiry`, `Contact us`, `Get in touch`), the action URL (`/contact`, `/api/contact`, `/enquiry`, `/feedback`, `/support`), the page URL, and the planner's flow intent. A search box is not a contact form. Analytics beacons are still not sensitive submits.
+- The real POST, PUT, or PATCH is aborted, including an empty body. A filled click is refused before it runs. A click that only shows client-side validation, and does not send a request, can still be checked. The flow is inconclusive with `outcome_reason` `contact_submit_blocked`. It is not a pass and not a bug. Live runs and replay (`rerun`) use the same guard. There is no allow flag for this submit.
+
+### Added
+
+- `OutcomeReason` `contact_submit_blocked`. Additive. Existing reason codes are unchanged.
+
 ## [0.7.1] — 2026-11-02
 
 Stable 0.7.1. Same code as 0.7.1-beta.1 (see below). On app.monkeytest.ai and bananabeings.com, false MAJORs on stored-plan replay fell from 25 to 0, with 0% live false positives and no real bugs lost.

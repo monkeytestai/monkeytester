@@ -19,6 +19,7 @@ import {
 import { isPublicAuthScreen } from './explorer/screens.js';
 import type { BugText } from './automation/signatures.js';
 import { resolveFlowStatus } from './runner/flowStatus.js';
+import { isContactSubmitBlock } from './runner/sensitive.js';
 import type {
   FlowResult,
   OutcomeReason,
@@ -115,6 +116,7 @@ const REASON_PRIORITY: OutcomeReason[] = [
   'not_attempted',
   'nothing_tested',
   'no_assertion',
+  'contact_submit_blocked',
   'assertion_unverifiable',
   'budget_exhausted',
 ];
@@ -153,12 +155,25 @@ function flowDetail(reason: OutcomeReason, flow: FlowResult): string {
       return `Our test couldn't complete ${name} because the expected outcome could not be checked on the page.`;
     case 'budget_exhausted':
       return `Our test didn't run ${name} because the run finished its time budget. This is not a failure to confirm the page.`;
+    case 'contact_submit_blocked':
+      return `Our test couldn't complete ${name} because submitting the contact form would send a real message. The message was not sent. This is not a bug in the site.`;
     default:
       return `Our test couldn't complete ${name}. Check the URL and run again.`;
   }
 }
 
 function classifyFlow(flow: FlowResult): FlowResult {
+  const contactBlocked = flow.outcome_reason === 'contact_submit_blocked' || flow.steps.some(isContactSubmitBlock);
+  const otherFailure = flow.steps.some(step => step.status === 'failed' && !isContactSubmitBlock(step));
+  if (contactBlocked && !otherFailure) {
+    return {
+      ...flow,
+      status: 'inconclusive',
+      bugIds: [],
+      outcome_reason: 'contact_submit_blocked',
+      outcome_detail: flowDetail('contact_submit_blocked', flow),
+    };
+  }
   if (flow.outcome_reason === 'budget_exhausted') {
     return {
       ...flow,
@@ -365,6 +380,8 @@ function runDetail(outcome: RunOutcome, reason: OutcomeReason | undefined, bugCo
       return 'Our test couldn\'t complete a journey because the expected outcome could not be checked on the page.';
     case 'budget_exhausted':
       return 'Page checks were not run because the run finished its time budget. This is not a failure to confirm the page.';
+    case 'contact_submit_blocked':
+      return 'Our test couldn\'t complete a journey because submitting a contact, enquiry, or feedback form would send a real message. The message was not sent. This is not a bug in the site.';
     default:
       return 'Our test couldn\'t complete a visit because nothing was executed. Check the URL and run again.';
   }
