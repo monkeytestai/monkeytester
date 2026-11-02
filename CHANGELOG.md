@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-11-02
+
+Stable 0.7.1. Same code as 0.7.1-beta.1 (see below). On app.monkeytest.ai and bananabeings.com, false MAJORs on stored-plan replay fell from 25 to 0, with 0% live false positives and no real bugs lost.
+
 ## [0.7.1-beta.1] — 2026-11-02
 
 ### Fixed
