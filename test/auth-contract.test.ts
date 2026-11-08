@@ -52,6 +52,8 @@ describe('AUTH_PROVIDER_CONTRACT', () => {
     expect(AUTH_PROVIDER_ABI.id).toBe(AUTH_PROVIDER_CONTRACT);
     expect(AUTH_PROVIDER_ABI.create).toBe('createAuthProvider');
     expect(AUTH_PROVIDER_ABI.allowSensitive).toBe('not-granted');
+    expect(AUTH_PROVIDER_ABI.providerLoopback).toBe('rejected');
+    expect(AUTH_PROVIDER_ABI.hostedDns).toBe('preflight-only-not-connection-pin');
     expect(AUTH_PROVIDER_ABI.hostedProduct).toBe(false);
     expect(JSON.stringify(AUTH_PROVIDER_ABI)).not.toContain(PASSWORD);
   });
@@ -151,6 +153,38 @@ describe('createAuthProvider', () => {
     expect(other.ok).toBe(false);
     if (!other.ok) expect(other.metadata.status).toBe('unsafe_origin');
     expect(JSON.stringify(other)).not.toContain(COOKIE);
+
+    const copied = jar('app.example.com');
+    const input = {
+      mode: 'local_session' as const,
+      targetOrigin: 'https://app.example.com',
+      storageState: copied,
+      expiresAt: future,
+    };
+    const provider = createAuthProvider(input);
+    input.storageState = { cookies: [], origins: [] };
+    const kept = await provider.open();
+    expect(kept.ok).toBe(true);
+
+    const empty = await bindAuthProvider({
+      targetOrigin: 'https://app.example.com',
+      storageState: { cookies: [], origins: [] },
+    });
+    expect(empty.ok).toBe(false);
+    const csrf = await bindAuthProvider({
+      targetOrigin: 'https://app.example.com',
+      storageState: {
+        cookies: [{ ...jar('app.example.com').cookies[0]!, name: 'csrf_token' }],
+        origins: [],
+      },
+    });
+    expect(csrf.ok).toBe(false);
+    const badTime = await bindAuthProvider({
+      targetOrigin: 'https://app.example.com',
+      storageState: jar('app.example.com'),
+      expiresAt: 'not-a-time',
+    });
+    expect(badTime.ok).toBe(false);
 
     const parent = await bindAuthProvider({
       targetOrigin: 'https://app.example.com',

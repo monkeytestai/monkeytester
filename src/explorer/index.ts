@@ -220,7 +220,13 @@ export async function explore(
         // because the LLM returned malformed JSON is overkill.
         let summary: { summary: string; interactive: SiteMapInteractive[]; authGated: boolean };
         let pageWarnings: string[] | undefined;
-        try {
+        if (opts.storageState) {
+          summary = {
+            summary: 'Signed-in page. Page text was not stored or sent to the model.',
+            authGated: false,
+            interactive: [],
+          };
+        } else try {
           summary = await summarisePageWithLLM(llm, url, skeleton);
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
@@ -265,7 +271,14 @@ export async function explore(
         if (fingerprint && seenScreens.has(fingerprint)) continue;
         if (fingerprint) seenScreens.add(fingerprint);
 
-        const sm: SiteMapPage = {
+        const sm: SiteMapPage = opts.storageState ? {
+          url: stripQuery(url),
+          title: '',
+          summary: summary.summary,
+          interactive: [],
+          outboundLinks: outbound.map(link => stripQuery(link.url)),
+          authGated,
+        } : {
           url,
           title: skeleton.title,
           summary: summary.summary,
@@ -394,7 +407,7 @@ async function listedSiteUrls(
     found.push({ url: canonical, fromSitemap });
   };
 
-  const robotsText = await readDiscoveryText(request, `${origin}/robots.txt`);
+  const robotsText = await readDiscoveryText(request, `${origin}/robots.txt`, startUrl);
   const robotUrls = robotsText ? urlsFromRobots(robotsText, startUrl) : [];
   for (const url of robotUrls) {
     if (!/sitemap/i.test(url)) push(url, false);
@@ -405,13 +418,15 @@ async function listedSiteUrls(
   for (const target of sitemapTargets) {
     if (seenSitemaps.has(target) || found.length >= cap) continue;
     seenSitemaps.add(target);
-    const xml = await readDiscoveryText(request, target);
+    if (!isSameCrawlSite(target, startUrl)) continue;
+    const xml = await readDiscoveryText(request, target, startUrl);
     if (!xml) continue;
     for (const loc of urlsFromSitemap(xml)) {
       if (found.length >= cap) break;
       if (/sitemap[^/]*\.xml(?:\?|$)/i.test(loc) && !seenSitemaps.has(loc)) {
         seenSitemaps.add(loc);
-        const nested = await readDiscoveryText(request, loc);
+        if (!isSameCrawlSite(loc, startUrl)) continue;
+        const nested = await readDiscoveryText(request, loc, startUrl);
         if (nested) for (const inner of urlsFromSitemap(nested)) push(inner, true);
       } else {
         push(loc, true);
@@ -421,9 +436,29 @@ async function listedSiteUrls(
   return found;
 }
 
-async function readDiscoveryText(request: APIRequestContext, url: string): Promise<string | undefined> {
+function stripQuery(value: string): string {
   try {
-    const response = await request.get(url, { timeout: 8_000, failOnStatusCode: false });
+    const url = new URL(value);
+    url.search = '';
+    url.hash = '';
+    return url.href;
+  } catch {
+    return value;
+  }
+}
+
+async function readDiscoveryText(request: APIRequestContext, url: string, scope: string, hops = 0): Promise<string | undefined> {
+  if (hops > 3 || !isSameCrawlSite(url, scope)) return undefined;
+  try {
+    const response = await request.get(url, { timeout: 8_000, failOnStatusCode: false, maxRedirects: 0 });
+    const status = response.status();
+    if (status >= 300 && status < 400) {
+      const location = response.headers()['location'];
+      if (!location) return undefined;
+      let next = '';
+      try { next = new URL(location, url).href; } catch { return undefined; }
+      return readDiscoveryText(request, next, scope, hops + 1);
+    }
     if (!response.ok()) return undefined;
     const body = await response.text();
     if (!body || body.length > 1_000_000) return undefined;

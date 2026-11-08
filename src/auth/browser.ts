@@ -36,12 +36,13 @@ export async function openFencedContext(browser: Browser, opts: FencedContextOpt
     ...(opts.userAgent ? { userAgent: opts.userAgent } : {}),
     ...(opts.viewport ? { viewport: opts.viewport } : {}),
     ...(!opts.storageState && opts.recordVideo ? { recordVideo: opts.recordVideo } : {}),
+    ...(opts.storageState ? { serviceWorkers: 'block' as const } : {}),
     ...extras,
   });
   if (opts.storageState && opts.authOrigin) {
     const needles = secretNeedles(opts.storageState);
     context.on('page', page => rememberPageSecrets(page, needles, true));
-    await installSessionFence(context, opts.authOrigin, needles);
+    await installSessionFence(context, opts.authOrigin);
   }
   return context;
 }

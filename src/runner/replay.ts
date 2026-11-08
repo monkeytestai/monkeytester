@@ -68,6 +68,7 @@ import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, set
 import { openFencedContext } from '../auth/browser.js';
 import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
 import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
+import { authBlockedRun, publicMetadata } from '../auth/report.js';
 import { authCheckForFlowId, isAuthNegativeFlowId } from '../planner/authNegative.js';
 import { isSignupFlowId, signupCheckForFlowId } from '../signup/plan.js';
 import { runAuthCheck } from './authNegative.js';
@@ -116,6 +117,8 @@ export interface ReplayOptions {
   allowSensitive?: SensitiveKind[];
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
+  /** When the source run was authenticated, a new jar is required. */
+  priorAuth?: import('../auth/contract.js').AuthPublicMetadata;
 }
 
 export async function replayTraces(
@@ -127,6 +130,16 @@ export async function replayTraces(
 
   const startedAt = new Date().toISOString();
   const flows: FlowResult[] = [];
+
+  if (opts.priorAuth?.outcome === 'authenticated' && !opts.storageState) {
+    return authBlockedRun(traces[0]?.startUrl || '', publicMetadata({
+      mode: opts.priorAuth.mode,
+      outcome: 'not_authorized',
+      policy: { targetOrigin: opts.priorAuth.targetOrigin, idpOrigins: opts.priorAuth.idpOrigins },
+      custody: opts.priorAuth.custody,
+      detail: 'Our test couldn\'t complete the run because replay of a signed-in trace needs a new session. This is not a verified run.',
+    }));
+  }
 
   if (traces.length === 0){
     return emptyReplay(startedAt);

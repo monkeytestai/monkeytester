@@ -233,10 +233,11 @@ export class Monkey {
         opts.plan?.focus,
       ), msg);
       if (fallback.flows.length === 0) {
+        const plan = gate.metadata ? { ...fallback, auth: gate.metadata } : fallback;
         return {
           siteMap,
-          plan: fallback,
-          run: withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, fallback.notes, countPublicScreens(siteMap.pages)), siteMap, fallback),
+          plan,
+          run: { ...withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, plan.notes, countPublicScreens(siteMap.pages)), siteMap, plan), ...(gate.metadata ? { auth: gate.metadata } : {}) },
         };
       }
       testPlan = fallback;
@@ -247,10 +248,11 @@ export class Monkey {
         phase: 'planner', type: 'plan.skipped',
         message: 'Planner produced no flows — nothing to execute.',
       });
+      const plan = gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan;
       return {
         siteMap,
-        plan: testPlan,
-        run: withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, testPlan.notes, countPublicScreens(siteMap.pages)), siteMap, testPlan),
+        plan,
+        run: { ...withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, plan.notes, countPublicScreens(siteMap.pages)), siteMap, plan), ...(gate.metadata ? { auth: gate.metadata } : {}) },
       };
     }
 
@@ -286,9 +288,10 @@ export class Monkey {
         siteMap,
         plan: {
           ...testPlan,
+          ...(gate.metadata ? { auth: gate.metadata } : {}),
           notes: [testPlan.notes, `Runner failed before executing flows: ${msg}`].filter(Boolean).join('\n'),
         },
-        run: withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, `Runner failed before executing flows: ${msg}`, countPublicScreens(siteMap.pages)), siteMap, testPlan),
+        run: { ...withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, `Runner failed before executing flows: ${msg}`, countPublicScreens(siteMap.pages)), siteMap, testPlan), ...(gate.metadata ? { auth: gate.metadata } : {}) },
       };
     }
 
@@ -458,6 +461,7 @@ export class Monkey {
       inbox: opts.inbox ?? this.inbox,
       strictOracles: opts.strictOracles ?? this.strictOracles,
       failOn5xx: opts.failOn5xx ?? this.failOn5xx,
+      priorAuth: source.auth,
       ...gate.browser,
     });
     const failOn5xx = opts.failOn5xx ?? this.failOn5xx;

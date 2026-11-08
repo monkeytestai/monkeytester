@@ -11,7 +11,7 @@ import type {
   AuthOriginPolicy, AuthPublicMetadata, AuthSecretProvider, AuthStorageState, RuntimeAuthProvider,
 } from './contract.js';
 import { installLoginFence, type FenceState } from './fence.js';
-import { assertSessionBound, originAllowed, policyFrom } from './origins.js';
+import { acceptSessionMaterial, assertSessionBound, originAllowed, policyFrom } from './origins.js';
 import { assertPublicSafe, redactError, storageContainsSecret } from './redact.js';
 import { publicMetadata } from './report.js';
 
@@ -40,6 +40,9 @@ export async function establishFormAuth(input: {
   provider: AuthSecretProvider;
   headless?: boolean;
   timeoutMs?: number;
+  signal?: AbortSignal;
+  expiresAt?: string;
+  custody?: AuthPublicMetadata['custody'];
 }): Promise<AuthResult> {
   const policyResult = policyFrom(input.targetUrl, input.idpOrigins ?? []);
   if (!policyResult.ok) {
@@ -56,19 +59,20 @@ export async function establishFormAuth(input: {
     input.provider.release();
     return failure('form', 'not_authorized', policy, true, 'The password must be at least 8 characters. It was not typed and it was not saved.');
   }
-  const secrets = [taken.password];
+  const secrets = [taken.password, taken.username].filter(secret => secret.length >= 8);
   return withLoginCaptureOff(async () => {
     const browser = await chromium.launch({ headless: input.headless !== false });
     let context: BrowserContext | undefined;
     const fence: FenceState = { originRejected: false };
     try {
       context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-      await installLoginFence(context, policy, secrets, fence);
+      await installLoginFence(context, policy, fence);
       const page = await context.newPage();
       const timeout = input.timeoutMs ?? 20_000;
       try {
         await page.goto(input.targetUrl, { waitUntil: 'domcontentloaded', timeout });
       } catch (err) {
+        if (input.signal?.aborted) return failure('form', 'not_authorized', policy, false, 'Our test couldn\'t complete the run because sign-in was cancelled. The session was not kept. This is not a verified run.');
         if (navigationRejected(err, fence, await onPolicy(page, policy))) return failure('form', 'origin_rejected', policy, false);
         throw redactError(err, secrets);
       }
@@ -85,6 +89,8 @@ export async function establishFormAuth(input: {
       try {
         await fillLogin(page, taken.username, taken.password, timeout);
       } catch (err) {
+        if (input.signal?.aborted) return failure('form', 'not_authorized', policy, false, 'Our test couldn\'t complete the run because sign-in was cancelled. The session was not kept. This is not a verified run.');
+        if (navigationRejected(err, fence, true)) return failure('form', 'origin_rejected', policy, false);
         throw redactError(err, secrets);
       }
       if (fence.originRejected) return failure('form', 'origin_rejected', policy, false);
@@ -93,13 +99,20 @@ export async function establishFormAuth(input: {
       if (after === 'mfa') return failure('form', 'mfa_required', policy, false);
       if (after === 'login') return failure('form', 'credentials_rejected', policy, false);
       const state = await snapshot(context);
-      if (!hasSessionMaterial(state)) {
-        return failure('form', 'credentials_rejected', policy, false, 'Our test couldn\'t complete the run because the browser did not store a session for the authorized origin. Nothing was saved. This is not a verified run.');
+      if (input.signal?.aborted) {
+        return failure('form', 'not_authorized', policy, false, 'Our test couldn\'t complete the run because sign-in was cancelled. The session was not kept. This is not a verified run.');
+      }
+      if (input.expiresAt && Date.parse(input.expiresAt) <= Date.now()) {
+        return failure('form', 'expired', policy, false, 'Our test couldn\'t complete the run because the sign-in envelope expired before the browser finished. The session was not kept. This is not a verified run.');
+      }
+      const material = acceptSessionMaterial(state);
+      if (!material.ok) {
+        return failure('form', 'credentials_rejected', policy, false, `Our test couldn't complete the run. ${material.detail} This is not a verified run.`);
       }
       if (storageContainsSecret(state, secrets)) return failure('form', 'storage_unsafe', policy, false);
       const bound = assertSessionBound(state, policy);
       if (!bound.ok) return failure('form', 'origin_rejected', policy, false, `Our test couldn't complete the run. ${bound.detail} This is not a verified run.`);
-      return success('form', policy, state, 'customer-local');
+      return success('form', policy, state, input.custody ?? 'customer-local', false, input.expiresAt);
     } finally {
       input.provider.release();
       await context?.close().catch(() => {});
@@ -129,7 +142,7 @@ export async function establishManualAuth(input: {
     const fence: FenceState = { originRejected: false };
     try {
       context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-      await installLoginFence(context, policy, [], fence);
+      await installLoginFence(context, policy, fence);
       const page = await context.newPage();
       const timeout = input.timeoutMs ?? 20_000;
       try {
@@ -188,8 +201,16 @@ function success(
   storageState: AuthStorageState,
   custody: AuthPublicMetadata['custody'],
   sessionReused = false,
+  expiresAt?: string,
 ): AuthSuccess {
-  const metadata = publicMetadata({ mode, outcome: 'authenticated', policy, custody, sessionReused });
+  const metadata = publicMetadata({
+    mode,
+    outcome: 'authenticated',
+    policy,
+    custody,
+    sessionReused,
+    ...(expiresAt ? { expiresAt } : {}),
+  });
   assertPublicSafe(metadata, secretValues(storageState));
   return {
     ok: true,

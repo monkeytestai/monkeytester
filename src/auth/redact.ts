@@ -113,6 +113,7 @@ export function redactValue<T>(value: T, secrets: string[]): T {
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+      if (secrets.some(secret => secret.length >= 8 && key.includes(secret))) continue;
       const kept = persistReplacer(key, inner);
       if (kept === undefined) continue;
       out[key] = redactValue(kept, secrets);
