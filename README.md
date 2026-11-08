@@ -79,6 +79,8 @@ npx monkeytest report
 npx monkeytest open
 ```
 
+`open` is unreleased in this source tree. The npm packages observed on 8 Nov 2026 do not include it.
+
 `report` prints the run. `open` prints the absolute path of that file and the screenshot and WebM paths stored on it. It does not upload them and it does not open the site. There is no hosted report URL.
 
 | Path | What it is |

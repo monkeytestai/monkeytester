@@ -61,7 +61,7 @@ import type {
 } from './types.js';
 import { ENGINE_VERSION } from './version.js';
 import { collectEvidencePaths } from './reportPaths.js';
-import { starMarkerName, starNudgeLine, type StarNudgeInput } from './starNudge.js';
+import { cleanVerificationResult, starMarkerName, starNudgeLine, type StarNudgeInput } from './starNudge.js';
 import { createHttpInbox } from './inbox/http.js';
 import { loadInboxProvider } from './inbox/load.js';
 
@@ -330,7 +330,7 @@ Commands:
   ${tty('verify', 'cyan')} [run]               Replay each bug trace and print a verdict.
   ${tty('diff', 'cyan')} <runA> <runB>         Diff two stored runs by bug fingerprint.
   ${tty('report', 'cyan')} [<runId>]           Pretty-print a stored run.
-  ${tty('open', 'cyan')} [<runId>]             Print local paths for the run and its evidence.
+  ${tty('open', 'cyan')} [<runId>]             Print local evidence paths. Unreleased in this tree.
   ${tty('help', 'cyan')} [<command>]           Show help (this page or per-command).
   ${tty('version', 'cyan')}                    Print engine version and exit.
 
@@ -411,9 +411,10 @@ shortcuts. Prints new / fixed / persisting / regressed bugs.`,
 Pretty-print a stored run (flows, bugs, evidence paths). Defaults to
 "latest". Use --json for machine-readable output.`,
     open: `monkeytest open [<runId>] [--json]
-Print the absolute path of a stored run and the screenshot and WebM paths
-already recorded on it. Does not upload them, does not fetch the site, and
-does not launch a browser. Defaults to "latest".`,
+Unreleased: this command is in this source tree and is not in the published
+npm dist-tags. Print the absolute path of a stored run and the screenshot
+and WebM paths already recorded on it. Does not upload them, does not fetch
+the site, and does not launch a browser. Defaults to "latest".`,
   };
   console.log(text[cmd] || `No help for "${cmd}". Try \`monkeytest help\`.`);
 
@@ -713,8 +714,17 @@ async function cmdVerify(positional: string | undefined, opts: CommonOpts){
     printVerifyTable(stored.id, report);
   }
 
-  if (report.exitCode === 0){
-    noteStar(opts, stored.run, { kind: 'verify', verdicts: report.results.map(row => row.verdict) });
+  const verifiedAt = new Date().toISOString();
+  const judged = cleanVerificationResult({
+    outcome: stored.run.outcome,
+    finishedAt: stored.run.finishedAt,
+    bugCount: stored.run.bugs.length,
+  }, report, verifiedAt);
+  if (judged){
+    noteStar(opts, stored.run, {
+      kind: 'verify',
+      verdicts: report.results.map(row => row.verdict),
+    }, judged);
   }
 
   if (report.exitCode !== 0){
@@ -982,7 +992,12 @@ function storedRunFile(positional: string | undefined, opts: CommonOpts, stored:
   return resolve(opts.dir, 'runs', `${stored.id}.json`);
 }
 
-function noteStar(opts: CommonOpts, run: RunResult, signal: StarNudgeInput['signal']){
+function noteStar(
+  opts: CommonOpts,
+  run: RunResult,
+  signal: StarNudgeInput['signal'],
+  judged?: { outcome: 'clean'; finishedAt: string; currentBugCount: 0 },
+){
   const marker = resolve(opts.dir, starMarkerName());
   const line = starNudgeLine({
     json: opts.json,
@@ -991,9 +1006,9 @@ function noteStar(opts: CommonOpts, run: RunResult, signal: StarNudgeInput['sign
     optOut: opts.noStar || process.env.MONKEYTEST_NO_STAR === '1',
     alreadyNoted: existsSync(marker),
     startUrl: run.startUrl,
-    finishedAt: run.finishedAt,
-    outcome: run.outcome,
-    currentBugCount: run.bugs.length,
+    finishedAt: judged ? judged.finishedAt : run.finishedAt,
+    outcome: judged ? judged.outcome : run.outcome,
+    currentBugCount: judged ? judged.currentBugCount : run.bugs.length,
     warnings: run.warnings,
     outcome_detail: run.outcome_detail,
     flows: run.flows.map(flow => ({

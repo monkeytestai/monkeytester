@@ -11,6 +11,7 @@ import {
   coverageRatio,
   evaluateGate,
   falsePositiveRate,
+  siteRowError,
   type AdjudicationReport,
   type SiteAdjudication,
 } from '../src/audit/adjudication.js';
@@ -93,5 +94,31 @@ describe('fixed 10-site adjudication protocol', () => {
     };
     expect(evaluateGate(atGate, assigned).passed).toBe(false);
     expect(evaluateGate(atGate, assigned).rate).toBe(0.1);
+  });
+
+  it('fails closed on a bad row before it aggregates a flattering rate', () => {
+    const assigned = FIXED_10_SITES.map(site => (
+      site.startUrl ? site : { ...site, startUrl: 'https://example.test/unassigned', source: 'bake-off-corpus' as const }
+    ));
+    const sites = assigned.map(site => row({ siteId: site.id, confirmedBugs: 10, falsePositives: 0 }));
+    sites[4] = row({
+      siteId: assigned[4].id,
+      confirmedBugs: 0,
+      falsePositives: 0,
+      inScopePages: 0,
+      pagesExplored: 3,
+      channel: 'prod' as SiteAdjudication['channel'],
+    });
+    const result = evaluateGate({ protocolId: ADJUDICATION_PROTOCOL_ID, sites }, assigned);
+    expect(result.passed).toBe(false);
+    expect(result.rate).toBeUndefined();
+    expect(result.reason).toContain(assigned[4].id);
+    expect(CURRENT_ADJUDICATION).toBeNull();
+    expect(FIXED_10_SITES.every(site => site.authorizedToRun === false)).toBe(true);
+
+    const badCounts = row({ siteId: 'saucedemo', confirmedBugs: 2, falsePositives: 9 });
+    expect(siteRowError(badCounts)).toMatch(/falsePositives/);
+    expect(siteRowError(row({ siteId: 'saucedemo', confirmedBugs: 4, falsePositives: 0, pagesExplored: 8, inScopePages: 2 }))).toMatch(/pagesExplored/);
+    expect(siteRowError(row({ siteId: 'saucedemo', confirmedBugs: 1.5 as unknown as number, falsePositives: 0 }))).toMatch(/confirmedBugs/);
   });
 });

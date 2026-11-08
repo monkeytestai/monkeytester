@@ -28,7 +28,7 @@ The binary ships in `@monkeytestai/monkeytester`. From a clone it is `node dist/
 | `verify [run]` | Replays each bug trace. Verdicts: `fixed`, `still_broken`, `flaky`, `healed`, `blocked`. |
 | `diff <a> <b>` | Fingerprint diff. `latest` and `prev` are shortcuts. |
 | `report [runId]` | Prints a stored run. Defaults to `latest`. |
-| `open [runId]` | Prints the run file and local screenshot / WebM paths. Does not fetch the site. |
+| `open [runId]` | Unreleased in this tree. Prints the run file and local screenshot / WebM paths. Not in the published npm dist-tags. Does not fetch the site. |
 | `help [command]` | Top-level or per-command help. |
 | `version` | Prints `monkeytester@<version>`. |
 

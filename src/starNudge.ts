@@ -121,6 +121,29 @@ function completedClean(input: StarNudgeInput): boolean {
   return true;
 }
 
+/**
+ * A verify report proves a clean finish only when the stored run had
+ * actually finished and its outcome was `bugs_found`, and every bug on
+ * that run came back `fixed`. The original file stays `bugs_found`. The
+ * object returned here is the verification result, not a rewrite of it.
+ * `inconclusive`, `could_not_test`, a partial `--bug` check, and any
+ * verdict other than `fixed` return null.
+ */
+export function cleanVerificationResult(
+  source: { outcome?: string; finishedAt?: string; bugCount: number },
+  report: { exitCode: number; results: Array<{ verdict: string }> },
+  verifiedAt: string,
+): { outcome: 'clean'; finishedAt: string; currentBugCount: 0 } | null {
+  if (!source.finishedAt || !source.finishedAt.trim()) return null;
+  if (source.outcome !== 'bugs_found') return null;
+  if (!verifiedAt || !verifiedAt.trim()) return null;
+  if (report.exitCode !== 0) return null;
+  if (!Number.isInteger(source.bugCount) || source.bugCount < 1) return null;
+  if (report.results.length !== source.bugCount) return null;
+  if (!report.results.every(row => row.verdict === 'fixed')) return null;
+  return { outcome: 'clean', finishedAt: verifiedAt, currentBugCount: 0 };
+}
+
 function useful(input: StarNudgeInput): boolean {
   if (input.signal.kind === 'verify') {
     return input.signal.verdicts.length > 0 && input.signal.verdicts.every(verdict => verdict === 'fixed');

@@ -15,6 +15,8 @@ on:
   pull_request:
     paths:
       - 'docs/**'
+      - '.github/workflows/docs.yml'
+      - 'scripts/check-docs-build.mjs'
   workflow_dispatch:
 
 permissions:
@@ -41,12 +43,7 @@ jobs:
         run: npm run docs:build
 
       - name: Sitemap, robots, and canonicals are in the build
-        run: |
-          test -f docs/.vitepress/dist/sitemap.xml
-          test -f docs/.vitepress/dist/robots.txt
-          grep -q 'rel="canonical" href="https://docs.monkeytest.ai/"' docs/.vitepress/dist/index.html
-          grep -q 'rel="canonical" href="https://docs.monkeytest.ai/getting-started/quick-start"' docs/.vitepress/dist/getting-started/quick-start.html
-          grep -q 'https://docs.monkeytest.ai/sitemap.xml' docs/.vitepress/dist/sitemap.xml
+        run: node scripts/check-docs-build.mjs
 
       - name: Upload site artifact
         uses: actions/upload-artifact@v4

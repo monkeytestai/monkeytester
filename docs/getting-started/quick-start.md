@@ -60,7 +60,7 @@ With an OpenAI key, the default model is `gpt-4o-mini`. Auto-detect otherwise pi
 | `.monkeytest/runs/<id>.json` | One run |
 | `.monkeytest/shots/` | PNGs and per-flow WebM |
 
-`npx monkeytest report` prints the latest run. `npx monkeytest report --json` prints the stored file. `npx monkeytest open` prints the run file and the local screenshot and WebM paths. It does not upload them and it does not fetch the site. Then `npx monkeytest rerun` replays the stored trace, and `npx monkeytest diff prev latest` compares fingerprints.
+`npx monkeytest report` prints the latest run. `npx monkeytest report --json` prints the stored file. `npx monkeytest open` prints the run file and the local screenshot and WebM paths. `open` is unreleased in this source tree. It is not in the npm packages observed on 8 Nov 2026. It does not upload files and it does not fetch the site. Then `npx monkeytest rerun` replays the stored trace, and `npx monkeytest diff prev latest` compares fingerprints.
 
 Exit `1` means a blocking bug (anything that is not `minor`). Exit `2` means bad arguments or no provider. Exit `3` means the engine failed, including a crawl that opened zero pages.
 

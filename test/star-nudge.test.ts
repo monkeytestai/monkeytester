@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isLoopbackUrl, runRecordNamesStub, starNudgeLine, textNamesStubProvider, type StarNudgeInput } from '../src/starNudge.js';
+import { cleanVerificationResult, isLoopbackUrl, runRecordNamesStub, starNudgeLine, textNamesStubProvider, type StarNudgeInput } from '../src/starNudge.js';
 
 function input(partial: Partial<StarNudgeInput> = {}): StarNudgeInput {
   return {
@@ -85,6 +85,59 @@ describe('star nudge', () => {
       warnings: ['Planner used gpt-4o-mini'],
       signal: allFixed,
     }))).toContain('https://github.com/monkeytestai/monkeytester');
+  });
+
+  it('turns a finished bugs_found verify into a clean result only when every bug is fixed', () => {
+    const proven = cleanVerificationResult(
+      { outcome: 'bugs_found', finishedAt: '2026-11-08T00:00:01.000Z', bugCount: 2 },
+      { exitCode: 0, results: [{ verdict: 'fixed' }, { verdict: 'fixed' }] },
+      '2026-11-08T00:05:00.000Z',
+    );
+    expect(proven).toEqual({ outcome: 'clean', finishedAt: '2026-11-08T00:05:00.000Z', currentBugCount: 0 });
+    expect(starNudgeLine(input({
+      outcome: proven?.outcome,
+      finishedAt: proven?.finishedAt,
+      currentBugCount: proven?.currentBugCount,
+      signal: { kind: 'verify', verdicts: ['fixed', 'fixed'] },
+    }))).toContain('https://github.com/monkeytestai/monkeytester');
+
+    expect(starNudgeLine(input({
+      outcome: 'bugs_found',
+      currentBugCount: 2,
+      signal: { kind: 'verify', verdicts: ['fixed', 'fixed'] },
+    }))).toBeNull();
+
+    expect(cleanVerificationResult(
+      { outcome: 'inconclusive', finishedAt: '2026-11-08T00:00:01.000Z', bugCount: 1 },
+      { exitCode: 0, results: [{ verdict: 'fixed' }] },
+      '2026-11-08T00:05:00.000Z',
+    )).toBeNull();
+    expect(cleanVerificationResult(
+      { outcome: 'could_not_test', finishedAt: '2026-11-08T00:00:01.000Z', bugCount: 1 },
+      { exitCode: 0, results: [{ verdict: 'fixed' }] },
+      '2026-11-08T00:05:00.000Z',
+    )).toBeNull();
+    expect(cleanVerificationResult(
+      { outcome: 'bugs_found', finishedAt: '2026-11-08T00:00:01.000Z', bugCount: 2 },
+      { exitCode: 0, results: [{ verdict: 'fixed' }] },
+      '2026-11-08T00:05:00.000Z',
+    )).toBeNull();
+    expect(cleanVerificationResult(
+      { outcome: 'bugs_found', finishedAt: '2026-11-08T00:00:01.000Z', bugCount: 1 },
+      { exitCode: 0, results: [{ verdict: 'healed' }] },
+      '2026-11-08T00:05:00.000Z',
+    )).toBeNull();
+    expect(cleanVerificationResult(
+      { outcome: 'bugs_found', finishedAt: '', bugCount: 1 },
+      { exitCode: 0, results: [{ verdict: 'fixed' }] },
+      '2026-11-08T00:05:00.000Z',
+    )).toBeNull();
+    expect(starNudgeLine(input({
+      ...input(),
+      outcome: 'clean',
+      warnings: ['Model error: [stub · runner.resolveAction] failed'],
+      signal: { kind: 'verify', verdicts: ['fixed'] },
+    }))).toBeNull();
   });
 
   it('treats loopback fixture hosts as local', () => {

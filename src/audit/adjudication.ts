@@ -109,6 +109,32 @@ export interface GateResult {
   rate: number | undefined;
 }
 
+const CHANNELS = new Set<SiteAdjudication['channel']>(['latest', 'next', 'source']);
+
+/**
+ * Fail closed before any rate is summed. A bad channel, a count outside
+ * its range, or coverage that cannot be computed rejects the whole sheet.
+ * This does not record an adjudication and does not authorize a crawl.
+ */
+export function siteRowError(row: SiteAdjudication): string | null {
+  if (!CHANNELS.has(row.channel)) return 'channel must be latest, next, or source';
+  if (!row.engineVersion || !row.gitSha || !row.depth) return 'version stamp is incomplete';
+  if (!row.models?.explorer || !row.models?.planner || !row.models?.runner) return 'model stamp is incomplete';
+  if (!Number.isInteger(row.confirmedBugs) || row.confirmedBugs < 0) return 'confirmedBugs must be a non-negative integer';
+  if (!Number.isInteger(row.falsePositives) || row.falsePositives < 0 || row.falsePositives > row.confirmedBugs) {
+    return 'falsePositives must be an integer from 0 through confirmedBugs';
+  }
+  if (!Number.isInteger(row.inScopePages) || row.inScopePages <= 0) return 'inScopePages must be a positive integer';
+  if (!Number.isInteger(row.pagesExplored) || row.pagesExplored < 0 || row.pagesExplored > row.inScopePages) {
+    return 'pagesExplored must be an integer from 0 through inScopePages';
+  }
+  if (!Number.isInteger(row.misses) || row.misses < 0) return 'misses must be a non-negative integer';
+  if (!Number.isInteger(row.inconclusiveFlows) || row.inconclusiveFlows < 0) {
+    return 'inconclusiveFlows must be a non-negative integer';
+  }
+  return null;
+}
+
 export function assignedSiteCount(sites: readonly AdjudicationSite[] = FIXED_10_SITES): number {
   return sites.filter(site => site.source !== 'unassigned' && site.startUrl).length;
 }
@@ -167,8 +193,13 @@ export function evaluateGate(
     return { passed: false, rate: undefined, reason: 'The report repeats a site or omits one.' };
   }
   for (const row of report.sites) {
-    if (!row.engineVersion || !row.gitSha || !row.depth || !row.models.explorer || !row.models.planner || !row.models.runner) {
-      return { passed: false, rate: undefined, reason: 'A site row is missing its version stamp.' };
+    const rowError = siteRowError(row);
+    if (rowError) {
+      return {
+        passed: false,
+        rate: undefined,
+        reason: `${row.siteId || '(missing site)'}: ${rowError}`,
+      };
     }
   }
   const rate = aggregateFalsePositiveRate(report.sites);
