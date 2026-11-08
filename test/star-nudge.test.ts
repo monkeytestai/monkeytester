@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { cleanVerificationResult, isLoopbackUrl, runRecordNamesStub, starNudgeLine, textNamesStubProvider, type StarNudgeInput } from '../src/starNudge.js';
+import { classifyAttempt } from '../src/verify/verdict.js';
+import type { TraceStep } from '../src/types.js';
+
+function traceStep(index: number, status: TraceStep['status'], observation = ''): TraceStep {
+  return { index, tool: 'noop', status, observation };
+}
 
 function input(partial: Partial<StarNudgeInput> = {}): StarNudgeInput {
   return {
@@ -87,10 +93,16 @@ describe('star nudge', () => {
     }))).toContain('https://github.com/monkeytestai/monkeytester');
   });
 
-  it('turns a finished bugs_found verify into a clean result only when every bug is fixed', () => {
+  it('turns a finished bugs_found verify into a clean result only when every failing step passed', () => {
     const proven = cleanVerificationResult(
       { outcome: 'bugs_found', finishedAt: '2026-11-08T00:00:01.000Z', bugCount: 2 },
-      { exitCode: 0, results: [{ verdict: 'fixed' }, { verdict: 'fixed' }] },
+      {
+        exitCode: 0,
+        results: [
+          { verdict: 'fixed', failingStepStatuses: ['passed'] },
+          { verdict: 'fixed', failingStepStatuses: ['passed'] },
+        ],
+      },
       '2026-11-08T00:05:00.000Z',
     );
     expect(proven).toEqual({ outcome: 'clean', finishedAt: '2026-11-08T00:05:00.000Z', currentBugCount: 0 });
@@ -100,6 +112,11 @@ describe('star nudge', () => {
       currentBugCount: proven?.currentBugCount,
       signal: { kind: 'verify', verdicts: ['fixed', 'fixed'] },
     }))).toContain('https://github.com/monkeytestai/monkeytester');
+    expect(cleanVerificationResult(
+      { outcome: 'bugs_found', finishedAt: '2026-11-08T00:00:01.000Z', bugCount: 1 },
+      { exitCode: 0, results: [{ verdict: 'fixed' }] },
+      '2026-11-08T00:05:00.000Z',
+    )).toBeNull();
 
     expect(starNudgeLine(input({
       outcome: 'bugs_found',
@@ -138,6 +155,53 @@ describe('star nudge', () => {
       warnings: ['Model error: [stub · runner.resolveAction] failed'],
       signal: { kind: 'verify', verdicts: ['fixed'] },
     }))).toBeNull();
+  });
+
+  it('does not ask after a skipped missing sign-up form, even though verify labels it fixed', () => {
+    const source = { outcome: 'bugs_found' as const, finishedAt: '2026-11-08T00:00:01.000Z', bugCount: 1 };
+    const verifiedAt = '2026-11-08T00:05:00.000Z';
+    for (const observation of [
+      'No sign-up form was on the page.',
+      'The sign-up form asks for phone. It was not submitted.',
+    ]) {
+      const steps = [
+        traceStep(0, 'passed'),
+        traceStep(1, 'skipped', observation),
+      ];
+      const classified = classifyAttempt(steps, 1);
+      expect(classified.outcome).toBe('fixed');
+      const report = {
+        exitCode: 0 as const,
+        results: [{ verdict: classified.outcome, failingStepStatuses: ['skipped'] }],
+      };
+      expect(cleanVerificationResult(source, report, verifiedAt)).toBeNull();
+      expect(starNudgeLine(input({
+        outcome: 'bugs_found',
+        currentBugCount: 1,
+        signal: { kind: 'verify', verdicts: [classified.outcome] },
+      }))).toBeNull();
+    }
+    for (const status of ['blocked', 'inconclusive', 'unavailable', 'skipped']) {
+      expect(cleanVerificationResult(
+        source,
+        { exitCode: 0, results: [{ verdict: 'fixed', failingStepStatuses: [status] }] },
+        verifiedAt,
+      ), status).toBeNull();
+    }
+    const passed = classifyAttempt([traceStep(0, 'passed'), traceStep(1, 'passed', 'The control is enabled.')], 1);
+    expect(passed.outcome).toBe('fixed');
+    const proved = cleanVerificationResult(
+      source,
+      { exitCode: 0, results: [{ verdict: passed.outcome, failingStepStatuses: ['passed'] }] },
+      verifiedAt,
+    );
+    expect(proved?.outcome).toBe('clean');
+    expect(starNudgeLine(input({
+      outcome: proved?.outcome,
+      finishedAt: proved?.finishedAt,
+      currentBugCount: 0,
+      signal: { kind: 'verify', verdicts: ['fixed'] },
+    }))).toContain('https://github.com/monkeytestai/monkeytester');
   });
 
   it('treats loopback fixture hosts as local', () => {

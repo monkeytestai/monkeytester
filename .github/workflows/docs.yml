@@ -10,6 +10,7 @@ on:
     paths:
       - 'docs/**'
       - '.github/workflows/docs.yml'
+      - 'scripts/check-docs-build.mjs'
       - 'package.json'
       - 'package-lock.json'
   pull_request:

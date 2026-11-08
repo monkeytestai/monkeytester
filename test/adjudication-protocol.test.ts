@@ -11,7 +11,6 @@ import {
   coverageRatio,
   evaluateGate,
   falsePositiveRate,
-  siteRowError,
   type AdjudicationReport,
   type SiteAdjudication,
 } from '../src/audit/adjudication.js';
@@ -116,9 +115,39 @@ describe('fixed 10-site adjudication protocol', () => {
     expect(CURRENT_ADJUDICATION).toBeNull();
     expect(FIXED_10_SITES.every(site => site.authorizedToRun === false)).toBe(true);
 
-    const badCounts = row({ siteId: 'saucedemo', confirmedBugs: 2, falsePositives: 9 });
-    expect(siteRowError(badCounts)).toMatch(/falsePositives/);
-    expect(siteRowError(row({ siteId: 'saucedemo', confirmedBugs: 4, falsePositives: 0, pagesExplored: 8, inScopePages: 2 }))).toMatch(/pagesExplored/);
-    expect(siteRowError(row({ siteId: 'saucedemo', confirmedBugs: 1.5 as unknown as number, falsePositives: 0 }))).toMatch(/confirmedBugs/);
+    const counted = gateWith(assigned, { siteId: 'saucedemo', confirmedBugs: 2, falsePositives: 9 });
+    expect(counted.passed).toBe(false);
+    expect(counted.rate).toBeUndefined();
+    expect(counted.reason).toMatch(/falsePositives/);
+
+    const coverage = gateWith(assigned, {
+      siteId: 'the-internet',
+      confirmedBugs: 4,
+      falsePositives: 0,
+      pagesExplored: 8,
+      inScopePages: 2,
+    });
+    expect(coverage.passed).toBe(false);
+    expect(coverage.rate).toBeUndefined();
+    expect(coverage.reason).toMatch(/pagesExplored/);
+
+    const fraction = gateWith(assigned, {
+      siteId: 'demoqa',
+      confirmedBugs: 1.5 as unknown as number,
+      falsePositives: 0,
+    });
+    expect(fraction.passed).toBe(false);
+    expect(fraction.rate).toBeUndefined();
+    expect(fraction.reason).toMatch(/confirmedBugs/);
   });
 });
+
+function gateWith(
+  assigned: typeof FIXED_10_SITES,
+  bad: Pick<SiteAdjudication, 'siteId' | 'confirmedBugs' | 'falsePositives'> & Partial<SiteAdjudication>,
+) {
+  const sites = assigned.map(site => row({ siteId: site.id, confirmedBugs: 10, falsePositives: 0 }));
+  const index = sites.findIndex(site => site.siteId === bad.siteId);
+  sites[index] = row(bad);
+  return evaluateGate({ protocolId: ADJUDICATION_PROTOCOL_ID, sites }, assigned);
+}

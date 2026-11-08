@@ -39,6 +39,12 @@ export interface BugVerdict {
   severity: BugReport['severity'];
   verdict: VerifyVerdict;
   attempts: VerifyAttempt[];
+  /**
+   * Status of the recorded failing step on each replay attempt.
+   * Additive. `verdict: 'fixed'` is also used when that step was skipped,
+   * so this is the replay evidence a star decision has to read.
+   */
+  failingStepStatuses?: string[];
   /** How many attempts reproduced the bug. */
   fired: number;
   repeat: number;
@@ -136,6 +142,7 @@ async function verifyOne(
 
   const failingIndex = trace.steps[trace.steps.length - 1]?.index ?? 0;
   const attempts: VerifyAttempt[] = [];
+  const failingStepStatuses: string[] = [];
   const details: string[] = [];
 
   for (let n = 0; n < repeat; n++){
@@ -144,11 +151,14 @@ async function verifyOne(
     const steps = flow?.trace?.steps?.length ? flow.trace.steps : (flow ? stepsFromResults(flow) : []);
     if (!flow || flow.status === 'error' && steps.length === 0){
       attempts.push('blocked');
+      failingStepStatuses.push('unavailable');
       details.push(flow?.failureReason || 'Replay failed before any step.');
       continue;
     }
     const classified = classifyAttempt(steps, failingIndex);
+    const failing = [...steps].reverse().find(step => step.index === failingIndex);
     attempts.push(classified.outcome);
+    failingStepStatuses.push(failing?.status ?? 'unavailable');
     details.push(classified.detail);
   }
 
@@ -158,6 +168,7 @@ async function verifyOne(
     ...base,
     verdict,
     attempts,
+    failingStepStatuses,
     fired,
     detail: summariseDetails(verdict, details),
   };

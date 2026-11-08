@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `monkeytest open` is unreleased. It is in this source tree and not in the npm `latest` or `next` packages observed on 8 Nov 2026. It prints the stored run path and the screenshot and WebM paths already on that run. It does not fetch the site.
-- After `diff`, an interactive terminal may print one star link only when the later run finished `clean` with no bugs left and the diff is a real fix. `verify` may print it only when that command proves every bug on a finished `bugs_found` run is `fixed`; the stored file is not rewritten, and its old `bugs_found` outcome is not treated as success. `inconclusive`, stubs, loopback, CI, JSON, and `--no-star` / `MONKEYTEST_NO_STAR=1` do not ask. The one-time marker is a local file and is not sent anywhere.
+- After `diff`, an interactive terminal may print one star link only when the later run finished `clean` with no bugs left and the diff is a real fix. `verify` may print it only when every recorded failing step on a finished `bugs_found` run has status `passed`. A `fixed` label is not enough: a skipped, blocked, inconclusive, or unavailable replay does not ask. The stored file is not rewritten. Stubs, loopback, CI, JSON, and `--no-star` / `MONKEYTEST_NO_STAR=1` do not ask. The one-time marker is a local file and is not sent anywhere.
 
 ### Documentation
 

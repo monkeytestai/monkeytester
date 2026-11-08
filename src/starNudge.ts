@@ -128,10 +128,14 @@ function completedClean(input: StarNudgeInput): boolean {
  * object returned here is the verification result, not a rewrite of it.
  * `inconclusive`, `could_not_test`, a partial `--bug` check, and any
  * verdict other than `fixed` return null.
+ *
+ * A `fixed` label is not success. `classifyAttempt` also returns `fixed`
+ * when the failing step was skipped. Every recorded failing-step status
+ * must be `passed`.
  */
 export function cleanVerificationResult(
   source: { outcome?: string; finishedAt?: string; bugCount: number },
-  report: { exitCode: number; results: Array<{ verdict: string }> },
+  report: { exitCode: number; results: Array<{ verdict: string; failingStepStatuses?: string[] }> },
   verifiedAt: string,
 ): { outcome: 'clean'; finishedAt: string; currentBugCount: 0 } | null {
   if (!source.finishedAt || !source.finishedAt.trim()) return null;
@@ -140,8 +144,15 @@ export function cleanVerificationResult(
   if (report.exitCode !== 0) return null;
   if (!Number.isInteger(source.bugCount) || source.bugCount < 1) return null;
   if (report.results.length !== source.bugCount) return null;
-  if (!report.results.every(row => row.verdict === 'fixed')) return null;
+  if (!report.results.every(replayStepPassed)) return null;
   return { outcome: 'clean', finishedAt: verifiedAt, currentBugCount: 0 };
+}
+
+function replayStepPassed(row: { verdict: string; failingStepStatuses?: string[] }): boolean {
+  if (row.verdict !== 'fixed') return false;
+  const statuses = row.failingStepStatuses;
+  if (!statuses || statuses.length === 0) return false;
+  return statuses.every(status => status === 'passed');
 }
 
 function useful(input: StarNudgeInput): boolean {

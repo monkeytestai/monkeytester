@@ -71,6 +71,9 @@ export function classifyAttempt(
     };
   }
 
+  // `skipped` stays `fixed` here so existing verify reports do not change.
+  // A skipped step is not evidence the bug was fixed. Callers that ask for
+  // a star must read the step status, not this label.
   if (failing.status === 'passed' || failing.status === 'skipped'){
     return { outcome: 'fixed', detail: 'The original failure did not recur.' };
   }
