@@ -1,6 +1,10 @@
 # Changelog
 
-The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.7.1. `next` will publish 0.7.2-beta.2.
+The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.7.1. `next` will publish 0.7.2-beta.2. This branch does not publish.
+
+## Unreleased
+
+- Local existing-account sign-in (`auth login`, or env-var names for a form). The session file stays on the machine. `AUTH_PROVIDER_CONTRACT` is `monkeytester.auth.provider.v1` for a later server pin. The hosted product does not sign in yet.
 
 ## 0.7.2-beta.2
 

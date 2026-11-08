@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Existing-account sign-in for the local CLI: headed `monkeytest auth login`, or `--username-env` / `--password-env` / `--password-stdin`. Session files stay in `auth/session.json` (mode 600, directory 700) and are not uploaded. A rerun does not reuse one unless `--use-session` or a new password reference is passed. Expired, MFA, and off-origin results are `could_not_test`, not a pass.
+- `AUTH_PROVIDER_CONTRACT` (`monkeytester.auth.provider.v1`) and `createAuthProvider` for a later server pin. Hosted targets are public https only. The hosted product is not claiming sign-in. No npm release in this change.
+
 ## [0.7.2-beta.2] — 2026-11-02
 
 ### Fixed

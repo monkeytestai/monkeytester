@@ -99,6 +99,7 @@ export default defineConfig({
           { text: 'CLI', link: '/reference/cli' },
           { text: 'Config', link: '/reference/config' },
           { text: 'Programmatic API', link: '/reference/api' },
+          { text: 'Auth provider contract', link: '/reference/auth-contract' },
           { text: 'Report', link: '/reference/report' },
           { text: 'Events', link: '/reference/events' },
         ],

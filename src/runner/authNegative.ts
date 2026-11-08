@@ -34,11 +34,14 @@ export async function runAuthCheck(
   step: TestStep,
   evidence: StepEvidence,
   stepIndex: number,
-  opts: { timeoutMs: number; llm: LLM; fallbacks: { used: number } },
+  opts: { timeoutMs: number; llm: LLM; fallbacks: { used: number }; readMostly?: boolean },
 ): Promise<AuthCheckOutcome> {
   const check = step.check;
   if (!check) {
     return { status: 'skipped', observation: 'Auth check id was missing.', tool: 'noop' };
+  }
+  if (opts.readMostly && (check === 'wrong_password' || check === 'empty_submit' || check === 'invalid_email')) {
+    return { status: 'skipped', observation: 'Signed-in runs do not submit the sign-in form.', tool: 'noop' };
   }
   const before = page.url();
   const rejections: number[] = [];

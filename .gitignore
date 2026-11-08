@@ -9,5 +9,6 @@ dist/
 coverage/
 e2e-artifacts/
 .turbo/
+.monkeytest/auth/
 docs/.vitepress/cache
 docs/.vitepress/dist

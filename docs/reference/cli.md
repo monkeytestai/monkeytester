@@ -28,6 +28,8 @@ The binary ships in `@monkeytestai/monkeytester`. From a clone it is `node dist/
 | `verify [run]` | Replays each bug trace. Verdicts: `fixed`, `still_broken`, `flaky`, `healed`, `blocked`. |
 | `diff <a> <b>` | Fingerprint diff. `latest` and `prev` are shortcuts. |
 | `report [runId]` | Prints a stored run. Defaults to `latest`. |
+| `auth login <url>` | Headed local sign-in. Saves `auth/session.json`. Not uploaded. |
+| `auth logout --delete` | Deletes that file. Does not sign the website out. |
 | `help [command]` | Top-level or per-command help. |
 | `version` | Prints `monkeytester@<version>`. |
 
