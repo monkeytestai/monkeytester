@@ -61,7 +61,7 @@ import type {
 } from './types.js';
 import { ENGINE_VERSION } from './version.js';
 import { collectEvidencePaths } from './reportPaths.js';
-import { cleanVerificationResult, starMarkerName, starNudgeLine, type StarNudgeInput } from './starNudge.js';
+import { starMarkerName, starNudgeLine, type StarNudgeInput } from './starNudge.js';
 import { createHttpInbox } from './inbox/http.js';
 import { loadInboxProvider } from './inbox/load.js';
 
@@ -714,19 +714,6 @@ async function cmdVerify(positional: string | undefined, opts: CommonOpts){
     printVerifyTable(stored.id, report);
   }
 
-  const verifiedAt = new Date().toISOString();
-  const judged = cleanVerificationResult({
-    outcome: stored.run.outcome,
-    finishedAt: stored.run.finishedAt,
-    bugCount: stored.run.bugs.length,
-  }, report, verifiedAt);
-  if (judged){
-    noteStar(opts, stored.run, {
-      kind: 'verify',
-      verdicts: report.results.map(row => row.verdict),
-    }, judged);
-  }
-
   if (report.exitCode !== 0){
     const broken = report.stats.still_broken + report.stats.flaky;
     console.error(tty(`✗ ${broken} bug${broken === 1 ? '' : 's'} still firing.`, 'red'));
@@ -992,12 +979,7 @@ function storedRunFile(positional: string | undefined, opts: CommonOpts, stored:
   return resolve(opts.dir, 'runs', `${stored.id}.json`);
 }
 
-function noteStar(
-  opts: CommonOpts,
-  run: RunResult,
-  signal: StarNudgeInput['signal'],
-  judged?: { outcome: 'clean'; finishedAt: string; currentBugCount: 0 },
-){
+function noteStar(opts: CommonOpts, run: RunResult, signal: StarNudgeInput['signal']){
   const marker = resolve(opts.dir, starMarkerName());
   const line = starNudgeLine({
     json: opts.json,
@@ -1006,9 +988,9 @@ function noteStar(
     optOut: opts.noStar || process.env.MONKEYTEST_NO_STAR === '1',
     alreadyNoted: existsSync(marker),
     startUrl: run.startUrl,
-    finishedAt: judged ? judged.finishedAt : run.finishedAt,
-    outcome: judged ? judged.outcome : run.outcome,
-    currentBugCount: judged ? judged.currentBugCount : run.bugs.length,
+    finishedAt: run.finishedAt,
+    outcome: run.outcome,
+    currentBugCount: run.bugs.length,
     warnings: run.warnings,
     outcome_detail: run.outcome_detail,
     flows: run.flows.map(flow => ({

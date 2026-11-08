@@ -61,7 +61,7 @@ npx monkeytest open
 | `--no-headless` | headless | Show the browser |
 | `--label <text>` | | Saved on the plan and the run |
 | `--json` | text | Machine-readable output for `run`, `diff`, `report`, `verify`, `open` |
-| `--no-star` | off | Skip the one-time star line. `MONKEYTEST_NO_STAR=1` does the same. |
+| `--no-star` | off | Skip the unreleased diff-only star line. `verify` does not ask. `MONKEYTEST_NO_STAR=1` does the same. |
 | `--fail-on-5xx` / `--no-fail-on-5xx` | on | A same-origin HTTP ≥500 (document, xhr, or fetch) becomes a blocking bug |
 | `--heal` | off | On `rerun` and `verify`, re-resolve a missed locator |
 | `--repeat <n>` | 1 | How many times `verify` replays each bug |

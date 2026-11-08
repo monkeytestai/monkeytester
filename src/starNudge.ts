@@ -15,8 +15,6 @@ export const STAR_URL = 'https://github.com/monkeytestai/monkeytester';
 const STAR_LINE =
   `If this fix was useful, you can star the project: ${STAR_URL}`;
 
-export type VerifyVerdict = 'fixed' | 'still_broken' | 'flaky' | 'healed' | 'blocked';
-
 export interface StarFlowText {
   outcome_detail?: string;
   description?: string;
@@ -50,9 +48,8 @@ export interface StarNudgeInput {
   outcome_detail?: string;
   flows?: StarFlowText[];
   bugs?: StarBugText[];
-  signal:
-    | { kind: 'verify'; verdicts: VerifyVerdict[] }
-    | { kind: 'diff'; stats: { new: number; fixed: number; persisting: number; regressed: number } };
+  /** Produced by `diffRuns`. There is no verify signal. */
+  signal: { kind: 'diff'; stats: { new: number; fixed: number; persisting: number; regressed: number } };
 }
 
 export function starMarkerName(): string {
@@ -98,10 +95,9 @@ export function runRecordNamesStub(input: Pick<StarNudgeInput, 'warnings' | 'out
 }
 
 /**
- * A star requires a finished `clean` run and a real fix signal.
- * Diff stats that say "all fixed" do not override `inconclusive`,
- * `could_not_test`, `bugs_found`, or any other outcome.
- * Verify counts only when every verdict is `fixed`.
+ * A star requires a finished `clean` run and a real diff fix.
+ * `monkeytest verify` does not ask. Its `fixed` label is not a clean run:
+ * a skipped step can be reported fixed, and a flow can stay inconclusive.
  */
 export function starNudgeLine(input: StarNudgeInput): string | null {
   if (input.json || !input.tty || input.ci || input.optOut || input.alreadyNoted) return null;
@@ -121,44 +117,7 @@ function completedClean(input: StarNudgeInput): boolean {
   return true;
 }
 
-/**
- * A verify report proves a clean finish only when the stored run had
- * actually finished and its outcome was `bugs_found`, and every bug on
- * that run came back `fixed`. The original file stays `bugs_found`. The
- * object returned here is the verification result, not a rewrite of it.
- * `inconclusive`, `could_not_test`, a partial `--bug` check, and any
- * verdict other than `fixed` return null.
- *
- * A `fixed` label is not success. `classifyAttempt` also returns `fixed`
- * when the failing step was skipped. Every recorded failing-step status
- * must be `passed`.
- */
-export function cleanVerificationResult(
-  source: { outcome?: string; finishedAt?: string; bugCount: number },
-  report: { exitCode: number; results: Array<{ verdict: string; failingStepStatuses?: string[] }> },
-  verifiedAt: string,
-): { outcome: 'clean'; finishedAt: string; currentBugCount: 0 } | null {
-  if (!source.finishedAt || !source.finishedAt.trim()) return null;
-  if (source.outcome !== 'bugs_found') return null;
-  if (!verifiedAt || !verifiedAt.trim()) return null;
-  if (report.exitCode !== 0) return null;
-  if (!Number.isInteger(source.bugCount) || source.bugCount < 1) return null;
-  if (report.results.length !== source.bugCount) return null;
-  if (!report.results.every(replayStepPassed)) return null;
-  return { outcome: 'clean', finishedAt: verifiedAt, currentBugCount: 0 };
-}
-
-function replayStepPassed(row: { verdict: string; failingStepStatuses?: string[] }): boolean {
-  if (row.verdict !== 'fixed') return false;
-  const statuses = row.failingStepStatuses;
-  if (!statuses || statuses.length === 0) return false;
-  return statuses.every(status => status === 'passed');
-}
-
 function useful(input: StarNudgeInput): boolean {
-  if (input.signal.kind === 'verify') {
-    return input.signal.verdicts.length > 0 && input.signal.verdicts.every(verdict => verdict === 'fixed');
-  }
   const { stats } = input.signal;
   return stats.fixed > 0 && stats.new === 0 && stats.persisting === 0 && stats.regressed === 0;
 }
