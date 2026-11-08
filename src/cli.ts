@@ -64,6 +64,17 @@ import { collectEvidencePaths } from './reportPaths.js';
 import { starMarkerName, starNudgeLine, type StarNudgeInput } from './starNudge.js';
 import { createHttpInbox } from './inbox/http.js';
 import { loadInboxProvider } from './inbox/load.js';
+import {
+  authBlockedRun,
+  authProcessExit,
+  defaultSessionPath,
+  deleteAuthSession,
+  parseTtl,
+  readSecretLine,
+  rejectCredentialArg,
+  resolveAuthInvocation,
+} from './auth/index.js';
+import type { AuthOriginPolicy, AuthPublicMetadata, AuthStorageState } from './auth/contract.js';
 
 /* ── Tiny ANSI helpers (no chalk dep) ─────────────────────────────────── */
 
@@ -132,6 +143,16 @@ interface CommonOpts {
   inboxHttp?: string;
   /** Skip the one-time star line. `MONKEYTEST_NO_STAR=1` does the same. */
   noStar: boolean;
+  authManual: boolean;
+  useSession: boolean;
+  saveSession: boolean;
+  deleteSession: boolean;
+  sessionPath?: string;
+  sessionTtl?: string;
+  usernameEnv?: string;
+  passwordEnv?: string;
+  passwordStdin: boolean;
+  idpOrigins: string[];
 }
 
 function defaultCommonOpts(): CommonOpts {
@@ -148,6 +169,12 @@ function defaultCommonOpts(): CommonOpts {
     repeat: 1,
     failOn5xx: true,
     noStar: false,
+    authManual: false,
+    useSession: false,
+    saveSession: false,
+    deleteSession: false,
+    passwordStdin: false,
+    idpOrigins: [],
   };
 }
 
@@ -218,6 +245,46 @@ function parseArgs(argv: string[]): Parsed {
         out.opts.inboxHttp = url;
         break;
       }
+      case '--auth': {
+        const mode = next();
+        if (mode !== 'manual') die(2, '--auth only supports manual. Form login uses --username-env and --password-env.');
+        out.opts.authManual = true;
+        break;
+      }
+      case '--use-session':            out.opts.useSession = true; break;
+      case '--save-session':           out.opts.saveSession = true; break;
+      case '--delete':                 out.opts.deleteSession = true; break;
+      case '--session': {
+        const path = next();
+        if (!path) die(2, '--session requires a path ending in auth/session.json');
+        out.opts.sessionPath = path;
+        break;
+      }
+      case '--session-ttl': {
+        const ttl = next();
+        if (!ttl) die(2, '--session-ttl requires a value such as 12h');
+        out.opts.sessionTtl = ttl;
+        break;
+      }
+      case '--username-env': {
+        const name = next();
+        if (!name) die(2, '--username-env requires an uppercase variable name');
+        out.opts.usernameEnv = name;
+        break;
+      }
+      case '--password-env': {
+        const name = next();
+        if (!name) die(2, '--password-env requires an uppercase variable name');
+        out.opts.passwordEnv = name;
+        break;
+      }
+      case '--password-stdin':         out.opts.passwordStdin = true; break;
+      case '--idp-origin': {
+        const origin = next();
+        if (!origin) die(2, '--idp-origin requires an absolute origin');
+        out.opts.idpOrigins.push(origin);
+        break;
+      }
       case '--heal':                       out.opts.heal = true; break;
       case '--bug': {
         const fp = next();
@@ -231,11 +298,14 @@ function parseArgs(argv: string[]): Parsed {
         out.opts.repeat = n;
         break;
       }
-      default:
+      default: {
+        const rejected = rejectCredentialArg(a);
+        if (rejected) die(2, rejected);
         if (a.startsWith('-')){
           die(2, `Unknown flag: ${a}`);
         }
         out.positional.push(a);
+      }
     }
   }
 
@@ -331,6 +401,8 @@ Commands:
   ${tty('diff', 'cyan')} <runA> <runB>         Diff two stored runs by bug fingerprint.
   ${tty('report', 'cyan')} [<runId>]           Pretty-print a stored run.
   ${tty('open', 'cyan')} [<runId>]             Print local evidence paths. Unreleased in this tree.
+  ${tty('auth', 'cyan')} login <url>           Headed local sign-in. Saves auth/session.json.
+  ${tty('auth', 'cyan')} logout --delete       Deletes that local file. Does not sign the site out.
   ${tty('help', 'cyan')} [<command>]           Show help (this page or per-command).
   ${tty('version', 'cyan')}                    Print engine version and exit.
 
@@ -357,6 +429,18 @@ Common flags (apply to most commands):
       --no-fail-on-5xx       Keep those 5xx responses as evidence only
       --inbox <module>       Module that exports your InboxProvider (no hosted inbox)
       --inbox-http <url>     Your HTTP inbox API (MONKEYTEST_INBOX_TOKEN). No default host.
+      --auth manual          Headed sign-in for this run. No password flag.
+      --use-session          Load the local session file for this command only.
+      --save-session         Write auth/session.json after a successful sign-in.
+      --session <path>       Session file. Must be named auth/session.json.
+      --session-ttl <dur>    Opt-in expiry: 30m, 12h, or 7d. No default.
+      --username-env <NAME>  Env var NAME for the account. Not the account itself.
+      --password-env <NAME>  Env var NAME for the password. Not the password.
+      --password-stdin       Hidden prompt, or one stdin line when there is no TTY.
+      --idp-origin <origin>  Extra origin allowed during sign-in. Repeatable.
+
+Env vars named above are visible to the shell, CI logs, and process listings.
+Do not pass the password as an argument. The hosted product does not take these credentials.
 
 Exit codes: 0 ok · 1 bugs still firing · 2 bad args / setup · 3 engine error.
 
@@ -415,6 +499,21 @@ Unreleased: this command is in this source tree and is not in the published
 npm dist-tags. Print the absolute path of a stored run and the screenshot
 and WebM paths already recorded on it. Does not upload them, does not fetch
 the site, and does not launch a browser. Defaults to "latest".`,
+    auth: `monkeytest auth login <url> [--idp-origin <origin>] [--session-ttl 12h]
+Open a headed browser on that exact origin. You log in, including MFA or SSO.
+Press Enter here to save .monkeytest/auth/session.json (file mode 600, directory mode 700).
+The file is not uploaded. Deleting it later does not sign the website out.
+
+monkeytest auth logout --delete
+Remove the local file only.
+
+Form login, instead of the headed browser:
+  monkeytest run <url> --username-env MONKEYTEST_USERNAME --password-env MONKEYTEST_PASSWORD
+  monkeytest run <url> --username-env MONKEYTEST_USERNAME --password-stdin
+
+Those are variable names, not secret values. A rerun does not reuse the session
+unless you pass --use-session or a new password reference. An expired session
+is expired. It is not a verified run.`,
   };
   console.log(text[cmd] || `No help for "${cmd}". Try \`monkeytest help\`.`);
 
@@ -446,6 +545,7 @@ async function cmdInit(opts: CommonOpts){
       '# MonkeyTest local artefacts',
       'shots/',
       'runs/',
+      'auth/',
       '*.tmp',
       '',
       '# Keep config + plan tracked',
@@ -458,12 +558,105 @@ async function cmdInit(opts: CommonOpts){
 
   console.log(`${tty('✓', 'green')} Initialised ${tty(relative(process.cwd(), dir) || '.', 'cyan')}/`);
   console.log(`  Tracked:    config.json, plan.json (after first run)`);
-  console.log(`  Ignored:    shots/, runs/`);
+  console.log(`  Ignored:    shots/, runs/, auth/`);
   console.log(`\nNext: ${tty('monkeytest run https://example.com', 'cyan')}`);
+}
+
+type PreparedAuth =
+  | { kind: 'anonymous' }
+  | { kind: 'blocked'; run: RunResult; exitCode: number }
+  | { kind: 'ready'; storageState: AuthStorageState; authOrigin: AuthOriginPolicy; metadata: AuthPublicMetadata };
+
+function authBind(prepared: PreparedAuth) {
+  if (prepared.kind !== 'ready') return undefined;
+  return {
+    targetOrigin: prepared.authOrigin.targetOrigin,
+    idpOrigins: prepared.authOrigin.idpOrigins,
+    storageState: prepared.storageState,
+    ...(prepared.metadata.expiresAt ? { expiresAt: prepared.metadata.expiresAt } : {}),
+  };
+}
+
+async function prepareAuth(
+  url: string,
+  opts: CommonOpts,
+  extra: { prior?: AuthPublicMetadata; persist?: boolean } = {},
+): Promise<PreparedAuth> {
+  const persist = Boolean(extra.persist || opts.saveSession);
+  const fresh = Boolean(opts.passwordEnv || opts.passwordStdin);
+  const wants = opts.authManual || opts.useSession || fresh || persist || extra.prior?.outcome === 'authenticated';
+  if (!wants) return { kind: 'anonymous' };
+  if (opts.sessionTtl && !persist) die(2, '--session-ttl applies when saving a session (--save-session or auth login).');
+  let sessionTtlMs: number | undefined;
+  try { sessionTtlMs = parseTtl(opts.sessionTtl); }
+  catch (err) { die(2, err instanceof Error ? err.message : String(err)); }
+  if (opts.authManual && !process.stdin.isTTY) {
+    die(2, 'Manual login needs a terminal so you can finish SSO or a second factor. Nothing was opened.');
+  }
+  let passwordFromStdin: string | undefined;
+  if (opts.passwordStdin) passwordFromStdin = await readSecretLine({ prompt: 'Password (input hidden): ' });
+  const sessionPath = (opts.useSession || persist) ? (opts.sessionPath || defaultSessionPath(opts.dir)) : undefined;
+  const resolution = await resolveAuthInvocation({
+    targetUrl: url,
+    idpOrigins: opts.idpOrigins,
+    usernameEnv: opts.usernameEnv,
+    passwordEnv: opts.passwordEnv,
+    passwordFromStdin,
+    useSession: opts.useSession,
+    saveSession: persist,
+    sessionPath,
+    sessionTtlMs,
+    manual: opts.authManual,
+    priorAuthenticated: extra.prior?.outcome === 'authenticated',
+    headless: opts.authManual ? false : opts.headless,
+    settle: opts.authManual
+      ? async () => { await readSecretLine({ prompt: 'Log in in the browser, including any second factor, then press Enter. ' }); }
+      : undefined,
+  });
+  if (resolution.kind === 'anonymous') return { kind: 'anonymous' };
+  if (resolution.kind === 'blocked') {
+    const run = triage(authBlockedRun(url, resolution.result.metadata));
+    return { kind: 'blocked', run, exitCode: authProcessExit(resolution.result.metadata.outcome, resolution.result.setup) };
+  }
+  return {
+    kind: 'ready',
+    storageState: resolution.result.storageState,
+    authOrigin: resolution.result.authOrigin,
+    metadata: resolution.result.metadata,
+  };
+}
+
+function finishBlockedAuth(run: RunResult, exitCode: number, opts: CommonOpts): void {
+  const { path: runFile, id } = saveRun(run, { dir: opts.dir, engine: ENGINE_LABEL });
+  if (opts.json) console.log(JSON.stringify({ run, runId: id, runFile }, null, 2));
+  else {
+    console.log(summariseRun(run));
+    console.log(`  ${tty('run', 'dim')} → ${relative(process.cwd(), runFile)}`);
+  }
+  process.exit(exitCode);
+}
+
+async function cmdAuth(positional: string[], opts: CommonOpts) {
+  const sub = positional[0];
+  if (sub === 'logout') {
+    const result = deleteAuthSession(opts.sessionPath || defaultSessionPath(opts.dir), { confirm: opts.deleteSession });
+    console.log(result.detail);
+    if (!opts.deleteSession) process.exit(2);
+    return;
+  }
+  if (sub !== 'login') die(2, 'Usage: monkeytest auth login <url> | monkeytest auth logout --delete');
+  const url = positional[1];
+  if (!url) die(2, 'Usage: monkeytest auth login <url>');
+  opts.authManual = true;
+  const prepared = await prepareAuth(url, opts, { persist: true });
+  if (prepared.kind === 'blocked') return finishBlockedAuth(prepared.run, prepared.exitCode, opts);
+  console.log('Saved the local session file. It was not uploaded. A later run needs --use-session. Deleting the file does not sign the website out.');
 }
 
 async function cmdExplore(url: string | undefined, opts: CommonOpts){
   if (!url) die(2, 'Usage: monkeytest explore <url>');
+  const prepared = await prepareAuth(url, opts);
+  if (prepared.kind === 'blocked') return finishBlockedAuth(prepared.run, prepared.exitCode, opts);
   ensureLLMReady(opts);
 
   const monkey = new Monkey({ llm: buildLLMConfig(opts), plannerModel: opts.plannerModel, strictOracles: true, failOn5xx: opts.failOn5xx });
@@ -474,10 +667,11 @@ async function cmdExplore(url: string | undefined, opts: CommonOpts){
   mkdirSync(screenshotsDir, { recursive: true });
 
   const { siteMap, plan } = await monkey.exploreAndPlan(url, {
+    ...(authBind(prepared) ? { auth: authBind(prepared) } : {}),
     explore: {
       maxPages: opts.maxPages,
       headless: opts.headless,
-      screenshotsDir,
+      screenshotsDir: prepared.kind === 'ready' ? undefined : screenshotsDir,
       pageTimeoutMs: opts.pageTimeoutMs,
       onPage: (p) => console.log(`  · visited [${p.authGated ? 'auth' : 'open'}] ${p.url} — ${truncate(p.summary, 80)}`),
     },
@@ -500,6 +694,8 @@ async function cmdExplore(url: string | undefined, opts: CommonOpts){
 
 async function cmdRun(url: string | undefined, opts: CommonOpts){
   if (!url) die(2, 'Usage: monkeytest run <url>');
+  const prepared = await prepareAuth(url, opts);
+  if (prepared.kind === 'blocked') return finishBlockedAuth(prepared.run, prepared.exitCode, opts);
   ensureLLMReady(opts);
 
   const screenshotsDir = resolve(opts.dir, 'shots');
@@ -511,10 +707,11 @@ async function cmdRun(url: string | undefined, opts: CommonOpts){
 
   const t0 = Date.now();
   const { siteMap, plan, run } = await monkey.executeAndTriage(url, {
+    ...(authBind(prepared) ? { auth: authBind(prepared) } : {}),
     explore: {
       maxPages: opts.maxPages,
       headless: opts.headless,
-      screenshotsDir,
+      screenshotsDir: prepared.kind === 'ready' ? undefined : screenshotsDir,
       pageTimeoutMs: opts.pageTimeoutMs,
       onPage: (p) => console.log(`  · visited ${p.url}`),
     },
@@ -582,6 +779,8 @@ async function cmdRerun(runId: string | undefined, opts: CommonOpts){
 }
 
 async function replayStoredRun(stored: StoredRun, traces: FlowTrace[], opts: CommonOpts){
+  const prepared = await prepareAuth(stored.run.startUrl, opts, { prior: stored.run.auth });
+  if (prepared.kind === 'blocked') return finishBlockedAuth(prepared.run, prepared.exitCode, opts);
   if (opts.heal) ensureLLMReady(opts);
 
   const screenshotsDir = resolve(opts.dir, 'shots');
@@ -596,8 +795,10 @@ async function replayStoredRun(stored: StoredRun, traces: FlowTrace[], opts: Com
     llm: opts.heal ? runnerLLM(opts) : undefined,
     strictOracles: true,
     failOn5xx: opts.failOn5xx,
+    ...(prepared.kind === 'ready' ? { storageState: prepared.storageState, authOrigin: prepared.authOrigin } : {}),
   });
-  const run = triage(raw, { failOn5xx: opts.failOn5xx });
+  const triaged = triage(raw, { failOn5xx: opts.failOn5xx });
+  const run = prepared.kind === 'ready' ? { ...triaged, auth: prepared.metadata } : triaged;
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
   const { path: runFile, id: newRunId } = saveRun(run, {
     dir: opts.dir,
@@ -619,8 +820,6 @@ async function replayStoredRun(stored: StoredRun, traces: FlowTrace[], opts: Com
 }
 
 async function rerunStoredPlan(stored: StoredRun | undefined, opts: CommonOpts){
-  ensureLLMReady(opts);
-
   // Resolve plan: an explicit run means "use the plan stored alongside that run",
   // otherwise just load the canonical plan.json.
   let storedPlan;
@@ -636,6 +835,9 @@ async function rerunStoredPlan(stored: StoredRun | undefined, opts: CommonOpts){
     storedPlan = loadPlan(opts.dir);
     planSource = resolve(opts.dir, 'plan.json');
   }
+  const prepared = await prepareAuth(storedPlan.plan.startUrl, opts, { prior: stored?.run.auth ?? storedPlan.plan.auth });
+  if (prepared.kind === 'blocked') return finishBlockedAuth(prepared.run, prepared.exitCode, opts);
+  ensureLLMReady(opts);
 
   const screenshotsDir = resolve(opts.dir, 'shots');
   mkdirSync(screenshotsDir, { recursive: true });
@@ -645,6 +847,7 @@ async function rerunStoredPlan(stored: StoredRun | undefined, opts: CommonOpts){
 
   const t0 = Date.now();
   const { run } = await monkey.runFromPlan(storedPlan.plan, {
+    ...(authBind(prepared) ? { auth: authBind(prepared) } : {}),
     run: {
       screenshotsDir,
       headless: opts.headless,
@@ -682,6 +885,8 @@ async function rerunStoredPlan(stored: StoredRun | undefined, opts: CommonOpts){
 
 async function cmdVerify(positional: string | undefined, opts: CommonOpts){
   const stored = resolveStoredRun(positional, opts);
+  const prepared = await prepareAuth(stored.run.startUrl, opts, { prior: stored.run.auth });
+  if (prepared.kind === 'blocked') return finishBlockedAuth(prepared.run, prepared.exitCode, opts);
   if (opts.bug && !stored.run.bugs.some(bug => bugMatchesFingerprint(bug, opts.bug!))){
     const known = stored.run.bugs.map(bug => bug.fingerprint).slice(0, 8).join(', ');
     die(2, `No bug with fingerprint ${opts.bug} on run ${stored.id}.${known ? ` Known: ${known}` : ''}`);
@@ -699,6 +904,7 @@ async function cmdVerify(positional: string | undefined, opts: CommonOpts){
   const report = await verifyBugs(stored.run, {
     screenshotsDir,
     headless: opts.headless,
+    ...(prepared.kind === 'ready' ? { storageState: prepared.storageState, authOrigin: prepared.authOrigin } : {}),
     heal: opts.heal,
     llm: opts.heal ? runnerLLM(opts) : undefined,
     repeat: opts.repeat,
@@ -1048,6 +1254,7 @@ async function main(){
     case 'diff':    return cmdDiff(args.positional[0], args.positional[1], args.opts);
     case 'report':  return cmdReport(args.positional[0], args.opts);
     case 'open':    return cmdOpen(args.positional[0], args.opts);
+    case 'auth':    return cmdAuth(args.positional, args.opts);
     default:
       console.error(tty(`Unknown command: ${args.command}`, 'red'));
       printHelp();

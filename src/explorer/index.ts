@@ -30,6 +30,9 @@
  */
 
 import { chromium, type APIRequestContext, type Browser, type Page } from 'playwright';
+import { openFencedContext } from '../auth/browser.js';
+import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
+import { captureDisabled, redactValue, secretNeedles } from '../auth/redact.js';
 import { basename } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -91,6 +94,9 @@ export interface ExploreOptions {
   onPage?: (page: SiteMapPage) => void;
   /** Optional live event bus. Receives explorer lifecycle events. */
   events?: EventBus;
+  /** Signed-in jar. Pair with authOrigin. Not copied onto the site map. */
+  storageState?: AuthStorageState;
+  authOrigin?: AuthOriginPolicy;
 }
 
 export async function explore(
@@ -129,11 +135,13 @@ export async function explore(
 
   try {
 
-    const context = await browser.newContext({
+    const context = await openFencedContext(browser, {
       userAgent:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/537.36 '
         + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 monkeytest.ai',
       viewport: { width: 1280, height: 800 },
+      storageState: opts.storageState,
+      authOrigin: opts.authOrigin,
     });
     await installPageNameHelper(context);
 
@@ -186,13 +194,11 @@ export async function explore(
           continue;
         }
 
-        const skeleton = await scrapePageSkeleton(page);
+        const skeleton = redactValue(await scrapePageSkeleton(page), secretNeedles(opts.storageState));
 
-        // Screenshot each visited page if a directory was provided. Filename
-        // is a deterministic, filesystem-safe hash of the URL so subsequent
-        // runs can reference the same path.
+        // A signed-in crawl does not take screenshots. Pixels cannot be scrubbed.
         let screenshotPath: string | undefined;
-        if (screenshotsDir){
+        if (screenshotsDir && !opts.storageState && !captureDisabled(page)){
           const filename = `page-${pages.length + 1}-${slugifyUrl(url)}.png`;
           const fullPath = join(screenshotsDir, filename);
           try {
@@ -338,7 +344,7 @@ export async function explore(
       },
     });
 
-    return {
+    return redactValue({
       startUrl,
       siteType: overall.siteType,
       summary: overall.summary,
@@ -350,7 +356,7 @@ export async function explore(
       pendingUrls: queue.map(item => item.url),
       failedUrls: failures,
       ...(warnings.length ? { warnings } : {}),
-    };
+    }, secretNeedles(opts.storageState));
 
   } finally {
     await browser.close().catch(() => {});

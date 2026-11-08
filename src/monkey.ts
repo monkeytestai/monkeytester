@@ -22,6 +22,9 @@ import { BASIC_PRESET } from './depth.js';
 import { plannerBudgetMs } from './budget.js';
 import { verifyBugs, type VerifyOptions, type VerifyReport } from './verify/index.js';
 import { EventBus, noopBus } from './events.js';
+import { bindAuthProvider, type AuthBindInput } from './auth/bind.js';
+import type { AuthOriginPolicy, AuthPublicMetadata, AuthStorageState } from './auth/contract.js';
+import { authBlockedRun, publicMetadata } from './auth/report.js';
 import type {
   MonkeyLLMConfig,
   SiteMap,
@@ -85,6 +88,8 @@ export interface ExploreAndPlanOptions {
   plan?: PlannerOptions;
   /** Optional live event bus. Receives `LiveEvent`s for the explorer + planner phases. */
   events?: EventBus;
+  /** In-memory session bound before explore and plan. Not read from a previous run. */
+  auth?: AuthBindInput;
 }
 
 export interface ExecuteOptions extends ExploreAndPlanOptions {
@@ -105,6 +110,8 @@ export interface ExecuteFromPlanOptions {
   run: RunnerOptions;
   /** Optional live event bus. Receives runner + triager events only. */
   events?: EventBus;
+  /** Fresh session for this rerun. A previous plan does not carry a jar. */
+  auth?: AuthBindInput;
 }
 
 export class Monkey {
@@ -151,15 +158,23 @@ export class Monkey {
   ): Promise<{ siteMap: SiteMap; plan: TestPlan }> {
 
     const events = opts.events ?? noopBus();
+    const gate = await gateCustomerAuth(opts.auth);
+    if (!gate.ok) {
+      return {
+        siteMap: emptySiteMap(startUrl, gate.metadata.detail),
+        plan: { startUrl, siteType: 'unknown', flows: [], notes: gate.metadata.detail, auth: gate.metadata },
+      };
+    }
 
-    const siteMap = await explore(startUrl, this.explorerLLM, { ...opts.explore, events });
+    const siteMap = await explore(startUrl, this.explorerLLM, { ...opts.explore, events, ...gate.browser });
     const testPlan = await plan(siteMap, this.plannerLLM, {
       ...opts.plan,
       maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
       signupInbox: opts.plan?.signupInbox === true || Boolean(this.inbox),
+      signedIn: Boolean(gate.browser.storageState),
       events,
     });
-    return { siteMap, plan: testPlan };
+    return { siteMap, plan: gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan };
 
   }
 
@@ -178,11 +193,19 @@ export class Monkey {
     const events = opts.events ?? noopBus();
     const budgetMs = opts.run.totalBudgetMs;
     const deadlineAt = opts.run.deadlineAt ?? (budgetMs ? Date.now() + budgetMs : undefined);
+    const gate = await gateCustomerAuth(opts.auth);
+    if (!gate.ok) {
+      const blockedPlan: TestPlan = {
+        startUrl, siteType: 'unknown', flows: [], notes: gate.metadata.detail, auth: gate.metadata,
+      };
+      return { siteMap: emptySiteMap(startUrl, gate.metadata.detail), plan: blockedPlan, run: authBlockedRun(startUrl, gate.metadata) };
+    }
 
     const siteMap = await explore(startUrl, this.explorerLLM, {
       ...opts.explore,
       events,
       pageTimeoutMs: opts.explore?.pageTimeoutMs ?? (budgetMs ? BASIC_PRESET.pageTimeoutMs : undefined),
+      ...gate.browser,
     });
 
     let testPlan: TestPlan;
@@ -192,6 +215,7 @@ export class Monkey {
         ...opts.plan,
         maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
         signupInbox: opts.plan?.signupInbox === true || Boolean(opts.run.inbox ?? this.inbox),
+        signedIn: Boolean(gate.browser.storageState),
         events,
       }));
     } catch (err) {
@@ -244,6 +268,7 @@ export class Monkey {
         inbox: opts.run.inbox ?? this.inbox,
         strictOracles: opts.run.strictOracles ?? this.strictOracles,
         failOn5xx: opts.run.failOn5xx ?? this.failOn5xx,
+        ...gate.browser,
       });
       events.emit({
         phase: 'runner', type: 'run.complete',
@@ -300,7 +325,11 @@ export class Monkey {
       notes: testPlan.notes,
     });
 
-    return { siteMap, plan: testPlan, run: withRunWarnings(run, siteMap, testPlan) };
+    const stampedPlan = gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan;
+    const stampedRun = gate.metadata
+      ? { ...withRunWarnings(run, siteMap, stampedPlan), auth: gate.metadata }
+      : withRunWarnings(run, siteMap, testPlan);
+    return { siteMap, plan: stampedPlan, run: stampedRun };
 
   }
 
@@ -332,6 +361,10 @@ export class Monkey {
   ): Promise<{ plan: TestPlan; run: RunResult }> {
 
     const events = opts.events ?? noopBus();
+    const denied = rerunWithoutAuth(testPlan.auth, Boolean(opts.auth || opts.run.storageState), testPlan.startUrl);
+    if (denied) return { plan: testPlan, run: denied };
+    const gate = await gateCustomerAuth(opts.auth);
+    if (!gate.ok) return { plan: { ...testPlan, auth: gate.metadata }, run: authBlockedRun(testPlan.startUrl, gate.metadata) };
 
     if (testPlan.flows.length === 0){
       events.emit({
@@ -354,6 +387,7 @@ export class Monkey {
         inbox: opts.run.inbox ?? this.inbox,
         strictOracles: opts.run.strictOracles ?? this.strictOracles,
         failOn5xx: opts.run.failOn5xx ?? this.failOn5xx,
+        ...gate.browser,
       });
       events.emit({
         phase: 'runner', type: 'run.complete',
@@ -394,7 +428,10 @@ export class Monkey {
     }
 
     run = await applyPlannerVerdict(run, this.plannerLLM, { notes: testPlan.notes });
-    return { plan: testPlan, run };
+    return {
+      plan: gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan,
+      run: gate.metadata ? { ...run, auth: gate.metadata } : run,
+    };
 
   }
 
@@ -405,8 +442,12 @@ export class Monkey {
    */
   async replayRecorded(
     source: RunResult,
-    opts: ReplayOptions & { heal?: boolean },
+    opts: ReplayOptions & { heal?: boolean; auth?: AuthBindInput },
   ): Promise<{ run: RunResult }> {
+    const denied = rerunWithoutAuth(source.auth, Boolean(opts.auth || opts.storageState), source.startUrl);
+    if (denied) return { run: denied };
+    const gate = await gateCustomerAuth(opts.auth);
+    if (!gate.ok) return { run: authBlockedRun(source.startUrl, gate.metadata) };
     const traces = source.flows
       .map(flow => flow.trace)
       .filter((trace): trace is NonNullable<typeof trace> => !!trace && trace.steps.length > 0);
@@ -417,11 +458,13 @@ export class Monkey {
       inbox: opts.inbox ?? this.inbox,
       strictOracles: opts.strictOracles ?? this.strictOracles,
       failOn5xx: opts.failOn5xx ?? this.failOn5xx,
+      ...gate.browser,
     });
     const failOn5xx = opts.failOn5xx ?? this.failOn5xx;
-    const run = this.triagerLLM
+    const triaged = this.triagerLLM
       ? await triagePolished(raw, { llm: this.triagerLLM, failOn5xx })
       : triage(raw, { failOn5xx });
+    const run = gate.metadata ? { ...triaged, auth: gate.metadata } : triaged;
     return { run };
   }
 
@@ -540,6 +583,39 @@ function withRunWarnings(run: RunResult, siteMap: SiteMap, plan: TestPlan): RunR
  * it so the checks keep the reserve. A slow model rejects into the caller's
  * grounded fallback instead of holding the run until the checks are starved.
  */
+async function gateCustomerAuth(auth?: AuthBindInput): Promise<
+  | { ok: false; metadata: AuthPublicMetadata }
+  | { ok: true; metadata?: AuthPublicMetadata; browser: { storageState?: AuthStorageState; authOrigin?: AuthOriginPolicy } }
+> {
+  if (!auth) return { ok: true, browser: {} };
+  const bound = await bindAuthProvider(auth);
+  if (!bound.ok) return { ok: false, metadata: bound.metadata };
+  return { ok: true, metadata: bound.metadata, browser: { storageState: bound.storageState, authOrigin: bound.authOrigin } };
+}
+
+function rerunWithoutAuth(prior: AuthPublicMetadata | undefined, hasFresh: boolean, startUrl: string): RunResult | undefined {
+  if (prior?.outcome !== 'authenticated' || hasFresh) return undefined;
+  return authBlockedRun(startUrl, publicMetadata({
+    mode: prior.mode,
+    outcome: 'not_authorized',
+    policy: { targetOrigin: prior.targetOrigin, idpOrigins: prior.idpOrigins },
+    custody: prior.custody,
+    detail: 'Our test couldn\'t complete the run because the previous sign-in is not copied onto a rerun. Pass a new in-memory session or --use-session. This is not a verified run.',
+  }));
+}
+
+function emptySiteMap(startUrl: string, detail: string): SiteMap {
+  return {
+    startUrl,
+    siteType: 'unknown',
+    summary: detail,
+    pages: [],
+    pendingUrls: [],
+    failedUrls: [],
+    pagesExplored: 0,
+  };
+}
+
 async function planWithinBudget(limitMs: number | undefined, work: () => Promise<TestPlan>): Promise<TestPlan> {
   if (limitMs === undefined) return work();
   if (limitMs <= 0) {

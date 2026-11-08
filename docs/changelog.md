@@ -1,6 +1,10 @@
 # Changelog
 
-The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm channels, this tree, and the hosted service are different: [Versions](/getting-started/versions). A registry check on 8 Nov 2026 at 10:16 IST reported `latest` 0.7.1 and `next` 0.7.2-beta.2. That is not a pin and not the hosted product.
+The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm channels, this tree, and the hosted service are different: [Versions](/getting-started/versions). A registry check on 8 Nov 2026 at 10:16 IST reported `latest` 0.7.1 and `next` 0.7.2-beta.2. That is not a pin and not the hosted product. This branch does not publish.
+
+## Unreleased
+
+- Local existing-account sign-in (`auth login`, or env-var names for a form). The session file stays on the machine. `AUTH_PROVIDER_CONTRACT` is `monkeytester.auth.provider.v1` for a later server pin. The hosted product does not sign in yet.
 
 ## 0.7.2-beta.2
 

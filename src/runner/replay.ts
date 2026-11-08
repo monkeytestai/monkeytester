@@ -65,6 +65,9 @@ import {
   settleActionBrowserError,
 } from './browserError.js';
 import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, setStepIntent, type SensitiveKind } from './sensitive.js';
+import { openFencedContext } from '../auth/browser.js';
+import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
+import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
 import { authCheckForFlowId, isAuthNegativeFlowId } from '../planner/authNegative.js';
 import { isSignupFlowId, signupCheckForFlowId } from '../signup/plan.js';
 import { runAuthCheck } from './authNegative.js';
@@ -111,6 +114,8 @@ export interface ReplayOptions {
   inbox?: InboxProvider;
   /** Same allow-list as `RunnerOptions.allowSensitive`. */
   allowSensitive?: SensitiveKind[];
+  storageState?: AuthStorageState;
+  authOrigin?: AuthOriginPolicy;
 }
 
 export async function replayTraces(
@@ -138,7 +143,7 @@ export async function replayTraces(
     if (owned) await browser.close().catch(() => {});
   }
 
-  return {
+  return redactValue({
     startUrl: traces[0]?.startUrl || '',
     startedAt,
     finishedAt: new Date().toISOString(),
@@ -146,7 +151,7 @@ export async function replayTraces(
     bugs: [],
     stats: aggregate(flows),
     ...signupFields(signup),
-  };
+  }, secretNeedles(opts.storageState));
 }
 
 async function runOneTrace(
@@ -531,6 +536,7 @@ async function playEngineStep(
       timeoutMs,
       llm: opts.llm ?? silentLlm,
       fallbacks: { used: opts.llm ? 0 : 1 },
+      readMostly: Boolean(opts.storageState),
     });
     return {
       action: { tool: outcome.tool, target: outcome.target, value: outcome.value },
@@ -627,6 +633,7 @@ async function playStep(
     const outcome = await executeAction(page, action, timeoutMs, {
       strictOracles: opts.strictOracles,
       intent: recorded.action,
+      readMostly: Boolean(opts.storageState),
     });
     return { action, locator: recorded.locator, outcome, resolution: 'recorded' };
   }
@@ -641,6 +648,7 @@ async function playStep(
     const outcome = await executeAction(page, asked, timeoutMs, {
       strictOracles: opts.strictOracles,
       intent: recorded.action,
+      readMostly: Boolean(opts.storageState),
     });
     return { action: matched, locator, outcome, resolution: 'recorded' };
   }
@@ -656,6 +664,7 @@ async function playStep(
       const outcome = await executeAction(page, asked, timeoutMs, {
         strictOracles: opts.strictOracles,
         intent: recorded.action,
+        readMostly: Boolean(opts.storageState),
       });
       return {
         action: recovered,
@@ -695,6 +704,7 @@ async function playStep(
     const outcome = await executeAction(page, asked, timeoutMs, {
       strictOracles: opts.strictOracles,
       intent: recorded.action,
+      readMostly: Boolean(opts.storageState),
     });
     return {
       action: healed,
@@ -995,16 +1005,21 @@ function blockedResult(recorded: TraceStep, observation: string): StepResult {
 }
 
 async function openContext(browser: Browser, opts: ReplayOptions & { screenshotsDir: string }): Promise<BrowserContext> {
-  const context = await browser.newContext({
+  const context = await openFencedContext(browser, {
     userAgent:
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/537.36 '
       + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 monkeytest.ai',
     viewport: { width: 1280, height: 800 },
-    ...(opts.recordVideo === false ? {} : {
+    ...(opts.recordVideo === false || opts.storageState ? {} : {
       recordVideo: { dir: opts.screenshotsDir, size: { width: 1280, height: 800 } },
     }),
+    storageState: opts.storageState,
+    authOrigin: opts.authOrigin,
   });
   await installPageNameHelper(context);
+  context.on('page', page => {
+    if (opts.storageState) rememberPageSecrets(page, secretNeedles(opts.storageState), true);
+  });
   return context;
 }
 
@@ -1015,6 +1030,7 @@ async function shot(
   index: number,
   status: string,
 ): Promise<string | undefined> {
+  if (captureDisabled(page)) return undefined;
   const filename = `replay-${slug(flowId)}-step-${String(index).padStart(2, '0')}-${status}.png`;
   const fullPath = join(dir, filename);
   try {

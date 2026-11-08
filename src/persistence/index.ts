@@ -35,6 +35,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename, join } from 'node:path';
+import { stringifyPersisted } from '../auth/redact.js';
 import type { TestPlan, RunResult } from '../types.js';
 
 /** Bumped only on backwards-incompatible changes. */
@@ -88,7 +89,7 @@ export function savePlan(
     plan,
   };
 
-  writeFileSync(file, JSON.stringify(stored, null, 2));
+  writeFileSync(file, stringifyPersisted(stored));
   return file;
 
 }
@@ -164,7 +165,7 @@ export function saveRun(
     run,
   };
 
-  writeFileSync(file, JSON.stringify(stored, null, 2));
+  writeFileSync(file, stringifyPersisted(stored));
   return { path: file, id };
 
 }

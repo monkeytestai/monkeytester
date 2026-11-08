@@ -97,6 +97,9 @@ import {
   settleActionBrowserError,
 } from './browserError.js';
 import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, setStepIntent, type SensitiveKind } from './sensitive.js';
+import { openFencedContext } from '../auth/browser.js';
+import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
+import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
 
 export interface RunnerOptions {
   /**
@@ -160,6 +163,9 @@ export interface RunnerOptions {
    * named here. Additive.
    */
   allowSensitive?: SensitiveKind[];
+  /** Customer session. Required together with authOrigin. Not copied onto the run. */
+  storageState?: AuthStorageState;
+  authOrigin?: AuthOriginPolicy;
 }
 
 export type RunnerEvent =
@@ -203,6 +209,8 @@ export async function runPlan(
           screenshotsDir,
           stepTimeoutMs: stepTimeout,
           deadlineAt: opts.deadlineAt,
+          storageState: opts.storageState,
+          authOrigin: opts.authOrigin,
           onFlowStart: item => {
             const index = plan.flows.findIndex(candidate => candidate.id === item.id);
             opts.onEvent?.({ type: 'flow.start', flowId: item.id, flow: item });
@@ -335,7 +343,7 @@ export async function runPlan(
   }
 
   const finishedAt = new Date().toISOString();
-  return {
+  return redactValue({
     startUrl: plan.startUrl,
     startedAt,
     finishedAt,
@@ -344,7 +352,7 @@ export async function runPlan(
     stats: aggregateStats(flows),
     engine_version: ENGINE_VERSION,
     ...signupFields(signup),
-  };
+  }, secretNeedles(opts.storageState));
 
 }
 
@@ -378,17 +386,19 @@ async function runFlow(
   // after context.close() resolves. The video covers the entire flow from the
   // first navigation to the final screenshot — exactly what you'd want to
   // replay when a test fails.
-  const context = await browser.newContext({
+  const context = await openFencedContext(browser, {
     userAgent:
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/537.36 '
       + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 monkeytest.ai',
     viewport: { width: 1280, height: 800 },
-    ...(opts.recordVideo === false ? {} : {
+    ...(opts.recordVideo === false || opts.storageState ? {} : {
       recordVideo: {
         dir: opts.screenshotsDir,
         size: { width: 1280, height: 800 },
       },
     }),
+    storageState: opts.storageState,
+    authOrigin: opts.authOrigin,
   });
   await installPageNameHelper(context);
 
@@ -400,6 +410,7 @@ async function runFlow(
   signal?.addEventListener('abort', onAbort, { once: true });
 
   const page = await context.newPage();
+  if (opts.storageState) rememberPageSecrets(page, secretNeedles(opts.storageState), true);
   await installSubmissionGuards(page, { inbox: Boolean(opts.inbox), allow: opts.allowSensitive });
   installDialogPolicy(page);
 
@@ -629,6 +640,7 @@ async function runFlow(
         timeoutMs: opts.stepTimeoutMs,
         llm,
         fallbacks: llmFallbacks,
+        readMostly: Boolean(opts.storageState),
       });
       const screenshotPath = await safeShot(page, opts.screenshotsDir, flow.id, stepIndex, outcome.status);
       const result: StepResult = {
@@ -849,6 +861,7 @@ async function runFlow(
     const executed = settleActionBrowserError(await executeAction(page, resolved, opts.stepTimeoutMs, {
       strictOracles: opts.strictOracles,
       intent: step.action,
+      readMostly: Boolean(opts.storageState),
       ...(settled ? { located: settled } : {}),
     }), safePageUrl(page), evidence.networkByStep.get(stepIndex));
     if (executed.resolved) resolved = executed.resolved;
@@ -1056,6 +1069,7 @@ async function safeShot(
   index: number,
   status: StepStatus,
 ): Promise<string | undefined> {
+  if (captureDisabled(page)) return undefined;
 
   const filename = `flow-${slug(flowId)}-step-${String(index).padStart(2, '0')}-${status}.png`;
   const fullPath = join(dir, filename);

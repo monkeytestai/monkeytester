@@ -10,6 +10,9 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Browser, Page, Response } from 'playwright';
+import { openFencedContext } from '../auth/browser.js';
+import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
+import { captureDisabled } from '../auth/redact.js';
 import type {
   ConsoleErrorEvidence,
   FlowResult,
@@ -79,6 +82,8 @@ export interface ExecuteChecksOptions {
   onFlowStart?: (flow: TestFlow) => void;
   onStep?: (flow: TestFlow, result: StepResult) => void;
   onFlowComplete?: (result: FlowResult) => void;
+  storageState?: AuthStorageState;
+  authOrigin?: AuthOriginPolicy;
 }
 
 const buckets = new WeakMap<Page, Collected>();
@@ -209,8 +214,16 @@ export async function executePageChecks(
   mkdirSync(opts.screenshotsDir, { recursive: true });
   for (const flow of flows) opts.onFlowStart?.(flow);
 
-  const desktop = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-  const mobile = await browser.newContext({ viewport: MOBILE_VIEWPORT });
+  const desktop = await openFencedContext(browser, {
+    viewport: { width: 1280, height: 720 },
+    storageState: opts.storageState,
+    authOrigin: opts.authOrigin,
+  });
+  const mobile = await openFencedContext(browser, {
+    viewport: MOBILE_VIEWPORT,
+    storageState: opts.storageState,
+    authOrigin: opts.authOrigin,
+  });
   const desktopPage = await desktop.newPage();
   const mobilePage = await mobile.newPage();
   const linkBudget: LinkBudget = { remaining: BROKEN_LINK_CAP };
@@ -615,7 +628,7 @@ async function record(
     ...(outcome.suggestions?.length ? { suggestions: outcome.suggestions } : {}),
     ...(outcome.axeRules?.length ? { axeRules: outcome.axeRules } : {}),
   };
-  if (outcome.status === 'failed' && page) {
+  if (outcome.status === 'failed' && page && !opts.storageState && !captureDisabled(page)) {
     const path = shotPath(opts.screenshotsDir, flow.id, index, outcome.status);
     try {
       await page.screenshot({ path, fullPage: false });
