@@ -1,0 +1,7 @@
+# Served from this repository's docs/public/robots.txt.
+# The HTML is crawlable without JavaScript. Sitemap is emitted by the VitePress build.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://docs.monkeytest.ai/sitemap.xml

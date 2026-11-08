@@ -8,7 +8,7 @@ You give it a URL. It opens Chromium with Playwright, decides what a person migh
 
 The package is [`@monkeytestai/monkeytester`](https://www.npmjs.com/package/@monkeytestai/monkeytester). The binary is `monkeytest`. It needs Node.js 20 or newer. The license is AGPL-3.0-only.
 
-npm `latest` is **0.6.1**. Pre-release builds publish on the **`next`** tag. These pages describe `main` (currently `0.7.0-beta.3` in this repository).
+npm dist-tag `latest` is the stable channel. npm dist-tag `next` is the pre-release channel. These pages describe this repository. The engine version is `package.json`, not the hosted product. Channels, the 8 Nov 2026 registry observation, and the hosted 0.7.0 service are separated in [Versions](/getting-started/versions).
 
 ## What a run is
 
@@ -23,7 +23,7 @@ Four phases, then a file you can keep:
 
 ## What it is not
 
-It does not replace a script you already trust for a checkout or a login. [Playwright](https://playwright.dev/docs/intro) is the framework for those tests. monkeytester looks for the cases the script did not name. See [How is this different?](/guides/how-is-this-different).
+It does not replace a script you already trust for a checkout or a login. [Playwright Test](https://playwright.dev/docs/intro) is the framework for those tests, and Playwright Test Agents plan, generate, and heal them. monkeytester looks for cases the script did not name, then stores a plan you can rerun. It is not a hosted REST API and it does not ship an MCP server. See [How is this different?](/guides/how-is-this-different).
 
 It is not a load tester. axe-core runs as one page check (WCAG A/AA). That check is not a full accessibility audit.
 

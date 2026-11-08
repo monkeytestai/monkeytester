@@ -27,7 +27,9 @@ test -f dist/cli.js
 node scripts/smoke.mjs
 ```
 
-`npm run build` has to leave `dist/cli.js` in place. `scripts/smoke.mjs` crawls `https://example.com` with a stub LLM and needs no API key.
+`npm run build` has to leave `dist/cli.js` in place. `scripts/smoke.mjs` is a **stub**, not real-model testing. It crawls `https://example.com` with a stub LLM and needs no API key. The success line is not a model result.
+
+Concrete first pull requests, with acceptance checks, are in [.github/STARTER_ISSUES.md](./.github/STARTER_ISSUES.md). They are briefs, not issues already filed on GitHub.
 
 Run the CLI against a throwaway URL:
 

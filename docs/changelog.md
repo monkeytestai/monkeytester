@@ -1,6 +1,6 @@
 # Changelog
 
-The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm `latest` is 0.7.1. `next` will publish 0.7.2-beta.2.
+The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm channels, this tree, and the hosted service are different: [Versions](/getting-started/versions). A registry check on 8 Nov 2026 at 10:16 IST reported `latest` 0.7.1 and `next` 0.7.2-beta.2. That is not a pin and not the hosted product.
 
 ## 0.7.2-beta.2
 

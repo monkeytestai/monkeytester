@@ -2,12 +2,34 @@
 
 > Bugs your tests didn't think to look for. Point it at a URL. It finds the bugs, then proves you fixed them.
 
-Open-source AGPL-3.0 TypeScript engine. Package `@monkeytestai/monkeytester`. CLI `monkeytest`. Node.js 20+. Playwright and your LLM. With an OpenAI key the default model is `gpt-4o-mini`.
+Open-source AGPL-3.0 TypeScript CLI and library. Package `@monkeytestai/monkeytester`. Command `monkeytest`. Node.js 20+. Playwright and your own LLM. Not a hosted REST API and not an MCP server.
 
-npm `latest` is 0.6.1. Pre-release builds publish on the `next` tag. These docs match the `main` branch.
+npm dist-tag `latest` is the stable channel. npm dist-tag `next` is the pre-release channel. This tree's version is `package.json` (`monkeytest version`). It is not the hosted product.
+
+Registry observation on 8 November 2026 at 10:16 IST, not a pin: `latest` 0.7.1, `next` 0.7.2-beta.2. Re-check with `npm view @monkeytestai/monkeytester dist-tags --json`.
+
+The hosted API and worker were observed running 0.7.0 (droplet checkout `60def87b`). The image revision is unproven. Unset safety flags do not establish safety defaults. npm `latest` and `next` are not live SaaS protection.
+
+https://docs.monkeytest.ai/getting-started/versions
 
 Hosted cloud: https://monkeytest.ai
 Source: https://github.com/monkeytestai/monkeytester
+Docs source: this repository's `docs/` directory.
+
+Canonical host: https://docs.monkeytest.ai
+Sitemap: https://docs.monkeytest.ai/sitemap.xml
+Robots: https://docs.monkeytest.ai/robots.txt
+
+## What it does
+
+You pass a URL. The engine crawls with Playwright, files findings that carry evidence, and can replay a stored trace (`rerun`) and compare bug fingerprints (`diff`). A flow is `passed` only when its outcome check verifies. Otherwise the result stays inconclusive. Coverage is the pages reached under the depth cap, not the whole site. Confirm a filed bug on the site before treating the run as the whole story.
+
+Contact, enquiry, feedback, support, quote, and get-in-touch messages are not sent. Password reset, OTP, newsletter, payment, and account deletion stay blocked unless you pass your own inbox or the library `allowSensitive` path the engine already documents. There is no hosted inbox.
+
+The false-positive gate (under 10% on a fixed 10-site set) has not been measured. A 0% note on two sites is not that gate.
+
+https://docs.monkeytest.ai/guides/quality
+https://docs.monkeytest.ai/guides/how-is-this-different
 
 ## Getting started
 
@@ -16,6 +38,7 @@ Source: https://github.com/monkeytestai/monkeytester
 - https://docs.monkeytest.ai/getting-started/installation
 - https://docs.monkeytest.ai/getting-started/first-run
 - https://docs.monkeytest.ai/getting-started/reading-the-report
+- https://docs.monkeytest.ai/getting-started/versions
 
 ## Guides
 
@@ -28,6 +51,7 @@ Source: https://github.com/monkeytestai/monkeytester
 - https://docs.monkeytest.ai/guides/cost-and-depth
 - https://docs.monkeytest.ai/guides/docker
 - https://docs.monkeytest.ai/guides/how-it-works
+- https://docs.monkeytest.ai/guides/quality
 - https://docs.monkeytest.ai/troubleshooting
 - https://docs.monkeytest.ai/changelog
 
@@ -38,5 +62,9 @@ Source: https://github.com/monkeytestai/monkeytester
 - https://docs.monkeytest.ai/reference/api
 - https://docs.monkeytest.ai/reference/report
 - https://docs.monkeytest.ai/reference/events
+
+Commands for the first report: `monkeytest run`, `monkeytest report`, `monkeytest open` (local evidence paths only), `monkeytest rerun`, `monkeytest diff prev latest`.
+
+`node scripts/smoke.mjs` is a stub LLM. It is not real-model testing.
 
 Old paths such as `/guide/quick-start`, `/guide/why-monkeytest`, `/guide/llm-providers`, `/guide/cost-and-depth`, and `/reference/overview` redirect.

@@ -1,0 +1,32 @@
+{
+  "kind": "local-fixture-loop",
+  "label": "STUB — not real-model testing",
+  "engineVersion": "0.7.2-beta.2",
+  "notALiveModelRun": true,
+  "notACustomerSite": true,
+  "notAHostedProductRun": true,
+  "planner": "hand-authored plan for the local demo fixture",
+  "actionResolver": "stub",
+  "contactPosts": 0,
+  "contactOutcome": "contact_submit_blocked",
+  "before": {
+    "bugCount": 3,
+    "signals": [
+      "element-disabled",
+      "http-4xx",
+      "page-error"
+    ]
+  },
+  "afterReplay": {
+    "bugCount": 0
+  },
+  "diff": {
+    "new": 0,
+    "fixed": 3,
+    "persisting": 0,
+    "regressed": 0,
+    "delta": -3,
+    "line": "0 new, 3 fixed, 0 still broken, 0 regressed (net -3)"
+  },
+  "reproducedBy": "npx tsx scripts/fixture-loop.ts --out examples/fixture-loop/artifact.json"
+}

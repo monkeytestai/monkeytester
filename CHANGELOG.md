@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `monkeytest open` prints the stored run path and the screenshot and WebM paths already on that run. It does not fetch the site.
+- After `diff` or `verify` shows every filed bug fixed, an interactive terminal may print one star link. `--no-star` and `MONKEYTEST_NO_STAR=1` skip it. CI, JSON, loopback fixtures, and a non-interactive stdout do not print it. The one-time marker is a local file and is not sent anywhere.
+
+### Documentation
+
+- npm `latest`, npm `next`, this tree's `package.json` version, and the hosted service are written down as different things. A registry observation is dated and is not a pin. The hosted API and worker observation (0.7.0, checkout `60def87b`) is not described as protected by a newer npm tag.
+- Docs build emits `robots.txt`, `sitemap.xml`, and a canonical link. The Vercel project settings are unchanged.
+- The fixed 10-site false-positive gate is specified and recorded as not measured.
+
 ## [0.7.2-beta.2] — 2026-11-02
 
 ### Fixed

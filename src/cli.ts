@@ -15,6 +15,7 @@
  *   monkeytest diff <a> <b>      Diff two stored runs by bug fingerprint.
  *                                "<a>" / "<b>" are run ids or "latest"/"prev".
  *   monkeytest report [<runId>]  Pretty-print a stored run (flows, bugs, paths).
+ *   monkeytest open [<runId>]    Print local paths for that run and its evidence.
  *
  * Common flags:
  *   --dir <path>          Working directory (default ./.monkeytest)
@@ -59,6 +60,8 @@ import type {
   LLMProvider, LLMConfig, MonkeyLLMConfig, BugReport, FlowTrace, InboxProvider, RunResult,
 } from './types.js';
 import { ENGINE_VERSION } from './version.js';
+import { collectEvidencePaths } from './reportPaths.js';
+import { isLoopbackUrl, starMarkerName, starNudgeLine, type StarNudgeInput } from './starNudge.js';
 import { createHttpInbox } from './inbox/http.js';
 import { loadInboxProvider } from './inbox/load.js';
 
@@ -127,6 +130,8 @@ interface CommonOpts {
   inboxModule?: string;
   /** Base URL of a caller-operated HTTP inbox. No default host. */
   inboxHttp?: string;
+  /** Skip the one-time star line. `MONKEYTEST_NO_STAR=1` does the same. */
+  noStar: boolean;
 }
 
 function defaultCommonOpts(): CommonOpts {
@@ -142,6 +147,7 @@ function defaultCommonOpts(): CommonOpts {
     heal: false,
     repeat: 1,
     failOn5xx: true,
+    noStar: false,
   };
 }
 
@@ -197,6 +203,7 @@ function parseArgs(argv: string[]): Parsed {
       case '--no-headless':                out.opts.headless = false; break;
       case '--label':                      out.opts.label = next(); break;
       case '--json':                       out.opts.json = true; break;
+      case '--no-star':                    out.opts.noStar = true; break;
       case '--fail-on-5xx':                out.opts.failOn5xx = true; break;
       case '--no-fail-on-5xx':             out.opts.failOn5xx = false; break;
       case '--inbox': {
@@ -323,6 +330,7 @@ Commands:
   ${tty('verify', 'cyan')} [run]               Replay each bug trace and print a verdict.
   ${tty('diff', 'cyan')} <runA> <runB>         Diff two stored runs by bug fingerprint.
   ${tty('report', 'cyan')} [<runId>]           Pretty-print a stored run.
+  ${tty('open', 'cyan')} [<runId>]             Print local paths for the run and its evidence.
   ${tty('help', 'cyan')} [<command>]           Show help (this page or per-command).
   ${tty('version', 'cyan')}                    Print engine version and exit.
 
@@ -344,6 +352,7 @@ Common flags (apply to most commands):
       --repeat <n>           Replay each bug n times (verify, default 1)
       --bug <fingerprint>    Verify one bug
       --json                 Machine-readable output
+      --no-star              Do not print the one-time star link
       --fail-on-5xx          Fail steps that saw a same-origin HTTP ≥500 (default)
       --no-fail-on-5xx       Keep those 5xx responses as evidence only
       --inbox <module>       Module that exports your InboxProvider (no hosted inbox)
@@ -401,6 +410,10 @@ shortcuts. Prints new / fixed / persisting / regressed bugs.`,
     report: `monkeytest report [<runId>] [--json]
 Pretty-print a stored run (flows, bugs, evidence paths). Defaults to
 "latest". Use --json for machine-readable output.`,
+    open: `monkeytest open [<runId>] [--json]
+Print the absolute path of a stored run and the screenshot and WebM paths
+already recorded on it. Does not upload them, does not fetch the site, and
+does not launch a browser. Defaults to "latest".`,
   };
   console.log(text[cmd] || `No help for "${cmd}". Try \`monkeytest help\`.`);
 
@@ -437,6 +450,7 @@ async function cmdInit(opts: CommonOpts){
       '# Keep config + plan tracked',
       '!config.json',
       '!plan.json',
+      '.star-noted',
       '',
     ].join('\n'));
   }
@@ -699,6 +713,10 @@ async function cmdVerify(positional: string | undefined, opts: CommonOpts){
     printVerifyTable(stored.id, report);
   }
 
+  if (report.exitCode === 0){
+    noteStar(opts, stored.run, { kind: 'verify', verdicts: report.results.map(row => row.verdict) });
+  }
+
   if (report.exitCode !== 0){
     const broken = report.stats.still_broken + report.stats.flaky;
     console.error(tty(`✗ ${broken} bug${broken === 1 ? '' : 's'} still firing.`, 'red'));
@@ -741,6 +759,22 @@ function cmdDiff(a: string | undefined, b: string | undefined, opts: CommonOpts)
   if (diff.newBugs.length > 0 || diff.regressedBugs.length > 0){
     process.exit(1);
   }
+  noteStar(opts, runB.run, { kind: 'diff', stats: diff.stats });
+}
+
+function cmdOpen(runId: string | undefined, opts: CommonOpts){
+  const stored = resolveStoredRun(runId, opts);
+  const runFile = storedRunFile(runId, opts, stored);
+  const evidence = collectEvidencePaths(stored.run);
+  if (opts.json){
+    console.log(JSON.stringify({ runFile, evidence }, null, 2));
+    return;
+  }
+  console.log(`Run file: ${runFile}`);
+  console.log('Evidence (local files, not uploaded):');
+  if (evidence.length === 0) console.log('  (none recorded)');
+  for (const file of evidence) console.log(`  ${file}`);
+  console.log('Open those paths on this machine. This command does not fetch the site and does not start a browser.');
 }
 
 function cmdReport(runId: string | undefined, opts: CommonOpts){
@@ -940,6 +974,35 @@ async function inboxFromOpts(opts: CommonOpts): Promise<InboxProvider | undefine
   return createHttpInbox({ baseUrl: opts.inboxHttp, ...(token ? { token } : {}) });
 }
 
+function storedRunFile(positional: string | undefined, opts: CommonOpts, stored: StoredRun): string {
+  if (positional){
+    const abs = resolve(positional);
+    if (existsSync(abs) && !statSync(abs).isDirectory()) return abs;
+  }
+  return resolve(opts.dir, 'runs', `${stored.id}.json`);
+}
+
+function noteStar(opts: CommonOpts, run: RunResult, signal: StarNudgeInput['signal']){
+  const marker = resolve(opts.dir, starMarkerName());
+  const line = starNudgeLine({
+    json: opts.json,
+    tty: Boolean(process.stdout.isTTY),
+    ci: Boolean(process.env.CI),
+    optOut: opts.noStar || process.env.MONKEYTEST_NO_STAR === '1',
+    alreadyNoted: existsSync(marker),
+    stubOrLocal: isLoopbackUrl(run.startUrl),
+    outcome: run.outcome,
+    signal,
+  });
+  if (!line) return;
+  try {
+    writeFileSync(marker, 'noted\n', { flag: 'wx' });
+  } catch {
+    return;
+  }
+  console.log(`\n${line}\n`);
+}
+
 function die(code: number, msg: string): never {
   console.error(tty(msg, 'red'));
   process.exit(code);
@@ -971,6 +1034,7 @@ async function main(){
     case 'verify':  return cmdVerify(args.positional[0], args.opts);
     case 'diff':    return cmdDiff(args.positional[0], args.positional[1], args.opts);
     case 'report':  return cmdReport(args.positional[0], args.opts);
+    case 'open':    return cmdOpen(args.positional[0], args.opts);
     default:
       console.error(tty(`Unknown command: ${args.command}`, 'red'));
       printHelp();

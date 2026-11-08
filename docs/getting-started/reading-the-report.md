@@ -7,6 +7,12 @@ npx monkeytest report --json
 
 `report` prints the latest file in `.monkeytest/runs/`. Pass a run id to print an older one.
 
+```bash
+npx monkeytest open
+```
+
+`open` prints that run's path and the screenshot and WebM paths stored on it. It does not upload them, and it does not fetch the site. There is no hosted report URL. After you change the site, `npx monkeytest rerun` replays the stored trace and `npx monkeytest diff prev latest` compares fingerprints.
+
 ## The outcome line
 
 `outcome` is one of `bugs_found`, `clean`, `inconclusive`, `could_not_test`.

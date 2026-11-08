@@ -144,7 +144,30 @@ await monkey.executeAndTriage('https://app.example.com/checkout', {
 });
 ```
 
+## Drive it from your own agent
+
+The package is a library. Import it. Read the stored run. There is no MCP server and no hosted REST API in this repository.
+
+`saveRun` writes schema `1` (`RUN_FILE_SCHEMA`). `run` is a `RunResult`. The field list is the [report reference](/reference/report). Agents should treat `outcome` `inconclusive` and `could_not_test` as unfinished, not as a pass, and should not send contact or other sensitive submits the engine blocked.
+
+```ts
+import { Monkey, autoLLMConfig, saveRun, loadRun, diffRuns } from '@monkeytestai/monkeytester';
+
+const monkey = new Monkey({ llm: autoLLMConfig({ quality: 'balanced' }) });
+const { plan, run } = await monkey.executeAndTriage(process.env.PREVIEW_URL!, {
+  explore: { maxPages: 6, screenshotsDir: '.monkeytest/shots' },
+  plan: { maxFlows: 5 },
+  run: { screenshotsDir: '.monkeytest/shots', headless: true },
+});
+const saved = saveRun(run, { dir: '.monkeytest' });
+console.log(saved.id, run.outcome, run.bugs.length);
+```
+
+Accuracy comes before a wider agent surface. The fixed 10-site gate has not been measured. See [Quality methodology](/guides/quality).
+
 ## Embed in your own product
+
+The snippets below wrap the same library in a process you operate. They do not turn monkeytester into a hosted API.
 
 The package is ESM, fully typed, and has zero opinionated dependencies on a host framework. Wrap it in a worker, an API route, a Tauri app, a VS Code extension — wherever.
 
