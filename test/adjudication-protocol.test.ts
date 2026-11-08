@@ -5,6 +5,7 @@ import {
   FALSE_POSITIVE_GATE,
   FIXED_10_SITES,
   PRIOR_TWO_SITE_NOTE,
+  corpusAuthorizesExecution,
   aggregateFalsePositiveRate,
   assignedSiteCount,
   coverageRatio,
@@ -43,6 +44,12 @@ describe('fixed 10-site adjudication protocol', () => {
     expect(PRIOR_TWO_SITE_NOTE.sufficientForGate).toBe(false);
     expect(PRIOR_TWO_SITE_NOTE.sites).toHaveLength(2);
     expect(FALSE_POSITIVE_GATE).toBe(0.1);
+    expect(corpusAuthorizesExecution()).toBe(false);
+    expect(FIXED_10_SITES.every(site => site.authorizedToRun === false)).toBe(true);
+    const jewellery = FIXED_10_SITES.find(site => site.id === 'jewellery-lovable');
+    expect(jewellery?.customerSite).toBe(true);
+    expect(jewellery?.startUrl).toBe('https://jewellerycasting08.lovable.app/');
+    expect(FIXED_10_SITES.find(site => site.id === 'bananabeings')?.customerSite).toBe(true);
   });
 
   it('uses confirmed bugs as the denominator and does not treat zero bugs as 0%', () => {

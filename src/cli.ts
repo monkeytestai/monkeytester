@@ -61,7 +61,7 @@ import type {
 } from './types.js';
 import { ENGINE_VERSION } from './version.js';
 import { collectEvidencePaths } from './reportPaths.js';
-import { isLoopbackUrl, starMarkerName, starNudgeLine, type StarNudgeInput } from './starNudge.js';
+import { starMarkerName, starNudgeLine, type StarNudgeInput } from './starNudge.js';
 import { createHttpInbox } from './inbox/http.js';
 import { loadInboxProvider } from './inbox/load.js';
 
@@ -990,8 +990,24 @@ function noteStar(opts: CommonOpts, run: RunResult, signal: StarNudgeInput['sign
     ci: Boolean(process.env.CI),
     optOut: opts.noStar || process.env.MONKEYTEST_NO_STAR === '1',
     alreadyNoted: existsSync(marker),
-    stubOrLocal: isLoopbackUrl(run.startUrl),
+    startUrl: run.startUrl,
+    finishedAt: run.finishedAt,
     outcome: run.outcome,
+    currentBugCount: run.bugs.length,
+    warnings: run.warnings,
+    outcome_detail: run.outcome_detail,
+    flows: run.flows.map(flow => ({
+      outcome_detail: flow.outcome_detail,
+      description: flow.description,
+      failureReason: flow.failureReason,
+      steps: flow.steps.map(step => ({ observation: step.observation, error: step.error })),
+    })),
+    bugs: run.bugs.map(bug => ({
+      title: bug.title,
+      observed: bug.observed,
+      expected: bug.expected,
+      triageNotes: bug.triageNotes,
+    })),
     signal,
   });
   if (!line) return;

@@ -93,7 +93,7 @@ Exit `0` when no blocking bug remains (`minor` does not fail the process). Exit 
 
 > **Not a recording.** The figure below is a diagram of the loop. It is not a captured session.
 
-A real find → fix → same-trace rerun → diff is in [examples/fixture-loop](./examples/fixture-loop/README.md). It runs the local demo fixture on `127.0.0.1` with a stub action resolver, not a live model, and not a customer site. `examples/fixture-loop/artifact.json` is that run, stamped with the engine version. Regenerate it with `npx tsx scripts/fixture-loop.ts`. No video is checked in: this environment did not produce a genuine recording, and a generated clip would be false.
+A find → fix → same-trace rerun → diff on the local demo fixture is in [examples/fixture-loop](./examples/fixture-loop/README.md). The plan is hand-authored and the action resolver is a stub. `examples/fixture-loop/artifact.json` is that stub run, stamped with the engine version. It is not a live model and not a customer site. A real-model recording is blocked: this tree was not given a model credential, and the stub artifact is not that proof. The diagram above stays a diagram.
 
 <p align="center">
   <img alt="Diagram: monkeytest run, you fix the site, monkeytest rerun replays the same trace, monkeytest diff reports what changed. Not a captured session." src="docs/public/loop.svg" width="720" />
@@ -163,7 +163,7 @@ npx monkeytest diff prev latest
 
 `monkeytest verify` replays each known bug and prints `fixed`, `still_broken`, `flaky`, `healed`, or `blocked`.
 
-On a TTY, after `diff` or `verify` shows every filed bug fixed and nothing new or worse, the CLI may print one star link: https://github.com/monkeytestai/monkeytester. It does not ask again. The one-time marker is a local file (`.monkeytest/.star-noted`) that contains the word `noted` and no identifier. Nothing is sent. Set `MONKEYTEST_NO_STAR=1` or pass `--no-star` to skip it. CI, `--json`, a non-interactive stdout, a loopback fixture, and a stub run do not print it. A star is not a usage metric, and neither are npm downloads. If the CLI stayed quiet, the link above is the same request, only after a fix you actually verified.
+On a TTY, `diff` or `verify` may print one star link — https://github.com/monkeytestai/monkeytester — only when the run being judged has `finishedAt`, `outcome` `clean`, and no bugs left, and the diff or verify signal is a real fix (every verdict `fixed`, or at least one fixed bug and nothing new, persisting, or regressed). `inconclusive`, `could_not_test`, `bugs_found`, an unknown outcome, and a missing `finishedAt` do not ask, even if a stale diff says everything is fixed. A loopback URL does not ask. A run whose stored `warnings`, step errors, or bug text already name a stub provider (`[stub · …]`) does not ask, including when the URL is not loopback. The one-time marker is `.monkeytest/.star-noted` and contains the word `noted`. Nothing is sent. Set `MONKEYTEST_NO_STAR=1` or pass `--no-star` to skip it. CI, `--json`, and a non-interactive stdout stay quiet. A star is not a usage metric, and neither are npm downloads.
 
 The same loop from the library:
 

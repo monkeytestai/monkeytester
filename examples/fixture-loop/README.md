@@ -22,4 +22,4 @@ The diagram in the README (`docs/public/loop.svg`) is a diagram. It is not a rec
 
 A recording belongs in this folder only if it is a capture of this command's real output. Record the terminal while the script runs. Do not generate footage, do not restage a customer site, and do not present the stub as a model.
 
-No video file is committed here. A screen recording of this command, labelled stub, may be attached to a pull request. It is not a live-model run.
+No video file is committed here. A screen recording of this stub command may be attached to a pull request. That recording is the stub. A real-model recording is blocked until someone runs this loop with a real provider and captures that run. Do not treat the stub recording or `artifact.json` as that proof.

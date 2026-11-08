@@ -26,31 +26,43 @@ export type AdjudicationSource = 'bake-off-corpus' | 'unassigned';
 export interface AdjudicationSite {
   id: string;
   /**
-   * Start URL for a future adjudicated run. `null` means the slot is not
-   * assigned. This file does not request the URL.
+   * Host named by an old labelled corpus. `null` means the slot is empty.
+   * This string is not a request and not permission to crawl.
    */
   startUrl: string | null;
   source: AdjudicationSource;
+  /**
+   * Always false. A corpus URL, including a customer site, does not
+   * authorize `monkeytest run` or any other fetch.
+   */
+  authorizedToRun: false;
+  /** Customer or partner site. Must not be started from this roster. */
+  customerSite: boolean;
 }
 
 /**
- * Nine hosts are the hand-labelled bake-off corpus in
- * `test/fp-measurement.test.ts`. The tenth slot stays unassigned: that
- * corpus has no tenth host, and this change does not invent one or crawl
- * a customer site to fill the table.
+ * Nine hosts are names from the hand-labelled bake-off corpus in
+ * `test/fp-measurement.test.ts`. The tenth slot stays unassigned.
+ * Nothing in this module fetches a host. `authorizedToRun` is false on
+ * every row, including the jewellery customer site.
  */
 export const FIXED_10_SITES: readonly AdjudicationSite[] = [
-  { id: 'automationexercise', startUrl: 'https://automationexercise.com/', source: 'bake-off-corpus' },
-  { id: 'bananabeings', startUrl: 'https://bananabeings.com/', source: 'bake-off-corpus' },
-  { id: 'playwright-todomvc', startUrl: 'https://demo.playwright.dev/todomvc', source: 'bake-off-corpus' },
-  { id: 'demoqa', startUrl: 'https://demoqa.com/', source: 'bake-off-corpus' },
-  { id: 'jewellery-lovable', startUrl: 'https://jewellerycasting08.lovable.app/', source: 'bake-off-corpus' },
-  { id: 'parabank', startUrl: 'https://parabank.parasoft.com/parabank/index.htm', source: 'bake-off-corpus' },
-  { id: 'practice-software-testing', startUrl: 'https://practicesoftwaretesting.com/', source: 'bake-off-corpus' },
-  { id: 'the-internet', startUrl: 'https://the-internet.herokuapp.com/', source: 'bake-off-corpus' },
-  { id: 'saucedemo', startUrl: 'https://www.saucedemo.com/', source: 'bake-off-corpus' },
-  { id: 'slot-10', startUrl: null, source: 'unassigned' },
+  { id: 'automationexercise', startUrl: 'https://automationexercise.com/', source: 'bake-off-corpus', authorizedToRun: false, customerSite: false },
+  { id: 'bananabeings', startUrl: 'https://bananabeings.com/', source: 'bake-off-corpus', authorizedToRun: false, customerSite: true },
+  { id: 'playwright-todomvc', startUrl: 'https://demo.playwright.dev/todomvc', source: 'bake-off-corpus', authorizedToRun: false, customerSite: false },
+  { id: 'demoqa', startUrl: 'https://demoqa.com/', source: 'bake-off-corpus', authorizedToRun: false, customerSite: false },
+  { id: 'jewellery-lovable', startUrl: 'https://jewellerycasting08.lovable.app/', source: 'bake-off-corpus', authorizedToRun: false, customerSite: true },
+  { id: 'parabank', startUrl: 'https://parabank.parasoft.com/parabank/index.htm', source: 'bake-off-corpus', authorizedToRun: false, customerSite: false },
+  { id: 'practice-software-testing', startUrl: 'https://practicesoftwaretesting.com/', source: 'bake-off-corpus', authorizedToRun: false, customerSite: false },
+  { id: 'the-internet', startUrl: 'https://the-internet.herokuapp.com/', source: 'bake-off-corpus', authorizedToRun: false, customerSite: false },
+  { id: 'saucedemo', startUrl: 'https://www.saucedemo.com/', source: 'bake-off-corpus', authorizedToRun: false, customerSite: false },
+  { id: 'slot-10', startUrl: null, source: 'unassigned', authorizedToRun: false, customerSite: false },
 ];
+
+/** The corpus list is not a run list. This is constant, not a switch. */
+export function corpusAuthorizesExecution(): false {
+  return false;
+}
 
 /**
  * Release-note figure for 0.7.1: 0 of 12 bugs on two hosts. Recorded here

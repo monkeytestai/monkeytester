@@ -18,7 +18,9 @@ Nine hosts are already named by the hand-labelled bake-off corpus in `test/fp-me
 8. `https://the-internet.herokuapp.com/`
 9. `https://www.saucedemo.com/`
 
-The tenth slot is **unassigned**. That corpus has no tenth host. Do not invent a URL, and do not crawl a customer site, to fill the table. While any slot is unassigned, `evaluateGate` returns `passed: false`.
+The tenth slot is **unassigned**. That corpus has no tenth host. Do not invent a URL to fill the table. While any slot is unassigned, `evaluateGate` returns `passed: false`.
+
+The list is a record of names. `authorizedToRun` is false on every row, and `corpusAuthorizesExecution()` is false. It is not permission to crawl. `jewellerycasting08.lovable.app` is a customer site. `bananabeings.com` is a customer site. This module does not request either of them, and a test or script must not walk the roster and run it.
 
 The 0.7.1 release note (0 of 12 bugs on `app.monkeytest.ai` and `bananabeings.com`) is stored as `PRIOR_TWO_SITE_NOTE`. `sufficientForGate` is false. Two sites are not the fixed set. That note is also not a description of the hosted service observed on 0.7.0.
 
