@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="Social preview card. Not a screenshot of a run.">
+  <rect width="1280" height="640" fill="#18141F"/>
+  <rect x="72" y="72" width="1136" height="496" rx="28" fill="#14101C" stroke="#3B2A5C"/>
+  <text x="112" y="210" fill="#C4B5FD" font-family="Inter, Helvetica, Arial, sans-serif" font-size="28" font-weight="600">monkeytester</text>
+  <text x="112" y="290" fill="#F4F1FA" font-family="Inter, Helvetica, Arial, sans-serif" font-size="48" font-weight="700">Open-source autonomous website QA</text>
+  <text x="112" y="360" fill="#E4DDF0" font-family="Inter, Helvetica, Arial, sans-serif" font-size="32">URL to evidence-backed bugs, then rerun + diff</text>
+  <text x="112" y="470" fill="#A78BFA" font-family="Inter, Helvetica, Arial, sans-serif" font-size="22">CLI and library. Not a screenshot of a run.</text>
+</svg>

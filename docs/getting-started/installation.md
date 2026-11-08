@@ -33,8 +33,8 @@ bunx playwright install chromium
 
 | Tag | Install | What you get |
 | --- | --- | --- |
-| `latest` | `npm install @monkeytestai/monkeytester` | Stable **0.6.1** |
-| `next` | `npm install @monkeytestai/monkeytester@next` | Pre-release. These docs match `main`. |
+| `latest` | `npm install @monkeytestai/monkeytester` | Stable channel. The tag moves. See [Versions](/getting-started/versions). |
+| `next` | `npm install @monkeytestai/monkeytester@next` | Pre-release channel. This tree is that line when `package.json` is a pre-release. |
 
 Playwright's Chromium is a separate download. In CI, add the system libraries:
 

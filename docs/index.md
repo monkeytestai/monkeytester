@@ -35,7 +35,7 @@ features:
 
 ## Thirty seconds
 
-Install the package, install Chromium, run Quick pass, then print the report. `latest` on npm is 0.6.1. These pages match `main`. Install `@next` for that build.
+Install the package, install Chromium, run Quick pass, then print the report. `npm install` follows the stable `latest` channel. `@next` is the pre-release channel. This site describes this repository, not the hosted service version. See [Versions](/getting-started/versions).
 
 ::: code-group
 

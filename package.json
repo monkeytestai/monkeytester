@@ -65,7 +65,8 @@
     "prepack": "npm run clean && npm run build",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "docs:links": "node scripts/check-docs-links.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

@@ -4,6 +4,8 @@
  * at example.com, and prints the resulting SiteMap + TestPlan.
  *
  * Run with:  node scripts/smoke.mjs
+ *
+ * STUB — not real-model testing. No API key is read.
  */
 
 import { explore } from '../dist/explorer/index.js';
@@ -51,6 +53,8 @@ const stubLLM = {
   },
 };
 
+console.log('STUB — not real-model testing. No API key is read. The crawl target is https://example.com.');
+
 const t0 = Date.now();
 const siteMap = await explore('https://example.com', stubLLM, {
   maxPages: 1,
@@ -68,3 +72,4 @@ for (const f of testPlan.flows){
 }
 
 console.log('\nOK — engine pipeline is wired correctly.');
+console.log('STUB — this success line is not a real-model result.');

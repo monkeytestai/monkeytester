@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress';
+import { DOCS_ORIGIN, docsCanonical } from './canonical.ts';
 
 const description =
   'Point it at a URL. monkeytester finds the bugs, then proves you fixed them. Open-source Playwright and LLM agent.';
@@ -11,6 +12,14 @@ export default defineConfig({
   lastUpdated: true,
   appearance: true,
   titleTemplate: ':title · monkeytester',
+  sitemap: {
+    hostname: DOCS_ORIGIN,
+  },
+  transformHead(context) {
+    return [
+      ['link', { rel: 'canonical', href: docsCanonical(context.page) }],
+    ];
+  },
 
   markdown: {
     theme: { light: 'github-light', dark: 'github-dark' },

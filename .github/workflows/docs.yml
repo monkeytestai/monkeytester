@@ -10,11 +10,14 @@ on:
     paths:
       - 'docs/**'
       - '.github/workflows/docs.yml'
+      - 'scripts/check-docs-build.mjs'
       - 'package.json'
       - 'package-lock.json'
   pull_request:
     paths:
       - 'docs/**'
+      - '.github/workflows/docs.yml'
+      - 'scripts/check-docs-build.mjs'
   workflow_dispatch:
 
 permissions:
@@ -34,8 +37,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check internal docs links
+        run: npm run docs:links
+
       - name: Build documentation
         run: npm run docs:build
+
+      - name: Sitemap, robots, and canonicals are in the build
+        run: node scripts/check-docs-build.mjs
 
       - name: Upload site artifact
         uses: actions/upload-artifact@v4

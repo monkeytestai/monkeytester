@@ -32,6 +32,16 @@ VitePress is configured with `cleanUrls: true`, so every internal link is extens
 
 This repo does not override the build command inside `vercel.json`, so those three settings stay in the Vercel dashboard. If a deploy still 404s on `/guide/quick-start` after `vercel.json` is on `main`, the Root Directory is probably not the repo root — move `vercel.json` to that directory, or set Root Directory back to the repo root, and redeploy.
 
+## What the VitePress build emits
+
+These are repository outputs. They do not require a dashboard change, and this tree does not deploy them.
+
+- `docs/public/robots.txt` is copied to the site root.
+- `sitemap.xml` is generated because `docs/.vitepress/config.mts` sets `sitemap.hostname` to `https://docs.monkeytest.ai`.
+- Each HTML page gets `<link rel="canonical">` from `docsCanonical()`. Clean URLs, no trailing slash except `/`.
+
+Until a later production deploy, `https://docs.monkeytest.ai/robots.txt` and `https://docs.monkeytest.ai/sitemap.xml` can still 404. Do not treat that 404 as a reason to edit the Vercel project. Root Directory, build command, and output directory stay the dashboard settings described above.
+
 ## Build locally
 
 ```bash

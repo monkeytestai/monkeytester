@@ -10,20 +10,20 @@ You pass a URL. monkeytester chooses the cases, records an honest outcome, and c
 
 ## Three neighbours
 
-| | Who chooses the cases | What you get back |
-| --- | --- | --- |
-| **monkeytester** | The engine, from the crawl | A stored plan, a run whose `passed` means a verified outcome check, then `rerun` and `diff` |
-| **[Playwright](https://playwright.dev/docs/intro)** | You do | A report for the tests you wrote |
-| **[browser-use](https://github.com/browser-use/browser-use)** | You do | The result of the task you gave the agent |
-| **Recorders and other scripted QA tools** | You do, by recording a session or writing steps | A replay of those steps |
+| | What it is | Who supplies the goal | What you keep |
+| --- | --- | --- | --- |
+| **monkeytester** | Open-source CLI and library | A URL. The crawl and the page checks propose cases | Evidence, a stored plan, `rerun`, fingerprint `diff` |
+| **[Playwright Test](https://playwright.dev/docs/intro)** | End-to-end tests you own | You, or [Playwright Test Agents](https://playwright.dev/docs/test-agents), which plan, generate, and heal Playwright tests | Test files and their report |
+| **[browser-use](https://github.com/browser-use/browser-use)** | Browser-agent infrastructure | A task you give the agent. It can inspect the page while carrying the task out. That is discovery, aimed at the task | The task result |
+| **Recorders and other scripted QA tools** | A session or a script | You, by recording or writing steps | A replay of those steps |
 
-Playwright's own introduction describes Playwright Test as an end-to-end test framework for modern web apps. The default project scaffold includes a test file you edit and run with `npx playwright test`. That is the right tool when you already know the path that must keep working.
+Playwright's introduction describes Playwright Test as an end-to-end test framework. The default scaffold includes a test file you edit and run with `npx playwright test`. Playwright Test Agents also plan, generate, and heal those tests. That is the right tool when you want Playwright tests you can read and keep. It is not "no planning".
 
-browser-use's README describes an open-source browser agent. The Python quickstart constructs an agent with a `task` string you write, then runs it. You are assigning work. monkeytester is not that. It is pointed at a site and asked what is broken.
+browser-use is open-source infrastructure for a browser agent. You give it a task. While it does that task it can look at the page. Calling that "no discovery" would be wrong. monkeytester's job is different: file evidence-backed bugs for a URL, then replay the same plan and diff fingerprints.
 
-Recorders and scripted tools store a session you performed, or a script you authored, and play those steps back. The case list is yours.
+Recorders and scripted tools store a session you performed, or a script you authored, and play those steps back.
 
-Nothing here is a score. There is no benchmark on this page.
+Nothing here is a score. There is no benchmark on this page. The false-positive gate has not been measured. See [Quality methodology](/guides/quality).
 
 ## What monkeytester does with that freedom
 

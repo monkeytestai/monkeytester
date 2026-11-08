@@ -11,3 +11,5 @@ e2e-artifacts/
 .turbo/
 docs/.vitepress/cache
 docs/.vitepress/dist
+examples/fixture-loop/.shots/
+examples/fixture-loop/.store/

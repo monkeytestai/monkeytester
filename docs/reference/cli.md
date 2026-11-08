@@ -28,6 +28,7 @@ The binary ships in `@monkeytestai/monkeytester`. From a clone it is `node dist/
 | `verify [run]` | Replays each bug trace. Verdicts: `fixed`, `still_broken`, `flaky`, `healed`, `blocked`. |
 | `diff <a> <b>` | Fingerprint diff. `latest` and `prev` are shortcuts. |
 | `report [runId]` | Prints a stored run. Defaults to `latest`. |
+| `open [runId]` | Unreleased in this tree. Prints the run file and local screenshot / WebM paths. Not in the published npm dist-tags. Does not fetch the site. |
 | `help [command]` | Top-level or per-command help. |
 | `version` | Prints `monkeytester@<version>`. |
 
@@ -36,7 +37,10 @@ npx monkeytest run https://example.com --depth basic
 npx monkeytest rerun
 npx monkeytest diff prev latest
 npx monkeytest report --json
+npx monkeytest open
 ```
+
+`open` prints absolute paths already stored on the run. It does not upload them and it does not start a browser. There is no hosted report URL.
 
 `diff` prints `N new, N fixed, N still broken, N regressed (net ±N)` and exits 1 when a bug is new or more severe. The sections under that line are "New bugs", "Regressed bugs", "Fixed bugs", and "Still broken", each with severity, title, and fingerprint. Those titles come from the runs on disk.
 
@@ -56,7 +60,8 @@ npx monkeytest report --json
 | `--flows <n>` | 6, or the preset | LLM flow cap. Wins over `--depth` when you pass it. |
 | `--no-headless` | headless | Show the browser |
 | `--label <text>` | | Saved on the plan and the run |
-| `--json` | text | Machine-readable output for `run`, `diff`, `report`, `verify` |
+| `--json` | text | Machine-readable output for `run`, `diff`, `report`, `verify`, `open` |
+| `--no-star` | off | Skip the unreleased diff-only star line. `verify` does not ask. `MONKEYTEST_NO_STAR=1` does the same. |
 | `--fail-on-5xx` / `--no-fail-on-5xx` | on | A same-origin HTTP ≥500 (document, xhr, or fetch) becomes a blocking bug |
 | `--heal` | off | On `rerun` and `verify`, re-resolve a missed locator |
 | `--repeat <n>` | 1 | How many times `verify` replays each bug |
