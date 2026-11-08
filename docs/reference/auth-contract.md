@@ -10,7 +10,17 @@ import { AUTH_PROVIDER_CONTRACT, createAuthProvider } from '@monkeytestai/monkey
 AUTH_PROVIDER_CONTRACT === 'monkeytester.auth.provider.v1';
 ```
 
-`AUTH_PROVIDER_CONTRACT` is that string, not an object. Compare it with `===`. `AUTH_PROVIDER_ABI` describes the same id: `createAuthProvider`, one `open()`, modes `hosted_credentials` and `local_session`, no `allowSensitive`, exact-origin request checks, and no screenshots or video while a session is bound.
+`AUTH_PROVIDER_CONTRACT` is that string, not an object. Compare it with `===`. `AUTH_PROVIDER_ABI` describes the same id. `providerLoopback` is `rejected`: `createAuthProvider` does not allow loopback. Loopback `http` is only the local CLI and `establishFormAuth`.
+
+`createAuthProvider(...).open()` takes no arguments and is consumed on the first call, including a failed attempt. `release()` aborts an in-flight sign-in and drops this object's copies. It does not wipe the caller's original object, and JavaScript cannot promise the string is gone from the heap.
+
+`RuntimeAuthProvider` is a different type. Its `open(policy)` can be called again until `close()`. Do not pass either object to `executeAndTriage`. That method takes `auth: { targetOrigin, storageState, expiresAt }`.
+
+Provider input `mode` is `hosted_credentials` or `local_session`. Public `metadata.mode` is `manual`, `form`, or `session`. Those are not the same field.
+
+Hosted DNS is a preflight only. This library does not pin the address Chromium resolves later. A hosted worker must block private, link-local, and metadata ranges in its network. Without that, do not treat the preflight as a connection-time guarantee.
+
+Signed-in requests are default-deny for every other origin. A redirect is fetched with no follow, and an off-origin `Location` is aborted before the browser continues. Cookie stripping and raw token matching are not the boundary. Service workers are not registered. Off-origin WebSockets are closed. This is not a claim that arbitrary signed-in page text is scrubbed: those sinks are omitted, and `privateDataScrubbed` stays false.
 
 ## `createAuthProvider`
 

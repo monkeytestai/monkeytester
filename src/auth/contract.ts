@@ -100,8 +100,11 @@ export interface AuthSecretProvider {
 }
 
 /**
- * In-memory session a worker already unwrapped. `open` returns it once.
- * `close` drops this wrapper's reference. It does not revoke the website session.
+ * Repeatable in-memory session holder. `open(policy)` may be called again
+ * until `close()`. This is not `createAuthProvider`. That function returns
+ * a different object whose `open()` takes no arguments and is consumed on
+ * the first call, including a failed attempt. `close` here does not sign
+ * the website out.
  */
 export interface RuntimeAuthProvider {
   open(request: AuthOriginPolicy): Promise<
@@ -134,8 +137,11 @@ export const AUTH_PROVIDER_ABI = Object.freeze({
   allowSensitive: 'not-granted' as const,
   egress: 'exact-origin-all-requests' as const,
   captureWhenAuthenticated: 'disabled' as const,
-  hostedTarget: 'https-public-only' as const,
-  localFixtureTarget: 'loopback-allowed' as const,
+  hostedTarget: 'https-public-preflight' as const,
+  /** Loopback http is only the local CLI and establishFormAuth. createAuthProvider rejects it. */
+  providerLoopback: 'rejected' as const,
+  hostedDns: 'preflight-only-not-connection-pin' as const,
+  hostedEgress: 'infrastructure-must-block-private-ranges' as const,
   hostedProduct: false as const,
 });
 

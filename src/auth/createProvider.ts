@@ -9,7 +9,7 @@ import { AUTH_PROVIDER_CONTRACT } from './contract.js';
 import { bindAuthProvider } from './bind.js';
 import type { AuthResult } from './establish.js';
 import { establishFormAuth } from './establish.js';
-import { checkHostedTarget, policyFrom } from './origins.js';
+import { checkHostedTarget, hostedDnsPreflight, policyFrom } from './origins.js';
 import { createMemorySecretProvider } from './provider.js';
 import { publicMetadata } from './report.js';
 
@@ -41,13 +41,17 @@ export interface AuthProvider {
 }
 
 export function createAuthProvider(input: HostedCredentialsInput | LocalSessionInput | Record<string, unknown>): AuthProvider {
-  const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const refused = REFUSED.find(key => record[key] != null && record[key] !== false);
-  let username = typeof record.username === 'string' ? record.username : '';
-  let password = typeof record.password === 'string' ? record.password : '';
-  let storage = isStorage(record.storageState) ? record.storageState : undefined;
+  const source = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const refused = REFUSED.find(key => source[key] != null && source[key] !== false);
+  const mode = source.mode;
+  const target = typeof source.targetOrigin === 'string' ? source.targetOrigin : '';
+  const expiresAt = typeof source.expiresAt === 'string' ? source.expiresAt : '';
+  let username = typeof source.username === 'string' ? source.username : '';
+  let password = typeof source.password === 'string' ? source.password : '';
+  let storage = copyStorage(source.storageState);
   let used = false;
   let released = false;
+  const abort = new AbortController();
 
   const fail = (outcome: 'not_authorized' | 'target_rejected' | 'expired' | 'origin_rejected', setup: boolean, detail: string): AuthResult => ({
     ok: false,
@@ -55,8 +59,9 @@ export function createAuthProvider(input: HostedCredentialsInput | LocalSessionI
     metadata: publicMetadata({
       mode: 'session',
       outcome,
-      policy: hostedPolicy(record.targetOrigin),
+      policy: hostedPolicy(target),
       custody: 'in-memory',
+      ...(expiresAt ? { expiresAt } : {}),
       detail,
     }),
   });
@@ -64,18 +69,15 @@ export function createAuthProvider(input: HostedCredentialsInput | LocalSessionI
   return {
     contract: AUTH_PROVIDER_CONTRACT,
     async open() {
-      if (released || used) {
+      if (released || used || abort.signal.aborted) {
         return fail('not_authorized', false, 'Our test couldn\'t complete the run because this provider was already used or released. A rerun needs a new createAuthProvider call and a new secret. This is not a verified run.');
       }
       used = true;
       if (refused) {
         return fail('not_authorized', true, `Field ${refused} is not accepted. Nothing was stored. This is not a verified run.`);
       }
-      const mode = record.mode;
-      const target = typeof record.targetOrigin === 'string' ? record.targetOrigin : '';
       const hosted = checkHostedTarget(target);
       if (!hosted.ok) return fail('target_rejected', true, hosted.detail);
-      const expiresAt = typeof record.expiresAt === 'string' ? record.expiresAt : '';
       const expiresMs = Date.parse(expiresAt);
       if (!expiresAt || Number.isNaN(expiresMs)) {
         return fail('not_authorized', true, 'Hosted sign-in requires an expiresAt instant. Nothing was submitted.');
@@ -85,26 +87,37 @@ export function createAuthProvider(input: HostedCredentialsInput | LocalSessionI
       }
       if (mode === 'local_session') {
         if (!storage) return fail('not_authorized', true, 'local_session requires a storageState for the exact target host. Nothing was stored.');
-        const bound = await bindAuthProvider({
-          targetOrigin: target,
-          storageState: storage,
-          expiresAt,
-        });
+        const copied = storage;
         storage = undefined;
-        return bound;
+        return bindAuthProvider({ targetOrigin: target, storageState: copied, expiresAt });
       }
       if (mode !== 'hosted_credentials') {
         return fail('not_authorized', true, 'mode must be hosted_credentials or local_session. Nothing was stored.');
       }
-      const provider = createMemorySecretProvider({ username, password });
+      const dns = await hostedDnsPreflight(hosted.parsed.hostname);
+      if (!dns.ok) return fail('target_rejected', true, dns.detail);
+      const secret = createMemorySecretProvider({ username, password });
       username = '';
       password = '';
-      const result = await establishFormAuth({ targetUrl: target, provider, headless: true });
-      if (!result.ok && result.metadata.outcome === 'target_rejected') return result;
+      const result = await establishFormAuth({
+        targetUrl: target,
+        provider: secret,
+        headless: true,
+        signal: abort.signal,
+        expiresAt,
+        custody: 'in-memory',
+      });
+      if (abort.signal.aborted || released) {
+        return fail('not_authorized', false, 'Our test couldn\'t complete the run because sign-in was cancelled. The session was not kept. This is not a verified run.');
+      }
+      if (Date.parse(expiresAt) <= Date.now()) {
+        return fail('expired', false, 'Our test couldn\'t complete the run because the sign-in envelope expired. The session was not kept. This is not a verified run.');
+      }
       return result;
     },
     release() {
       released = true;
+      abort.abort();
       username = '';
       password = '';
       storage = undefined;
@@ -125,4 +138,9 @@ function isStorage(value: unknown): value is AuthStorageState {
   if (!value || typeof value !== 'object') return false;
   const record = value as { cookies?: unknown; origins?: unknown };
   return Array.isArray(record.cookies) && Array.isArray(record.origins);
+}
+
+function copyStorage(value: unknown): AuthStorageState | undefined {
+  if (!isStorage(value)) return undefined;
+  return JSON.parse(JSON.stringify(value)) as AuthStorageState;
 }

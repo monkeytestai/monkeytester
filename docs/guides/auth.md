@@ -53,7 +53,9 @@ Sign-up, contact, payment, and account deletion stay on their existing rules. A 
 
 `createAuthProvider` and `AUTH_PROVIDER_CONTRACT` are the in-memory interface a server you operate can call later. `AUTH_PROVIDER_CONTRACT` is the string `monkeytester.auth.provider.v1`. The hosted product does not pin that string yet, and this package does not claim the hosted product holds a customer password. Whoever can read the process can read the secret while it exists. Password masking is not a zero-knowledge proof.
 
-The provider accepts `hosted_credentials` or `local_session` for one `open()`. A second `open()` does not reuse the secret. Hosted targets are public `https` only. The local CLI loopback exception does not apply to `createAuthProvider`. See [Auth provider contract](/reference/auth-contract).
+The provider accepts `hosted_credentials` or `local_session` for one `open()`. A second `open()` does not reuse the secret. `release()` aborts an in-flight sign-in and drops that object's copies. `RuntimeAuthProvider.open(policy)` is a different interface and can be called again until `close()`. `executeAndTriage` takes `auth: { targetOrigin, storageState, expiresAt }`, not a provider object.
+
+Hosted targets are public `https` only. The local CLI loopback exception does not apply to `createAuthProvider`. Hosted DNS is a preflight lookup, not a connection-time pin. A hosted worker must block private, link-local, and metadata ranges in its own network. See [Auth provider contract](/reference/auth-contract).
 
 ## Auth-negative checks
 

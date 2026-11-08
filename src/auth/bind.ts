@@ -6,7 +6,7 @@
 
 import type { AuthStorageState } from './contract.js';
 import type { AuthResult } from './establish.js';
-import { assertSessionBound, jarExpired, policyFrom } from './origins.js';
+import { acceptSessionMaterial, assertSessionBound, jarExpired, policyFrom } from './origins.js';
 import { publicMetadata } from './report.js';
 
 export interface AuthBindInput {
@@ -35,6 +35,22 @@ export async function bindAuthProvider(input: AuthBindInput): Promise<AuthResult
   }
   const policy = policyResult.policy;
   const now = input.nowMs ?? Date.now();
+  if (input.expiresAt !== undefined) {
+    const expiresMs = Date.parse(input.expiresAt);
+    if (Number.isNaN(expiresMs)) {
+      return {
+        ok: false,
+        setup: true,
+        metadata: publicMetadata({
+          mode: 'session',
+          outcome: 'not_authorized',
+          policy,
+          custody: 'in-memory',
+          detail: 'The session expiry is not a time. It was not applied. This is not a verified run.',
+        }),
+      };
+    }
+  }
   if (input.expiresAt && Date.parse(input.expiresAt) <= now) {
     return {
       ok: false,
@@ -60,6 +76,20 @@ export async function bindAuthProvider(input: AuthBindInput): Promise<AuthResult
         custody: 'in-memory',
         ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
         detail: 'Our test couldn\'t complete the run because the session cookies are expired. They were not applied. This is not a verified run and it does not mean the site has no bugs.',
+      }),
+    };
+  }
+  const material = acceptSessionMaterial(input.storageState);
+  if (!material.ok) {
+    return {
+      ok: false,
+      setup: false,
+      metadata: publicMetadata({
+        mode: 'session',
+        outcome: 'not_authorized',
+        policy,
+        custody: 'in-memory',
+        detail: `Our test couldn't complete the run. ${material.detail} This is not a verified run.`,
       }),
     };
   }

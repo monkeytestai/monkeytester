@@ -488,7 +488,11 @@ export async function installSubmissionGuards(page: Page, policy: SubmissionPoli
         return;
       }
     }
-    await route.continue().catch(() => {});
+    // Fall through so a context auth fence still runs. continue() would
+    // skip that fence and let an off-origin request leave.
+    await route.fallback().catch(async () => {
+      await route.abort('blockedbyclient').catch(() => {});
+    });
   });
 }
 

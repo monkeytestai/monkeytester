@@ -62,6 +62,29 @@ export interface VerifyReport {
 }
 
 export async function verifyBugs(run: RunResult, opts: VerifyOptions): Promise<VerifyReport> {
+  if (run.auth?.outcome === 'authenticated' && !opts.storageState) {
+    const repeat = opts.repeat ?? 1;
+    const results: BugVerdict[] = (opts.bugs ?? run.bugs).map(bug => ({
+      fingerprint: bug.fingerprint,
+      fingerprintV2: bug.fingerprintV2,
+      bugId: bug.id,
+      title: bug.title,
+      severity: bug.severity,
+      attempts: Array.from({ length: repeat }, () => 'blocked' as const),
+      verdict: 'blocked' as const,
+      fired: 0,
+      repeat,
+      detail: 'Signed-in verify needs a new session. The previous session was not copied. This is not a fix.',
+    }));
+    const report: VerifyReport = {
+      repeat,
+      heal: opts.heal === true,
+      results,
+      stats: { total: results.length, fixed: 0, still_broken: 0, flaky: 0, healed: 0, blocked: results.length },
+      exitCode: 1,
+    };
+    return report;
+  }
   const repeat = opts.repeat ?? 1;
   if (!Number.isInteger(repeat) || repeat < 1){
     throw new Error(`verify repeat must be a positive integer (got ${repeat})`);

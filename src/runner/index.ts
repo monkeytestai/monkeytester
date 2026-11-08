@@ -100,6 +100,7 @@ import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, set
 import { openFencedContext } from '../auth/browser.js';
 import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
 import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
+import { authBlockedRun, publicMetadata } from '../auth/report.js';
 
 export interface RunnerOptions {
   /**
@@ -194,6 +195,16 @@ export async function runPlan(
   const flows: FlowResult[] = [];
   const signup = emptySignupLedger();
   const runId = opts.runId || startedAt;
+
+  if (plan.auth?.outcome === 'authenticated' && !opts.storageState) {
+    return authBlockedRun(plan.startUrl, publicMetadata({
+      mode: plan.auth.mode,
+      outcome: 'not_authorized',
+      policy: { targetOrigin: plan.auth.targetOrigin, idpOrigins: plan.auth.idpOrigins },
+      custody: plan.auth.custody,
+      detail: 'Our test couldn\'t complete the run because this plan was signed in and this call did not pass a new session. This is not a verified run.',
+    }));
+  }
 
   if (plan.flows.length === 0){
     return emptyRun(plan, startedAt);
