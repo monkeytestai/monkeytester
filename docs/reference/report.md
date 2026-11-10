@@ -11,7 +11,8 @@ The file under `.monkeytest/runs/` is a stored run: `{ schema, id, createdAt, en
 | Field | Values |
 | --- | --- |
 | `outcome` | `bugs_found`, `clean`, `inconclusive`, `could_not_test` |
-| `outcome_reason` | `login_required`, `blocked_by_bot_protection`, `site_unreachable`, `invalid_url`, `llm_error`, `all_flows_skipped`, `timeout`, `automation_error`, `not_attempted`, `nothing_tested`, `no_assertion`, `assertion_unverifiable`, `budget_exhausted`, `contact_submit_blocked`, `request_blocked` |
+| `outcome_reason` | `login_required`, `blocked_by_bot_protection`, `site_unreachable`, `invalid_url`, `llm_error`, `all_flows_skipped`, `timeout`, `automation_error`, `not_attempted`, `nothing_tested`, `no_assertion`, `assertion_unverifiable`, `budget_exhausted`, `contact_submit_blocked`, `request_blocked`, and the auth reasons `auth_mfa_required`, `auth_expired`, `auth_origin_rejected`, `auth_rejected`, `auth_not_authorized`, `auth_target_rejected`, `auth_storage_unsafe` |
+| `auth` | Public sign-in metadata when a session was attempted. No password and no cookie jar. Omitted on anonymous runs. `privateDataScrubbed` is false. |
 | `outcome_detail` | One or two sentences that match the bug count, plus a next step |
 | `public_screens` | Crawled pages that are not auth-gated. Omitted when the run did not crawl. |
 | `engine_version` | `ENGINE_VERSION`, for example the package version |

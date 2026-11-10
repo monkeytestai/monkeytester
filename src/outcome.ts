@@ -29,6 +29,7 @@ import type {
   StepResult,
   TraceStep,
 } from './types.js';
+import { outcomeFromAuth } from './auth/report.js';
 import { ENGINE_VERSION } from './version.js';
 
 export interface OutcomeContext {
@@ -149,6 +150,13 @@ function demoteTrace(step: TraceStep, failed: boolean): TraceStep {
 }
 
 const REASON_PRIORITY: OutcomeReason[] = [
+  'auth_expired',
+  'auth_mfa_required',
+  'auth_origin_rejected',
+  'auth_rejected',
+  'auth_not_authorized',
+  'auth_target_rejected',
+  'auth_storage_unsafe',
   'site_unreachable',
   'invalid_url',
   'blocked_by_bot_protection',
@@ -455,6 +463,8 @@ function runDetail(outcome: RunOutcome, reason: OutcomeReason | undefined, bugCo
 
 function pickCouldNotTest(reasons: OutcomeReason[], ctx: OutcomeContext): OutcomeReason {
   const notes = ctx.notes || '';
+  const authReason = reasons.find(reason => reason.startsWith('auth_'));
+  if (authReason) return authReason;
   if (reasons.includes('invalid_url') || INVALID_URL.test(notes)) return 'invalid_url';
   if (reasons.includes('blocked_by_bot_protection') || BOT_WALL.test(notes)) return 'blocked_by_bot_protection';
   if (reasons.includes('login_required')) return 'login_required';
@@ -513,6 +523,8 @@ function applyLoginOnly(derived: DerivedOutcome, ctx: OutcomeContext, bugCount: 
 
 /** Bug count is the filtered list on `run.bugs`. */
 export function deriveRunOutcome(run: RunResult, ctx: OutcomeContext = {}): DerivedOutcome {
+  const fromAuth = outcomeFromAuth(run.auth);
+  if (fromAuth) return fromAuth;
   const bugCount = run.bugs.length;
   if (bugCount > 0) {
     return applyLoginOnly(

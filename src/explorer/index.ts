@@ -29,7 +29,14 @@
  *   - It does not click destructive buttons. The visit is read-only.
  */
 
-import { chromium, type APIRequestContext, type Browser, type Page } from 'playwright';
+import type { APIRequestContext, Browser, Page } from 'playwright';
+import { openFencedContext } from '../auth/browser.js';
+import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
+import { launchFencedBrowser } from '../auth/egress.js';
+import { originAllowed } from '../auth/origins.js';
+import { captureDisabled, redactValue, secretNeedles } from '../auth/redact.js';
+import { publicMetadata } from '../auth/report.js';
+import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
 import { basename } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -91,9 +98,28 @@ export interface ExploreOptions {
   onPage?: (page: SiteMapPage) => void;
   /** Optional live event bus. Receives explorer lifecycle events. */
   events?: EventBus;
+  /**
+   * Signed-in jar. Pair with authOrigin. Not copied onto the site map.
+   * Explore does not prove the login. `Monkey` and the CLI do that first.
+   * A raw jar still fences egress.
+   */
+  storageState?: AuthStorageState;
+  authOrigin?: AuthOriginPolicy;
 }
 
 export async function explore(
+  startUrl: string,
+  llm: LLM,
+  opts: ExploreOptions = {}
+): Promise<SiteMap> {
+  return withSensitiveSinks(secretNeedles(opts.storageState), async () => {
+    adoptAttached(opts.storageState);
+    const map = await exploreScoped(startUrl, scrubModel(llm), opts);
+    return redactValue(map, secretNeedles(opts.storageState));
+  });
+}
+
+async function exploreScoped(
   startUrl: string,
   llm: LLM,
   opts: ExploreOptions = {}
@@ -125,21 +151,49 @@ export async function explore(
     data: { startUrl, maxPages },
   });
 
-  const browser: Browser = await chromium.launch({ headless });
+  const launch = await launchFencedBrowser({
+    headless,
+    policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
+  });
+  if (!launch.ok) {
+    const detail = launch.detail;
+    return {
+      startUrl,
+      siteType: 'unknown',
+      summary: detail,
+      pages: [],
+      pendingUrls: [],
+      failedUrls: [{ url: startUrl, reason: detail }],
+      warnings: [detail],
+      ...(opts.authOrigin ? {
+        auth: publicMetadata({
+          mode: 'session',
+          outcome: 'target_rejected',
+          policy: opts.authOrigin,
+          custody: 'in-memory',
+          detail,
+        }),
+      } : {}),
+    };
+  }
+  const browser: Browser = launch.browser;
 
   try {
 
-    const context = await browser.newContext({
+    const context = await openFencedContext(browser, {
       userAgent:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/537.36 '
         + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 monkeytest.ai',
       viewport: { width: 1280, height: 800 },
+      storageState: opts.storageState,
+      authOrigin: opts.authOrigin,
+      egressPin: launch.pin,
     });
     await installPageNameHelper(context);
 
     // sitemap.xml and robots.txt are optional. A miss is not a failed page.
     // Seeds stay inside the page cap; auth URLs they name share AUTH_LINK_BUDGET.
-    const listed = await listedSiteUrls(context.request, startUrl, maxPages);
+    const listed = await listedSiteUrls(context.request, startUrl, maxPages, opts.authOrigin);
     const room = Math.max(0, maxPages - queue.length);
     authUrlsQueued = enqueueLinks(
       queue,
@@ -186,13 +240,11 @@ export async function explore(
           continue;
         }
 
-        const skeleton = await scrapePageSkeleton(page);
+        const skeleton = redactValue(await scrapePageSkeleton(page), secretNeedles(opts.storageState));
 
-        // Screenshot each visited page if a directory was provided. Filename
-        // is a deterministic, filesystem-safe hash of the URL so subsequent
-        // runs can reference the same path.
+        // A signed-in crawl does not take screenshots. Pixels cannot be scrubbed.
         let screenshotPath: string | undefined;
-        if (screenshotsDir){
+        if (screenshotsDir && !opts.storageState && !captureDisabled(page)){
           const filename = `page-${pages.length + 1}-${slugifyUrl(url)}.png`;
           const fullPath = join(screenshotsDir, filename);
           try {
@@ -214,7 +266,13 @@ export async function explore(
         // because the LLM returned malformed JSON is overkill.
         let summary: { summary: string; interactive: SiteMapInteractive[]; authGated: boolean };
         let pageWarnings: string[] | undefined;
-        try {
+        if (opts.storageState) {
+          summary = {
+            summary: 'Signed-in page. Page text was not stored or sent to the model.',
+            authGated: false,
+            interactive: [],
+          };
+        } else try {
           summary = await summarisePageWithLLM(llm, url, skeleton);
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
@@ -259,7 +317,14 @@ export async function explore(
         if (fingerprint && seenScreens.has(fingerprint)) continue;
         if (fingerprint) seenScreens.add(fingerprint);
 
-        const sm: SiteMapPage = {
+        const sm: SiteMapPage = opts.storageState ? {
+          url: stripQuery(url),
+          title: '',
+          summary: summary.summary,
+          interactive: [],
+          outboundLinks: outbound.map(link => stripQuery(link.url)),
+          authGated,
+        } : {
           url,
           title: skeleton.title,
           summary: summary.summary,
@@ -338,7 +403,7 @@ export async function explore(
       },
     });
 
-    return {
+    return redactValue({
       startUrl,
       siteType: overall.siteType,
       summary: overall.summary,
@@ -350,7 +415,7 @@ export async function explore(
       pendingUrls: queue.map(item => item.url),
       failedUrls: failures,
       ...(warnings.length ? { warnings } : {}),
-    };
+    }, secretNeedles(opts.storageState));
 
   } finally {
     await browser.close().catch(() => {});
@@ -366,6 +431,7 @@ async function listedSiteUrls(
   request: APIRequestContext,
   startUrl: string,
   cap: number,
+  policy?: AuthOriginPolicy,
 ): Promise<{ url: string; fromSitemap: boolean }[]> {
   if (cap < 1) return [];
   let origin: string;
@@ -388,7 +454,7 @@ async function listedSiteUrls(
     found.push({ url: canonical, fromSitemap });
   };
 
-  const robotsText = await readDiscoveryText(request, `${origin}/robots.txt`);
+  const robotsText = await readDiscoveryText(request, `${origin}/robots.txt`, startUrl, 0, policy);
   const robotUrls = robotsText ? urlsFromRobots(robotsText, startUrl) : [];
   for (const url of robotUrls) {
     if (!/sitemap/i.test(url)) push(url, false);
@@ -399,13 +465,15 @@ async function listedSiteUrls(
   for (const target of sitemapTargets) {
     if (seenSitemaps.has(target) || found.length >= cap) continue;
     seenSitemaps.add(target);
-    const xml = await readDiscoveryText(request, target);
+    if (!isSameCrawlSite(target, startUrl)) continue;
+    const xml = await readDiscoveryText(request, target, startUrl, 0, policy);
     if (!xml) continue;
     for (const loc of urlsFromSitemap(xml)) {
       if (found.length >= cap) break;
       if (/sitemap[^/]*\.xml(?:\?|$)/i.test(loc) && !seenSitemaps.has(loc)) {
         seenSitemaps.add(loc);
-        const nested = await readDiscoveryText(request, loc);
+        if (!isSameCrawlSite(loc, startUrl)) continue;
+        const nested = await readDiscoveryText(request, loc, startUrl, 0, policy);
         if (nested) for (const inner of urlsFromSitemap(nested)) push(inner, true);
       } else {
         push(loc, true);
@@ -415,9 +483,43 @@ async function listedSiteUrls(
   return found;
 }
 
-async function readDiscoveryText(request: APIRequestContext, url: string): Promise<string | undefined> {
+function stripQuery(value: string): string {
   try {
-    const response = await request.get(url, { timeout: 8_000, failOnStatusCode: false });
+    const url = new URL(value);
+    url.search = '';
+    url.hash = '';
+    return url.href;
+  } catch {
+    return value;
+  }
+}
+
+function discoveryAllowed(url: string, scope: string, policy?: AuthOriginPolicy): boolean {
+  if (!isSameCrawlSite(url, scope)) return false;
+  if (!policy) return true;
+  try { return originAllowed(new URL(url, scope), policy); }
+  catch { return false; }
+}
+
+async function readDiscoveryText(
+  request: APIRequestContext,
+  url: string,
+  scope: string,
+  hops = 0,
+  policy?: AuthOriginPolicy,
+): Promise<string | undefined> {
+  if (hops > 3 || !discoveryAllowed(url, scope, policy)) return undefined;
+  try {
+    const response = await request.get(url, { timeout: 8_000, failOnStatusCode: false, maxRedirects: 0 });
+    const status = response.status();
+    if (status >= 300 && status < 400) {
+      const location = response.headers()['location'];
+      if (!location) return undefined;
+      let next = '';
+      try { next = new URL(location, url).href; } catch { return undefined; }
+      if (!discoveryAllowed(next, scope, policy)) return undefined;
+      return readDiscoveryText(request, next, scope, hops + 1, policy);
+    }
     if (!response.ok()) return undefined;
     const body = await response.text();
     if (!body || body.length > 1_000_000) return undefined;

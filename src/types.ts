@@ -7,6 +7,8 @@
  * uses them.
  */
 
+import type { AuthPublicMetadata } from './auth/contract.js';
+
 /* ── LLM configuration ────────────────────────────────────────────────── */
 
 export type LLMProvider =
@@ -219,6 +221,11 @@ export interface SiteMap {
    * show these strings as-is. Technical parser errors are not included.
    */
   warnings?: string[];
+  /**
+   * Present when a signed-in crawl was refused before any page loaded.
+   * No cookies. Omitted on an anonymous crawl. Additive.
+   */
+  auth?: AuthPublicMetadata;
   pages: SiteMapPage[];
   /**
    * Unique URLs that loaded, including auth-gated pages. A redirect that
@@ -412,6 +419,8 @@ export interface TestPlan {
    * Omitted when the model plan was kept. Additive in 0.7.0-beta.4.
    */
   plannerFallbackReason?: string;
+  /** Public sign-in metadata. No cookies or passwords. Omitted on anonymous plans. */
+  auth?: AuthPublicMetadata;
 }
 
 /* ── Run results (output of Runner) ───────────────────────────────────── */
@@ -562,7 +571,18 @@ export type OutcomeReason =
    * left the browser on an error page. Inconclusive, and not a site bug.
    * Contact submits keep `contact_submit_blocked`. Additive in 0.7.2-beta.2.
    */
-  | 'request_blocked';
+  | 'request_blocked'
+  /**
+   * Existing-account sign-in did not finish. Not a pass and not "no bugs".
+   * `login_required` is unchanged. Additive.
+   */
+  | 'auth_mfa_required'
+  | 'auth_expired'
+  | 'auth_origin_rejected'
+  | 'auth_rejected'
+  | 'auth_not_authorized'
+  | 'auth_target_rejected'
+  | 'auth_storage_unsafe';
 
 /**
  * Phase 3 signup result. Reserved in 0.7.0-beta.1 and left unset.
@@ -724,6 +744,8 @@ export interface RunResult {
    * Includes explorer summary failures. Additive in 0.7.0-beta.4.
    */
   warnings?: string[];
+  /** Public sign-in metadata. Absent on anonymous runs. Never a password or cookie jar. */
+  auth?: AuthPublicMetadata;
 }
 
 /**

@@ -28,6 +28,7 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { scrubString, scrubUnknown } from './auth/secrets.js';
 
 export type LivePhase = 'explorer' | 'planner' | 'runner' | 'triager';
 
@@ -108,7 +109,14 @@ export class EventBus {
    * structured context. The bus stamps the timestamp.
    */
   emit(event: Omit<LiveEvent, 'ts'>): void {
-    const full: LiveEvent = { ts: new Date().toISOString(), ...event };
+    const data = event.data ? scrubUnknown(event.data) : undefined;
+    const full: LiveEvent = {
+      ts: new Date().toISOString(),
+      phase: event.phase,
+      type: event.type,
+      message: scrubString(event.message),
+      ...(data && Object.keys(data).length ? { data } : {}),
+    };
     this.emitter.emit('event', full);
   }
 
