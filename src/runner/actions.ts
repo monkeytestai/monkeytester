@@ -32,6 +32,7 @@ import {
 } from '../explorer/authRedirect.js';
 import { MODEL_CREDENTIAL_RULE } from '../auth/contract.js';
 import { redactValue, secretsFor } from '../auth/redact.js';
+import { absorbPageSecrets } from '../auth/secrets.js';
 import { blockSensitiveClick, contactAbortOutcome, isOauthNavigation, refreshFormActions, submissionPolicy } from './sensitive.js';
 
 const ACTION_TOOLS = ['click', 'fill', 'goto', 'wait', 'assert_text', 'press', 'noop'] as const;
@@ -880,6 +881,7 @@ export function mergeLocatorIdentity(
 }
 
 export async function skeletonForLLM(page: Page): Promise<PageSkeletonForLLM> {
+  await absorbPageSecrets(page);
 
   const url = page.url();
   const title = await page.title().catch(() => '');

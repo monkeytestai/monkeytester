@@ -221,6 +221,11 @@ export interface SiteMap {
    * show these strings as-is. Technical parser errors are not included.
    */
   warnings?: string[];
+  /**
+   * Present when a signed-in crawl was refused before any page loaded.
+   * No cookies. Omitted on an anonymous crawl. Additive.
+   */
+  auth?: AuthPublicMetadata;
   pages: SiteMapPage[];
   /**
    * Unique URLs that loaded, including auth-gated pages. A redirect that

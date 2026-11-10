@@ -53,7 +53,10 @@ describe('AUTH_PROVIDER_CONTRACT', () => {
     expect(AUTH_PROVIDER_ABI.create).toBe('createAuthProvider');
     expect(AUTH_PROVIDER_ABI.allowSensitive).toBe('not-granted');
     expect(AUTH_PROVIDER_ABI.providerLoopback).toBe('rejected');
-    expect(AUTH_PROVIDER_ABI.hostedDns).toBe('preflight-only-not-connection-pin');
+    expect(AUTH_PROVIDER_ABI.hostedDns).toBe('resolve-and-pin');
+    expect(AUTH_PROVIDER_ABI.runtimeSession).toBe('repeatable-until-close');
+    expect(AUTH_PROVIDER_ABI.open).toBe('once');
+    expect(JSON.stringify(AUTH_PROVIDER_ABI)).not.toContain('loopback-allowed');
     expect(AUTH_PROVIDER_ABI.hostedProduct).toBe(false);
     expect(JSON.stringify(AUTH_PROVIDER_ABI)).not.toContain(PASSWORD);
   });
@@ -155,15 +158,24 @@ describe('createAuthProvider', () => {
     expect(JSON.stringify(other)).not.toContain(COOKIE);
 
     const copied = jar('app.example.com');
+    let passwordReads = 0;
     const input = {
       mode: 'local_session' as const,
       targetOrigin: 'https://app.example.com',
       storageState: copied,
       expiresAt: future,
     };
-    const provider = createAuthProvider(input);
+    const tracked = new Proxy(input, {
+      get(target, key, receiver) {
+        if (key === 'password') passwordReads += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const provider = createAuthProvider(tracked);
+    const readsAfterCreate = passwordReads;
     input.storageState = { cookies: [], origins: [] };
     const kept = await provider.open();
+    expect(passwordReads).toBe(readsAfterCreate);
     expect(kept.ok).toBe(true);
 
     const empty = await bindAuthProvider({
@@ -179,6 +191,11 @@ describe('createAuthProvider', () => {
       },
     });
     expect(csrf.ok).toBe(false);
+    const extra = await bindAuthProvider({
+      targetOrigin: 'https://app.example.com',
+      storageState: { ...jar('app.example.com'), comment: 'no' } as AuthStorageState,
+    });
+    expect(extra.ok).toBe(false);
     const badTime = await bindAuthProvider({
       targetOrigin: 'https://app.example.com',
       storageState: jar('app.example.com'),

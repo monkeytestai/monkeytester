@@ -84,9 +84,21 @@ export interface ExecuteChecksOptions {
   onFlowComplete?: (result: FlowResult) => void;
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
+  egressPin?: import('../auth/egress.js').EgressPin;
 }
 
 const buckets = new WeakMap<Page, Collected>();
+
+function stripSignedInUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.search = '';
+    url.hash = '';
+    return url.href;
+  } catch {
+    return 'omitted while signed in';
+  }
+}
 
 function bucket(page: Page): Collected {
   let found = buckets.get(page);
@@ -96,17 +108,19 @@ function bucket(page: Page): Collected {
     const target = found;
     page.on('console', message => {
       if (message.type() !== 'error') return;
+      const quiet = captureDisabled(page);
       target.hits.push({
         kind: 'console',
-        message: message.text(),
-        sourceUrl: message.location()?.url,
+        message: quiet ? 'omitted while signed in' : message.text(),
+        ...(quiet ? {} : { sourceUrl: message.location()?.url }),
       });
     });
     page.on('pageerror', error => {
-      const sourceUrl = scriptUrlFromError(error);
+      const quiet = captureDisabled(page);
+      const sourceUrl = quiet ? undefined : scriptUrlFromError(error);
       target.hits.push({
         kind: 'pageerror',
-        message: error.message,
+        message: quiet ? 'omitted while signed in' : error.message,
         ...(sourceUrl ? { sourceUrl } : {}),
       });
     });
@@ -115,7 +129,7 @@ function bucket(page: Page): Collected {
       if (status < 400) return;
       const request = response.request();
       target.requests.push({
-        url: response.url(),
+        url: captureDisabled(page) ? stripSignedInUrl(response.url()) : response.url(),
         method: request.method(),
         status,
         resourceType: request.resourceType(),
@@ -218,11 +232,13 @@ export async function executePageChecks(
     viewport: { width: 1280, height: 720 },
     storageState: opts.storageState,
     authOrigin: opts.authOrigin,
+    egressPin: opts.egressPin,
   });
   const mobile = await openFencedContext(browser, {
     viewport: MOBILE_VIEWPORT,
     storageState: opts.storageState,
     authOrigin: opts.authOrigin,
+    egressPin: opts.egressPin,
   });
   const desktopPage = await desktop.newPage();
   const mobilePage = await mobile.newPage();
@@ -470,7 +486,24 @@ async function probeLinks(
     if (budget.remaining <= 0) break;
     budget.remaining -= 1;
     try {
-      const response = await page.request.get(link, { timeout: 5_000, failOnStatusCode: false, maxRedirects: 2 });
+      const signedIn = captureDisabled(page);
+      if (signedIn) {
+        let linkUrl: URL;
+        let current: URL;
+        try {
+          linkUrl = new URL(link);
+          current = new URL(pageUrl);
+        } catch {
+          continue;
+        }
+        if (linkUrl.origin !== current.origin) continue;
+      }
+      const response = await page.request.get(link, {
+        timeout: 5_000,
+        failOnStatusCode: false,
+        maxRedirects: signedIn ? 0 : 2,
+      });
+      if (signedIn && response.status() >= 300 && response.status() < 400) continue;
       if (isBrokenStatus(response.status())) broken.push({ url: link, status: response.status() });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

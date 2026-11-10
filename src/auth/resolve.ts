@@ -27,6 +27,8 @@ export interface AuthInvocation {
   headless?: boolean;
   settle?: (page: Page) => Promise<void>;
   nowMs?: number;
+  postLoginUrl?: string;
+  postLoginSelector?: string;
 }
 
 export type AuthResolution =
@@ -56,6 +58,8 @@ export async function resolveAuthInvocation(input: AuthInvocation): Promise<Auth
       idpOrigins: input.idpOrigins,
       headless: input.headless,
       settle: input.settle,
+      postLoginUrl: input.postLoginUrl,
+      postLoginSelector: input.postLoginSelector,
     }));
   }
   if (freshSecret) {
@@ -76,6 +80,8 @@ export async function resolveAuthInvocation(input: AuthInvocation): Promise<Auth
       idpOrigins: input.idpOrigins,
       provider,
       headless: input.headless !== false,
+      postLoginUrl: input.postLoginUrl,
+      postLoginSelector: input.postLoginSelector,
     }));
   }
   if (!input.sessionPath) {

@@ -1,17 +1,20 @@
 /**
  * A signed-in browser context. Video is not recorded. The session jar is
- * loaded only after it matches the exact authorized hosts.
+ * loaded only after it matches the exact authorized hosts. Service workers
+ * are blocked so they cannot leave this context's fence.
  */
 
 import type { Browser, BrowserContext } from 'playwright';
 import type { AuthOriginPolicy, AuthStorageState } from './contract.js';
+import { browserHasPin, prepareEgress, type EgressPin } from './egress.js';
 import { installSessionFence } from './fence.js';
 import { assertSessionBound } from './origins.js';
-import { rememberPageSecrets, secretNeedles } from './redact.js';
+import { attachedSecrets, rememberPageSecrets, secretNeedles } from './redact.js';
 
 export interface FencedContextOptions {
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
+  egressPin?: EgressPin;
   userAgent?: string;
   viewport?: { width: number; height: number };
   recordVideo?: { dir: string; size: { width: number; height: number } };
@@ -32,6 +35,15 @@ export function authContextExtras(opts: {
 
 export async function openFencedContext(browser: Browser, opts: FencedContextOptions): Promise<BrowserContext> {
   const extras = authContextExtras(opts);
+  let pin = opts.egressPin;
+  if (opts.storageState && opts.authOrigin && !pin) {
+    const prepared = await prepareEgress(opts.authOrigin);
+    if (!prepared.ok) throw new Error(prepared.detail);
+    if (prepared.pin.mode === 'hosted-public' && !browserHasPin(browser)) {
+      throw new Error('A hosted signed-in browser must be launched with the DNS pin. Nothing was opened.');
+    }
+    pin = prepared.pin;
+  }
   const context = await browser.newContext({
     ...(opts.userAgent ? { userAgent: opts.userAgent } : {}),
     ...(opts.viewport ? { viewport: opts.viewport } : {}),
@@ -39,10 +51,10 @@ export async function openFencedContext(browser: Browser, opts: FencedContextOpt
     ...(opts.storageState ? { serviceWorkers: 'block' as const } : {}),
     ...extras,
   });
-  if (opts.storageState && opts.authOrigin) {
-    const needles = secretNeedles(opts.storageState);
+  if (opts.storageState && opts.authOrigin && pin) {
+    const needles = [...secretNeedles(opts.storageState), ...attachedSecrets(opts.storageState)];
     context.on('page', page => rememberPageSecrets(page, needles, true));
-    await installSessionFence(context, opts.authOrigin);
+    await installSessionFence(context, opts.authOrigin, pin);
   }
   return context;
 }

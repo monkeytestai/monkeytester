@@ -25,7 +25,7 @@
  * deterministically and reports.
  */
 
-import { chromium, type Browser, type Page } from 'playwright';
+import type { Browser, Page } from 'playwright';
 import { mkdirSync, renameSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import type { LLM } from '../llm/index.js';
@@ -101,6 +101,8 @@ import { openFencedContext } from '../auth/browser.js';
 import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
 import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
 import { authBlockedRun, publicMetadata } from '../auth/report.js';
+import { launchFencedBrowser } from '../auth/egress.js';
+import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
 
 export interface RunnerOptions {
   /**
@@ -167,6 +169,8 @@ export interface RunnerOptions {
   /** Customer session. Required together with authOrigin. Not copied onto the run. */
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
+  /** Set by the runner after the browser is launched with this pin. */
+  egressPin?: import('../auth/egress.js').EgressPin;
 }
 
 export type RunnerEvent =
@@ -178,6 +182,18 @@ export type RunnerEvent =
 /* ── Public entry point ───────────────────────────────────────────────── */
 
 export async function runPlan(
+  plan: TestPlan,
+  llm: LLM,
+  opts: RunnerOptions,
+): Promise<RunResult> {
+  return withSensitiveSinks(secretNeedles(opts.storageState), async () => {
+    adoptAttached(opts.storageState);
+    const result = await runPlanScoped(plan, scrubModel(llm), opts);
+    return redactValue(result, secretNeedles(opts.storageState));
+  });
+}
+
+async function runPlanScoped(
   plan: TestPlan,
   llm: LLM,
   opts: RunnerOptions,
@@ -207,10 +223,35 @@ export async function runPlan(
   }
 
   if (plan.flows.length === 0){
-    return emptyRun(plan, startedAt);
+    const empty = emptyRun(plan, startedAt);
+    if (!opts.storageState || !opts.authOrigin) return empty;
+    return {
+      ...empty,
+      auth: publicMetadata({
+        mode: 'session',
+        outcome: 'authenticated',
+        policy: opts.authOrigin,
+        custody: 'in-memory',
+        detail: 'Signed in for this process only. The session was not written on this result.',
+      }),
+    };
   }
 
-  const browser = await chromium.launch({ headless });
+  const launch = await launchFencedBrowser({
+    headless,
+    policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
+  });
+  if (!launch.ok) {
+    return authBlockedRun(plan.startUrl, publicMetadata({
+      mode: 'session',
+      outcome: 'target_rejected',
+      policy: opts.authOrigin ?? { targetOrigin: 'https://invalid.invalid', idpOrigins: [] },
+      custody: 'in-memory',
+      detail: launch.detail,
+    }));
+  }
+  const browser = launch.browser;
+  if (launch.pin) opts = { ...opts, egressPin: launch.pin };
 
   try {
 
@@ -222,6 +263,7 @@ export async function runPlan(
           deadlineAt: opts.deadlineAt,
           storageState: opts.storageState,
           authOrigin: opts.authOrigin,
+          egressPin: opts.egressPin,
           onFlowStart: item => {
             const index = plan.flows.findIndex(candidate => candidate.id === item.id);
             opts.onEvent?.({ type: 'flow.start', flowId: item.id, flow: item });
@@ -354,7 +396,7 @@ export async function runPlan(
   }
 
   const finishedAt = new Date().toISOString();
-  return redactValue({
+  const result: RunResult = {
     startUrl: plan.startUrl,
     startedAt,
     finishedAt,
@@ -363,7 +405,17 @@ export async function runPlan(
     stats: aggregateStats(flows),
     engine_version: ENGINE_VERSION,
     ...signupFields(signup),
-  }, secretNeedles(opts.storageState));
+    ...(opts.storageState && opts.authOrigin ? {
+      auth: publicMetadata({
+        mode: 'session',
+        outcome: 'authenticated',
+        policy: opts.authOrigin,
+        custody: 'in-memory',
+        detail: 'Signed in for this process only. The session was not written on this result.',
+      }),
+    } : {}),
+  };
+  return result;
 
 }
 
@@ -410,6 +462,7 @@ async function runFlow(
     }),
     storageState: opts.storageState,
     authOrigin: opts.authOrigin,
+    egressPin: opts.egressPin,
   });
   await installPageNameHelper(context);
 

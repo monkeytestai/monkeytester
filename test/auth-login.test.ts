@@ -119,6 +119,7 @@ describe('local synthetic sign-in', () => {
         res.end();
         return;
       }
+      if (url.pathname === '/hang') return;
       if (url.pathname === '/app') {
         const cookie = req.headers.cookie || '';
         if (!cookie.includes(COOKIE)) {
@@ -159,6 +160,7 @@ describe('local synthetic sign-in', () => {
         targetUrl: `${appOrigin}/login`,
         provider: createMemorySecretProvider({ username: USER, password: PASSWORD }),
         headless: true,
+        postLoginUrl: '/app',
       });
     } finally {
       [console.log, console.warn, console.error, console.info] = originals;
@@ -209,10 +211,20 @@ describe('local synthetic sign-in', () => {
   });
 
   it('reports rejected credentials, MFA, and off-origin posts without sending the password', async () => {
+    const unproved = await establishFormAuth({
+      targetUrl: `${appOrigin}/login`,
+      provider: createMemorySecretProvider({ username: USER, password: PASSWORD }),
+      headless: true,
+    });
+    expect(unproved.ok).toBe(false);
+    if (!unproved.ok) expect(unproved.metadata.status).toBe('auth_required');
+    expect(JSON.stringify(unproved)).not.toContain(PASSWORD);
+
     const wrong = await establishFormAuth({
       targetUrl: `${appOrigin}/login`,
       provider: createMemorySecretProvider({ username: USER, password: 'not-the-password' }),
       headless: true,
+      postLoginUrl: '/app',
     });
     expect(wrong.ok).toBe(false);
     if (!wrong.ok) expect(wrong.metadata.status).toBe('credentials_rejected');
@@ -222,6 +234,7 @@ describe('local synthetic sign-in', () => {
       targetUrl: `${appOrigin}/login?mfa=1`,
       provider: createMemorySecretProvider({ username: USER, password: PASSWORD }),
       headless: true,
+      postLoginUrl: '/app',
     });
     expect(mfa.ok).toBe(false);
     if (!mfa.ok) expect(mfa.metadata.status).toBe('mfa_required');
@@ -232,6 +245,7 @@ describe('local synthetic sign-in', () => {
       targetUrl: `${appOrigin}/offsite`,
       provider: createMemorySecretProvider({ username: USER, password: PASSWORD }),
       headless: true,
+      postLoginSelector: 'text=Signed in',
     });
     expect(off.ok).toBe(false);
     if (!off.ok) expect(off.metadata.status).toBe('unsafe_origin');
@@ -242,16 +256,35 @@ describe('local synthetic sign-in', () => {
       targetUrl: `${appOrigin}/bounce`,
       provider: createMemorySecretProvider({ username: USER, password: PASSWORD }),
       headless: true,
+      postLoginUrl: '/app',
     });
     expect(bounce.ok).toBe(false);
     if (!bounce.ok) expect(bounce.metadata.status).toBe('unsafe_origin');
     expect(hits.some(hit => hit.sawPassword || hit.sawCookie)).toBe(false);
   });
 
+  it('stops an in-flight sign-in when the signal aborts', async () => {
+    const controller = new AbortController();
+    const pending = establishFormAuth({
+      targetUrl: `${appOrigin}/hang`,
+      provider: createMemorySecretProvider({ username: USER, password: PASSWORD }),
+      headless: true,
+      postLoginUrl: '/app',
+      signal: controller.signal,
+      timeoutMs: 15_000,
+    });
+    setTimeout(() => controller.abort(), 300);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.metadata.status).toBe('auth_required');
+    expect(JSON.stringify(result)).not.toContain(PASSWORD);
+  });
+
   it('manual login does not receive the password and signed-in runs do not type one', async () => {
     const manual = await establishManualAuth({
       targetUrl: `${appOrigin}/login`,
       headless: true,
+      postLoginUrl: '/app',
       settle: async page => {
         await page.locator('input[type="email"]').fill(USER);
         await page.locator('input[type="password"]').fill(PASSWORD);

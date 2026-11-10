@@ -1,14 +1,18 @@
 /**
- * Signed-in egress is default-deny for every request that is not the
- * exact authorized origin. Cookie stripping and raw token matching are
- * not the boundary: an off-origin request is aborted before it is sent.
- * WebSocket handshakes are closed the same way. Service workers are
- * blocked by the browser context, not by this HTTP route.
+ * One signed-in fence. Page routes cannot skip it: a later route's
+ * continue() and fallback() are turned into this handler, which aborts
+ * anything outside the exact origin and does not follow an off-origin
+ * redirect. WebSocket handshakes are closed the same way. Service workers
+ * are blocked by the browser context.
  */
 
-import type { BrowserContext } from 'playwright';
+import type { BrowserContext, Page, Route } from 'playwright';
 import type { AuthOriginPolicy } from './contract.js';
+import type { EgressPin } from './egress.js';
+import { connectionAllowed } from './egress.js';
 import { originAllowed } from './origins.js';
+import { registerSecrets } from './secrets.js';
+import { blockSensitiveRequest } from '../runner/sensitive.js';
 
 export interface FenceState {
   originRejected: boolean;
@@ -18,15 +22,40 @@ async function deny(route: { abort: (errorCode?: 'blockedbyclient') => Promise<v
   await route.abort('blockedbyclient').catch(() => {});
 }
 
-/**
- * route.continue() lets Chromium follow a 307/308 without passing the next
- * hop through this handler, which resends a login body off-origin. Fetch
- * with no redirect follow, and abort before the browser sees an off-origin
- * Location.
- */
-async function gate(
-  route: import('playwright').Route,
+function secretInUrl(url: URL): boolean {
+  return /(?:^|[?&#])(?:password|passwd|pwd|access_token|refresh_token|id_token)=/i.test(`${url.search}${url.hash}`);
+}
+
+async function allowRequest(
+  url: URL,
   policy: AuthOriginPolicy,
+  pin: EgressPin,
+  onReject?: () => void,
+): Promise<boolean> {
+  if (!originAllowed(url, policy) || secretInUrl(url) || !(await connectionAllowed(url, policy, pin))) {
+    onReject?.();
+    return false;
+  }
+  return true;
+}
+
+function rememberSetCookie(headers: Array<{ name: string; value: string }>): void {
+  const values: string[] = [];
+  for (const header of headers) {
+    if (header.name.toLowerCase() !== 'set-cookie') continue;
+    const pair = header.value.split(';', 1)[0] ?? '';
+    const eq = pair.indexOf('=');
+    if (eq <= 0) continue;
+    const value = pair.slice(eq + 1).trim();
+    if (value) values.push(value);
+  }
+  registerSecrets(values);
+}
+
+async function safeFulfill(
+  route: Route,
+  policy: AuthOriginPolicy,
+  pin: EgressPin,
   onReject?: () => void,
 ): Promise<void> {
   let url: URL;
@@ -36,8 +65,7 @@ async function gate(
     await deny(route);
     return;
   }
-  if (!originAllowed(url, policy) || secretInUrl(url)) {
-    onReject?.();
+  if (!(await allowRequest(url, policy, pin, onReject))) {
     await deny(route);
     return;
   }
@@ -55,53 +83,156 @@ async function gate(
     if (location) {
       try { next = new URL(location, url); } catch { next = undefined; }
     }
-    if (!next || !originAllowed(next, policy) || secretInUrl(next)) {
+    if (!next || !(await allowRequest(next, policy, pin, onReject))) {
       onReject?.();
       await deny(route);
       return;
     }
   }
+  rememberSetCookie(response.headersArray());
   await route.fulfill({ response }).catch(async () => { await deny(route); });
+}
+
+function wrapRoute(route: Route, policy: AuthOriginPolicy, pin: EgressPin, onReject?: () => void): Route {
+  return new Proxy(route, {
+    get(target, prop, receiver) {
+      if (prop === 'continue' || prop === 'fallback') {
+        return async (overrides?: { url?: string }) => {
+          if (overrides?.url) {
+            try {
+              const next = new URL(overrides.url, target.request().url());
+              if (!(await allowRequest(next, policy, pin, onReject))) {
+                await deny(target);
+                return;
+              }
+            } catch {
+              onReject?.();
+              await deny(target);
+              return;
+            }
+          }
+          await safeFulfill(target, policy, pin, onReject);
+        };
+      }
+      if (prop === 'fetch') {
+        return (options?: Parameters<Route['fetch']>[0]) => target.fetch({ ...options, maxRedirects: 0 });
+      }
+      const value = Reflect.get(target, prop, receiver) as unknown;
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
+
+async function socketAllowed(raw: string, policy: AuthOriginPolicy, pin: EgressPin): Promise<boolean> {
+  let url: URL;
+  try { url = new URL(raw); }
+  catch { return false; }
+  return allowRequest(url, policy, pin);
+}
+
+function patchPage(page: Page, policy: AuthOriginPolicy, pin: EgressPin, onReject?: () => void): void {
+  const originalRoute = page.route.bind(page);
+  page.route = (async (url, handler, options) => {
+    return originalRoute(url, async (route, request) => {
+      let parsed: URL;
+      try { parsed = new URL(route.request().url()); }
+      catch {
+        onReject?.();
+        await deny(route);
+        return;
+      }
+      if (!(await allowRequest(parsed, policy, pin, onReject))) {
+        await deny(route);
+        return;
+      }
+      await handler(wrapRoute(route, policy, pin, onReject), request);
+    }, options);
+  }) as typeof page.route;
+
+  const originalSocket = page.routeWebSocket.bind(page);
+  page.routeWebSocket = ((url, handler) => {
+    return originalSocket(url, ws => {
+      void (async () => {
+        if (!(await socketAllowed(ws.url(), policy, pin))) {
+          onReject?.();
+          ws.close();
+          return;
+        }
+        handler(ws);
+      })();
+    });
+  }) as typeof page.routeWebSocket;
+}
+
+async function installFence(
+  context: BrowserContext,
+  policy: AuthOriginPolicy,
+  pin: EgressPin,
+  onReject?: () => void,
+): Promise<void> {
+  const originalRoute = context.route.bind(context);
+  const originalSocket = context.routeWebSocket.bind(context);
+  context.on('page', page => patchPage(page, policy, pin, onReject));
+
+  context.route = (async (url, handler) => {
+    return originalRoute(url, async (route, request) => {
+      let parsed: URL;
+      try { parsed = new URL(route.request().url()); }
+      catch {
+        onReject?.();
+        await deny(route);
+        return;
+      }
+      if (!(await allowRequest(parsed, policy, pin, onReject))) {
+        await deny(route);
+        return;
+      }
+      await handler(wrapRoute(route, policy, pin, onReject), request);
+    });
+  }) as typeof context.route;
+
+  await originalRoute('**/*', async route => {
+    let parsed: URL;
+    try { parsed = new URL(route.request().url()); }
+    catch {
+      onReject?.();
+      await deny(route);
+      return;
+    }
+    if (!(await allowRequest(parsed, policy, pin, onReject))) {
+      await deny(route);
+      return;
+    }
+    const page = route.request().frame()?.page();
+    if (page && await blockSensitiveRequest(route, page)) return;
+    await safeFulfill(route, policy, pin, onReject);
+  });
+
+  await originalSocket(/.*/, ws => {
+    void (async () => {
+      if (!(await socketAllowed(ws.url(), policy, pin))) {
+        onReject?.();
+        ws.close();
+        return;
+      }
+      ws.connectToServer();
+    })();
+  });
 }
 
 export async function installLoginFence(
   context: BrowserContext,
   policy: AuthOriginPolicy,
   state: FenceState,
+  pin: EgressPin,
 ): Promise<void> {
-  await context.route('**/*', async route => {
-    await gate(route, policy, () => { state.originRejected = true; });
-  });
-  await installSocketFence(context, policy);
+  await installFence(context, policy, pin, () => { state.originRejected = true; });
 }
 
 export async function installSessionFence(
   context: BrowserContext,
   policy: AuthOriginPolicy,
+  pin: EgressPin,
 ): Promise<void> {
-  await context.route('**/*', async route => {
-    await gate(route, policy);
-  });
-  await installSocketFence(context, policy);
-}
-
-/** A credential in the URL is not sent, even on the authorized origin. */
-function secretInUrl(url: URL): boolean {
-  return /(?:^|[?&#])(?:password|passwd|pwd|access_token|refresh_token|id_token)=/i.test(`${url.search}${url.hash}`);
-}
-
-async function installSocketFence(context: BrowserContext, policy: AuthOriginPolicy): Promise<void> {
-  await context.routeWebSocket(/.*/, ws => {
-    let url: URL;
-    try { url = new URL(ws.url()); }
-    catch {
-      ws.close();
-      return;
-    }
-    if (!originAllowed(url, policy)) {
-      ws.close();
-      return;
-    }
-    ws.connectToServer();
-  });
+  await installFence(context, policy, pin);
 }

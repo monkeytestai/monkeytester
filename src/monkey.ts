@@ -207,6 +207,12 @@ export class Monkey {
       pageTimeoutMs: opts.explore?.pageTimeoutMs ?? (budgetMs ? BASIC_PRESET.pageTimeoutMs : undefined),
       ...gate.browser,
     });
+    if (siteMap.auth && siteMap.auth.outcome !== 'authenticated') {
+      const blockedPlan: TestPlan = {
+        startUrl, siteType: 'unknown', flows: [], notes: siteMap.auth.detail, auth: siteMap.auth,
+      };
+      return { siteMap, plan: blockedPlan, run: authBlockedRun(startUrl, siteMap.auth) };
+    }
 
     let testPlan: TestPlan;
     const planLimit = plannerBudgetMs({ totalBudgetMs: budgetMs, deadlineAt });
@@ -374,7 +380,11 @@ export class Monkey {
         phase: 'planner', type: 'plan.skipped',
         message: 'runFromPlan called with an empty plan — nothing to execute.',
       });
-      return { plan: testPlan, run: finishEmpty(testPlan.startUrl, undefined, testPlan.notes) };
+      const empty = finishEmpty(testPlan.startUrl, undefined, testPlan.notes);
+      return {
+        plan: gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan,
+        run: gate.metadata ? { ...empty, auth: gate.metadata } : empty,
+      };
     }
 
     let rawRun: RunResult;
@@ -404,7 +414,11 @@ export class Monkey {
         message: `Re-run failed: ${truncate(msg, 160)}`,
         data: { error: msg },
       });
-      return { plan: testPlan, run: finishEmpty(testPlan.startUrl, undefined, msg) };
+      const empty = finishEmpty(testPlan.startUrl, undefined, msg);
+      return {
+        plan: gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan,
+        run: gate.metadata ? { ...empty, auth: gate.metadata } : empty,
+      };
     }
 
     const triageOpts = {
@@ -477,11 +491,17 @@ export class Monkey {
    * flaky / healed / blocked verdict. No LLM unless `opts.heal` is set.
    */
   async verifyRecorded(source: RunResult, opts: VerifyOptions): Promise<VerifyReport> {
+    const denied = rerunWithoutAuth(source.auth, Boolean(opts.auth || opts.storageState), source.startUrl);
+    if (denied) return blockedVerify(denied);
+    const gate = await gateCustomerAuth(opts.auth);
+    if (!gate.ok) return blockedVerify(authBlockedRun(source.startUrl, gate.metadata));
     return verifyBugs(source, {
       ...opts,
       llm: opts.heal ? (opts.llm ?? this.runnerLLM) : opts.llm,
       strictOracles: opts.strictOracles ?? this.strictOracles,
       failOn5xx: opts.failOn5xx ?? this.failOn5xx,
+      priorAuth: source.auth,
+      ...gate.browser,
     });
   }
 
@@ -595,6 +615,30 @@ async function gateCustomerAuth(auth?: AuthBindInput): Promise<
   const bound = await bindAuthProvider(auth);
   if (!bound.ok) return { ok: false, metadata: bound.metadata };
   return { ok: true, metadata: bound.metadata, browser: { storageState: bound.storageState, authOrigin: bound.authOrigin } };
+}
+
+function blockedVerify(run: RunResult): VerifyReport {
+  const detail = run.auth?.detail || 'Signed-in verify needs a new session. This is not a fix.';
+  const results = run.bugs.map(bug => ({
+    fingerprint: bug.fingerprint,
+    fingerprintV2: bug.fingerprintV2,
+    bugId: bug.id,
+    title: bug.title,
+    severity: bug.severity,
+    attempts: ['blocked' as const],
+    verdict: 'blocked' as const,
+    fired: 0,
+    repeat: 1,
+    detail,
+  }));
+  return {
+    repeat: 1,
+    heal: false,
+    results,
+    stats: { total: results.length, fixed: 0, still_broken: 0, flaky: 0, healed: 0, blocked: results.length },
+    exitCode: 1,
+    auth: run.auth,
+  };
 }
 
 function rerunWithoutAuth(prior: AuthPublicMetadata | undefined, hasFresh: boolean, startUrl: string): RunResult | undefined {

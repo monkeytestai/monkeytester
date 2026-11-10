@@ -137,11 +137,17 @@ export const AUTH_PROVIDER_ABI = Object.freeze({
   allowSensitive: 'not-granted' as const,
   egress: 'exact-origin-all-requests' as const,
   captureWhenAuthenticated: 'disabled' as const,
-  hostedTarget: 'https-public-preflight' as const,
-  /** Loopback http is only the local CLI and establishFormAuth. createAuthProvider rejects it. */
+  hostedTarget: 'https-public-pinned' as const,
+  /**
+   * `createAuthProvider` rejects loopback. Loopback http is only the local
+   * CLI and `establishFormAuth` when the named host is itself loopback.
+   * There is no `localFixtureTarget: loopback-allowed` flag.
+   */
   providerLoopback: 'rejected' as const,
-  hostedDns: 'preflight-only-not-connection-pin' as const,
-  hostedEgress: 'infrastructure-must-block-private-ranges' as const,
+  hostedDns: 'resolve-and-pin' as const,
+  hostedEgress: 'deny-nonpublic-and-rebind' as const,
+  /** `RuntimeAuthProvider.open` may repeat until `close`. That is not `createAuthProvider`. */
+  runtimeSession: 'repeatable-until-close' as const,
   hostedProduct: false as const,
 });
 

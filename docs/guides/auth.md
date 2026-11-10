@@ -37,6 +37,8 @@ monkeytest run https://app.example.com \
 
 `--password-env` is the name of an environment variable, not the password. The same is true of `--username-env`. `--password-stdin` reads a hidden prompt, or one line from a pipe when there is no terminal. There is no flag that puts the password on the command line.
 
+Form and manual sign-in also need `--post-login-url` or `--post-login-selector`. That check has to be visible on the target after a real sign-in. Without it the result is `could_not_test`, not a pass. An empty session, an expired session, a second factor, or a redirect off the named origin is `could_not_test` as well.
+
 Environment variables are visible to the shell, to CI logs, and to other users who can read the process table. They are not a hidden channel. Command examples use names such as `MONKEYTEST_PASSWORD`. They do not contain a real password.
 
 A later `rerun` or `verify` does not load that session unless you pass `--use-session` again or supply a new password reference. `--session-ttl 12h` is optional. There is no default expiry. `monkeytest auth logout --delete` removes the local file. It does not sign the account out on the website.

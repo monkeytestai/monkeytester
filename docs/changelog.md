@@ -5,6 +5,7 @@ The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/
 ## Unreleased
 
 - Local existing-account sign-in (`auth login`, or env-var names for a form). The session file stays on the machine. `AUTH_PROVIDER_CONTRACT` is `monkeytester.auth.provider.v1` for a later server pin. The hosted product does not sign in yet.
+- Signed-in egress is default-deny for other origins. A login needs a post-login URL or selector or the run is `could_not_test`.
 
 ## 0.7.2-beta.2
 

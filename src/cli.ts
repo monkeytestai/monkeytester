@@ -153,6 +153,8 @@ interface CommonOpts {
   passwordEnv?: string;
   passwordStdin: boolean;
   idpOrigins: string[];
+  postLoginUrl?: string;
+  postLoginSelector?: string;
 }
 
 function defaultCommonOpts(): CommonOpts {
@@ -283,6 +285,18 @@ function parseArgs(argv: string[]): Parsed {
         const origin = next();
         if (!origin) die(2, '--idp-origin requires an absolute origin');
         out.opts.idpOrigins.push(origin);
+        break;
+      }
+      case '--post-login-url': {
+        const value = next();
+        if (!value) die(2, '--post-login-url requires a path or absolute URL on the target');
+        out.opts.postLoginUrl = value;
+        break;
+      }
+      case '--post-login-selector': {
+        const value = next();
+        if (!value) die(2, '--post-login-selector requires a selector that is visible after sign-in');
+        out.opts.postLoginSelector = value;
         break;
       }
       case '--heal':                       out.opts.heal = true; break;
@@ -436,6 +450,8 @@ Common flags (apply to most commands):
       --session-ttl <dur>    Opt-in expiry: 30m, 12h, or 7d. No default.
       --username-env <NAME>  Env var NAME for the account. Not the account itself.
       --password-env <NAME>  Env var NAME for the password. Not the password.
+      --post-login-url <path>  URL path that exists only after sign-in
+      --post-login-selector <css>  Selector that exists only after sign-in
       --password-stdin       Hidden prompt, or one stdin line when there is no TTY.
       --idp-origin <origin>  Extra origin allowed during sign-in. Repeatable.
 
@@ -511,9 +527,11 @@ Form login, instead of the headed browser:
   monkeytest run <url> --username-env MONKEYTEST_USERNAME --password-env MONKEYTEST_PASSWORD
   monkeytest run <url> --username-env MONKEYTEST_USERNAME --password-stdin
 
-Those are variable names, not secret values. A rerun does not reuse the session
-unless you pass --use-session or a new password reference. An expired session
-is expired. It is not a verified run.`,
+Those are variable names, not secret values. Form and manual sign-in also need
+--post-login-url or --post-login-selector. Without that proof the run is
+could_not_test, not a pass. A rerun does not reuse the session unless you pass
+--use-session or a new password reference. An expired session is expired. It
+is not a verified run.`,
   };
   console.log(text[cmd] || `No help for "${cmd}". Try \`monkeytest help\`.`);
 
@@ -608,6 +626,8 @@ async function prepareAuth(
     sessionTtlMs,
     manual: opts.authManual,
     priorAuthenticated: extra.prior?.outcome === 'authenticated',
+    postLoginUrl: opts.postLoginUrl,
+    postLoginSelector: opts.postLoginSelector,
     headless: opts.authManual ? false : opts.headless,
     settle: opts.authManual
       ? async () => { await readSecretLine({ prompt: 'Log in in the browser, including any second factor, then press Enter. ' }); }

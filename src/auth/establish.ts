@@ -6,14 +6,16 @@
  * tracing is unset for this phase because it can print typed text.
  */
 
-import { chromium, type BrowserContext, type Page } from 'playwright';
+import type { BrowserContext, Page } from 'playwright';
 import type {
   AuthOriginPolicy, AuthPublicMetadata, AuthSecretProvider, AuthStorageState, RuntimeAuthProvider,
 } from './contract.js';
+import { launchFencedBrowser } from './egress.js';
 import { installLoginFence, type FenceState } from './fence.js';
 import { acceptSessionMaterial, assertSessionBound, originAllowed, policyFrom } from './origins.js';
 import { assertPublicSafe, redactError, storageContainsSecret } from './redact.js';
 import { publicMetadata } from './report.js';
+import { rememberSecrets, withSensitiveSinks } from './secrets.js';
 
 export interface AuthSuccess {
   ok: true;
@@ -43,6 +45,10 @@ export async function establishFormAuth(input: {
   signal?: AbortSignal;
   expiresAt?: string;
   custody?: AuthPublicMetadata['custody'];
+  /** Path or absolute URL on the target that exists only after a real sign-in. */
+  postLoginUrl?: string;
+  /** Selector that exists only after a real sign-in. */
+  postLoginSelector?: string;
 }): Promise<AuthResult> {
   const policyResult = policyFrom(input.targetUrl, input.idpOrigins ?? []);
   if (!policyResult.ok) {
@@ -59,14 +65,35 @@ export async function establishFormAuth(input: {
     input.provider.release();
     return failure('form', 'not_authorized', policy, true, 'The password must be at least 8 characters. It was not typed and it was not saved.');
   }
-  const secrets = [taken.password, taken.username].filter(secret => secret.length >= 8);
-  return withLoginCaptureOff(async () => {
-    const browser = await chromium.launch({ headless: input.headless !== false });
+  const secrets = [taken.password, taken.username].filter(secret => secret.length >= 4);
+  if (!input.postLoginUrl && !input.postLoginSelector) {
+    input.provider.release();
+    return failure('form', 'not_authorized', policy, true, 'Sign-in is not treated as success without a post-login URL or selector on the target. Nothing was typed. This is not a verified run.');
+  }
+  return withSensitiveSinks(secrets, () => withLoginCaptureOff(async () => {
+    const launched = await launchFencedBrowser({ headless: input.headless !== false, policy });
+    if (!launched.ok) {
+      return failure('form', 'target_rejected', policy, true, launched.detail);
+    }
+    const browser = launched.browser;
+    const pin = launched.pin;
+    if (!pin) {
+      await browser.close().catch(() => {});
+      return failure('form', 'target_rejected', policy, true, 'Sign-in could not pin the target. Nothing was typed.');
+    }
     let context: BrowserContext | undefined;
     const fence: FenceState = { originRejected: false };
+    const onAbort = () => {
+      void context?.close().catch(() => {});
+      void browser.close().catch(() => {});
+    };
+    input.signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-      await installLoginFence(context, policy, fence);
+      if (input.signal?.aborted) {
+        return failure('form', 'not_authorized', policy, false, 'Our test couldn\'t complete the run because sign-in was cancelled. The session was not kept. This is not a verified run.');
+      }
+      context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+      await installLoginFence(context, policy, fence, pin);
       const page = await context.newPage();
       const timeout = input.timeoutMs ?? 20_000;
       try {
@@ -109,16 +136,21 @@ export async function establishFormAuth(input: {
       if (!material.ok) {
         return failure('form', 'credentials_rejected', policy, false, `Our test couldn't complete the run. ${material.detail} This is not a verified run.`);
       }
+      if (!(await loginProved(page, policy, input.postLoginUrl, input.postLoginSelector))) {
+        return failure('form', 'credentials_rejected', policy, false, 'Our test couldn\'t complete the run because the target did not show the configured post-login URL or selector. The session was not kept. This is not a verified run.');
+      }
       if (storageContainsSecret(state, secrets)) return failure('form', 'storage_unsafe', policy, false);
       const bound = assertSessionBound(state, policy);
       if (!bound.ok) return failure('form', 'origin_rejected', policy, false, `Our test couldn't complete the run. ${bound.detail} This is not a verified run.`);
+      rememberSecrets(state, [...secrets, ...secretValues(state)]);
       return success('form', policy, state, input.custody ?? 'customer-local', false, input.expiresAt);
     } finally {
+      input.signal?.removeEventListener('abort', onAbort);
       input.provider.release();
       await context?.close().catch(() => {});
       await browser.close().catch(() => {});
     }
-  });
+  }));
 }
 
 export async function establishManualAuth(input: {
@@ -127,6 +159,8 @@ export async function establishManualAuth(input: {
   settle?: (page: Page) => Promise<void>;
   headless?: boolean;
   timeoutMs?: number;
+  postLoginUrl?: string;
+  postLoginSelector?: string;
 }): Promise<AuthResult> {
   const policyResult = policyFrom(input.targetUrl, input.idpOrigins ?? []);
   if (!policyResult.ok) {
@@ -136,13 +170,23 @@ export async function establishManualAuth(input: {
   if (!input.settle) {
     return failure('manual', 'not_authorized', policy, true, 'Manual login needs a person at a headed browser. Nothing was typed.');
   }
+  if (!input.postLoginUrl && !input.postLoginSelector) {
+    return failure('manual', 'not_authorized', policy, true, 'Sign-in is not treated as success without a post-login URL or selector on the target. Nothing was typed. This is not a verified run.');
+  }
   return withLoginCaptureOff(async () => {
-    const browser = await chromium.launch({ headless: input.headless === true });
+    const launched = await launchFencedBrowser({ headless: input.headless === true, policy });
+    if (!launched.ok) return failure('manual', 'target_rejected', policy, true, launched.detail);
+    const browser = launched.browser;
+    const pin = launched.pin;
+    if (!pin) {
+      await browser.close().catch(() => {});
+      return failure('manual', 'target_rejected', policy, true, 'Sign-in could not pin the target. Nothing was typed.');
+    }
     let context: BrowserContext | undefined;
     const fence: FenceState = { originRejected: false };
     try {
-      context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-      await installLoginFence(context, policy, fence);
+      context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+      await installLoginFence(context, policy, fence, pin);
       const page = await context.newPage();
       const timeout = input.timeoutMs ?? 20_000;
       try {
@@ -161,11 +205,16 @@ export async function establishManualAuth(input: {
         return failure('manual', 'mfa_required', policy, false, 'Our test couldn\'t complete the run because the headed login is still on a password or second-factor screen. The session was not saved. No one-time-code seed was stored. This is not a verified run.');
       }
       const state = await snapshot(context);
-      if (!hasSessionMaterial(state)) {
-        return failure('manual', 'mfa_required', policy, false, 'Our test couldn\'t complete the run because the headed login did not store a session. Sign in fully, including SSO or a second factor, then confirm. Nothing was saved. This is not a verified run.');
+      const material = acceptSessionMaterial(state);
+      if (!material.ok) {
+        return failure('manual', 'mfa_required', policy, false, `Our test couldn't complete the run. ${material.detail} This is not a verified run.`);
+      }
+      if (!(await loginProved(page, policy, input.postLoginUrl, input.postLoginSelector))) {
+        return failure('manual', 'credentials_rejected', policy, false, 'Our test couldn\'t complete the run because the target did not show the configured post-login URL or selector. The session was not kept. This is not a verified run.');
       }
       const bound = assertSessionBound(state, policy);
       if (!bound.ok) return failure('manual', 'origin_rejected', policy, false, `Our test couldn't complete the run. ${bound.detail} This is not a verified run.`);
+      rememberSecrets(state, secretValues(state));
       return success('manual', policy, state, 'customer-local');
     } finally {
       await context?.close().catch(() => {});
@@ -250,6 +299,34 @@ async function fillLogin(page: Page, username: string, password: string, timeout
   await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
 }
 
+async function loginProved(
+  page: Page,
+  policy: AuthOriginPolicy,
+  postLoginUrl?: string,
+  postLoginSelector?: string,
+): Promise<boolean> {
+  if (!(await onPolicy(page, policy))) return false;
+  if (postLoginUrl) {
+    let pageUrl: URL;
+    let want: URL;
+    try {
+      pageUrl = new URL(page.url());
+      want = new URL(postLoginUrl, policy.targetOrigin);
+    } catch {
+      return false;
+    }
+    if (want.origin !== pageUrl.origin || !originAllowed(pageUrl, policy)) return false;
+    const wanted = want.pathname.replace(/\/$/, '') || '/';
+    const got = pageUrl.pathname.replace(/\/$/, '') || '/';
+    if (got !== wanted && !got.startsWith(`${wanted}/`)) return false;
+  }
+  if (postLoginSelector) {
+    const count = await page.locator(postLoginSelector).count().catch(() => 0);
+    if (count < 1) return false;
+  }
+  return Boolean(postLoginUrl || postLoginSelector);
+}
+
 async function formPostsToPolicy(page: Page, policy: AuthOriginPolicy): Promise<boolean> {
   const form = page.locator('form').filter({ has: page.locator('input[type="password"]') }).first();
   if (!(await form.count())) return true;
@@ -292,10 +369,6 @@ async function snapshot(context: BrowserContext): Promise<AuthStorageState> {
       localStorage: origin.localStorage.map(item => ({ name: item.name, value: item.value })),
     })),
   };
-}
-
-function hasSessionMaterial(state: AuthStorageState): boolean {
-  return state.cookies.length > 0 || state.origins.some(origin => origin.localStorage.length > 0);
 }
 
 function secretValues(state: AuthStorageState): string[] {

@@ -12,15 +12,19 @@ AUTH_PROVIDER_CONTRACT === 'monkeytester.auth.provider.v1';
 
 `AUTH_PROVIDER_CONTRACT` is that string, not an object. Compare it with `===`. `AUTH_PROVIDER_ABI` describes the same id. `providerLoopback` is `rejected`: `createAuthProvider` does not allow loopback. Loopback `http` is only the local CLI and `establishFormAuth`.
 
-`createAuthProvider(...).open()` takes no arguments and is consumed on the first call, including a failed attempt. `release()` aborts an in-flight sign-in and drops this object's copies. It does not wipe the caller's original object, and JavaScript cannot promise the string is gone from the heap.
+`createAuthProvider(...).open()` takes no arguments and is consumed on the first call, including a failed attempt. `release()` aborts an in-flight sign-in and drops this object's copies. The original input record is not retained. JavaScript cannot promise those strings are gone from the heap.
 
-`RuntimeAuthProvider` is a different type. Its `open(policy)` can be called again until `close()`. Do not pass either object to `executeAndTriage`. That method takes `auth: { targetOrigin, storageState, expiresAt }`.
+`RuntimeAuthProvider` is a different type. `AUTH_PROVIDER_ABI.runtimeSession` is `repeatable-until-close`: its `open(policy)` can be called again until `close()`. `AUTH_PROVIDER_ABI.open` is `once` and describes `createAuthProvider` only. Do not pass either object to `executeAndTriage`. That method takes `auth: { targetOrigin, storageState, expiresAt }`.
 
-Provider input `mode` is `hosted_credentials` or `local_session`. Public `metadata.mode` is `manual`, `form`, or `session`. Those are not the same field.
+Provider input `mode` is `hosted_credentials` or `local_session`. Public `metadata.mode` is `manual`, `form`, or `session`. Those are not the same field. `AUTH_PROVIDER_CONTRACT` is still `monkeytester.auth.provider.v1`.
 
-Hosted DNS is a preflight only. This library does not pin the address Chromium resolves later. A hosted worker must block private, link-local, and metadata ranges in its network. Without that, do not treat the preflight as a connection-time guarantee.
+Hosted DNS is resolved before launch and pinned with Chromium host rules plus a check on every request. A name that resolves to a private, loopback, link-local, or other reserved address is refused. If a later lookup disagrees with the pin, the request is aborted. Loopback is allowed only when the named host is itself loopback, which is the local CLI and `establishFormAuth`. `createAuthProvider` rejects that case. There is no loopback-allowed flag on the ABI.
 
-Signed-in requests are default-deny for every other origin. A redirect is fetched with no follow, and an off-origin `Location` is aborted before the browser continues. Cookie stripping and raw token matching are not the boundary. Service workers are not registered. Off-origin WebSockets are closed. This is not a claim that arbitrary signed-in page text is scrubbed: those sinks are omitted, and `privateDataScrubbed` stays false.
+Signed-in requests are default-deny for every other origin, including GET. A redirect is fetched with no follow, and an off-origin `Location` is aborted before the browser continues. Page routes cannot `continue()` past that fence. Service workers are not registered. Off-origin WebSockets are closed. Sitemap and other API fetches are checked before they are sent and do not follow an off-origin redirect.
+
+A form or manual login is `authenticated` only when `postLoginUrl` or `postLoginSelector` matches on the target. Otherwise the run is `could_not_test`. An empty jar, an expired jar, MFA, and an off-origin session are `could_not_test` as well.
+
+Known credential values are scrubbed from prompts, events, errors, and saved runs, including base64 and URL encodings. `privateDataScrubbed` stays false: other private page text is not claimed to be scrubbed.
 
 ## `createAuthProvider`
 

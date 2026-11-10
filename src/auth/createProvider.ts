@@ -9,7 +9,8 @@ import { AUTH_PROVIDER_CONTRACT } from './contract.js';
 import { bindAuthProvider } from './bind.js';
 import type { AuthResult } from './establish.js';
 import { establishFormAuth } from './establish.js';
-import { checkHostedTarget, hostedDnsPreflight, policyFrom } from './origins.js';
+import { prepareEgress } from './egress.js';
+import { checkHostedTarget, policyFrom } from './origins.js';
 import { createMemorySecretProvider } from './provider.js';
 import { publicMetadata } from './report.js';
 
@@ -22,6 +23,10 @@ export interface HostedCredentialsInput {
   password: string;
   /** Envelope expiry. The server uses 120 seconds. */
   expiresAt: string;
+  /** Path or absolute URL on the target that is visible only after sign-in. */
+  postLoginUrl?: string;
+  /** Selector that is visible only after sign-in. */
+  postLoginSelector?: string;
 }
 
 export interface LocalSessionInput {
@@ -40,15 +45,51 @@ export interface AuthProvider {
   toJSON(): { contract: typeof AUTH_PROVIDER_CONTRACT; redacted: true; released: boolean };
 }
 
-export function createAuthProvider(input: HostedCredentialsInput | LocalSessionInput | Record<string, unknown>): AuthProvider {
+interface CopiedInput {
+  refused?: string;
+  mode: string;
+  target: string;
+  expiresAt: string;
+  postLoginUrl: string;
+  postLoginSelector: string;
+  username: string;
+  password: string;
+  storage?: AuthStorageState;
+}
+
+/** Copy the fields this provider needs. The original record is not retained. */
+function copyInput(input: HostedCredentialsInput | LocalSessionInput | Record<string, unknown>): CopiedInput {
   const source = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const refused = REFUSED.find(key => source[key] != null && source[key] !== false);
-  const mode = source.mode;
-  const target = typeof source.targetOrigin === 'string' ? source.targetOrigin : '';
-  const expiresAt = typeof source.expiresAt === 'string' ? source.expiresAt : '';
-  let username = typeof source.username === 'string' ? source.username : '';
-  let password = typeof source.password === 'string' ? source.password : '';
-  let storage = copyStorage(source.storageState);
+  return {
+    refused: REFUSED.find(key => source[key] != null && source[key] !== false),
+    mode: typeof source.mode === 'string' ? source.mode : '',
+    target: typeof source.targetOrigin === 'string' ? source.targetOrigin : '',
+    expiresAt: typeof source.expiresAt === 'string' ? source.expiresAt : '',
+    postLoginUrl: typeof source.postLoginUrl === 'string' ? source.postLoginUrl : '',
+    postLoginSelector: typeof source.postLoginSelector === 'string' ? source.postLoginSelector : '',
+    username: typeof source.username === 'string' ? source.username : '',
+    password: typeof source.password === 'string' ? source.password : '',
+    storage: copyStorage(source.storageState),
+  };
+}
+
+export function createAuthProvider(input: HostedCredentialsInput | LocalSessionInput | Record<string, unknown>): AuthProvider {
+  return buildProvider(copyInput(input));
+}
+
+function buildProvider(copied: CopiedInput): AuthProvider {
+  const refused = copied.refused;
+  const mode = copied.mode;
+  const target = copied.target;
+  const expiresAt = copied.expiresAt;
+  const postLoginUrl = copied.postLoginUrl;
+  const postLoginSelector = copied.postLoginSelector;
+  let username = copied.username;
+  let password = copied.password;
+  let storage = copied.storage;
+  copied.username = '';
+  copied.password = '';
+  copied.storage = undefined;
   let used = false;
   let released = false;
   const abort = new AbortController();
@@ -94,8 +135,10 @@ export function createAuthProvider(input: HostedCredentialsInput | LocalSessionI
       if (mode !== 'hosted_credentials') {
         return fail('not_authorized', true, 'mode must be hosted_credentials or local_session. Nothing was stored.');
       }
-      const dns = await hostedDnsPreflight(hosted.parsed.hostname);
-      if (!dns.ok) return fail('target_rejected', true, dns.detail);
+      const policy = policyFrom(target, []);
+      if (!policy.ok) return fail('target_rejected', true, policy.detail);
+      const pinned = await prepareEgress(policy.policy);
+      if (!pinned.ok) return fail('target_rejected', true, pinned.detail);
       const secret = createMemorySecretProvider({ username, password });
       username = '';
       password = '';
@@ -106,6 +149,8 @@ export function createAuthProvider(input: HostedCredentialsInput | LocalSessionI
         signal: abort.signal,
         expiresAt,
         custody: 'in-memory',
+        ...(postLoginUrl ? { postLoginUrl } : {}),
+        ...(postLoginSelector ? { postLoginSelector } : {}),
       });
       if (abort.signal.aborted || released) {
         return fail('not_authorized', false, 'Our test couldn\'t complete the run because sign-in was cancelled. The session was not kept. This is not a verified run.');

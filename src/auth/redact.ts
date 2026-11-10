@@ -4,6 +4,10 @@
  * That data is not claimed to be scrubbed.
  */
 
+import { activeNeedles, attachedSecrets, scrubString } from './secrets.js';
+
+export { attachedSecrets };
+
 const FORBIDDEN_KEYS = new Set([
   'storagestate',
   'cookies',
@@ -33,6 +37,7 @@ function normalKey(key: string): string {
 
 export function persistReplacer(key: string, value: unknown): unknown {
   if (key && FORBIDDEN_KEYS.has(normalKey(key))) return undefined;
+  if (typeof value === 'string') return scrubString(value);
   return value;
 }
 
@@ -41,10 +46,7 @@ export function stringifyPersisted(value: unknown): string {
 }
 
 export function redactSecrets(text: string, secrets: string[]): string {
-  let out = text;
-  const sorted = secrets.filter(secret => secret.length >= 8).sort((a, b) => b.length - a.length);
-  for (const secret of sorted) out = out.split(secret).join('[redacted]');
-  return out;
+  return scrubString(text, secrets.filter(secret => secret.length >= 4));
 }
 
 export function redactError(err: unknown, secrets: string[]): Error {
@@ -56,8 +58,9 @@ export function redactError(err: unknown, secrets: string[]): Error {
 
 export function assertPublicSafe(value: unknown, secrets: string[]): void {
   const json = JSON.stringify(value) ?? '';
-  for (const secret of secrets) {
-    if (secret.length >= 8 && json.includes(secret)) {
+  const needles = [...secrets, ...activeNeedles()].filter(secret => secret.length >= 4);
+  for (const secret of needles) {
+    if (json.includes(secret)) {
       throw new Error('Refusing to expose auth output that contains a secret.');
     }
   }
@@ -93,7 +96,7 @@ export function secretNeedles(
 }
 
 export function rememberPageSecrets(page: object, secrets: string[], forceNoCapture = false): void {
-  const needles = secrets.filter(secret => secret.length >= 8);
+  const needles = secrets.filter(secret => secret.length >= 4);
   if (needles.length) pageSecrets.set(page, needles);
   if (forceNoCapture || needles.length) noCapture.add(page);
 }
@@ -107,18 +110,22 @@ export function captureDisabled(page: object): boolean {
 }
 
 export function redactValue<T>(value: T, secrets: string[]): T {
-  if (secrets.length === 0) return value;
-  if (typeof value === 'string') return redactSecrets(value, secrets) as T;
-  if (Array.isArray(value)) return value.map(item => redactValue(item, secrets)) as T;
+  const needles = [...secrets.filter(secret => secret.length >= 4), ...activeNeedles()];
+  if (needles.length === 0) return value;
+  return walkRedacted(value, needles) as T;
+}
+
+function walkRedacted(value: unknown, secrets: string[]): unknown {
+  if (typeof value === 'string') return redactSecrets(value, secrets);
+  if (Array.isArray(value)) return value.map(item => walkRedacted(item, secrets));
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-      if (secrets.some(secret => secret.length >= 8 && key.includes(secret))) continue;
-      const kept = persistReplacer(key, inner);
-      if (kept === undefined) continue;
-      out[key] = redactValue(kept, secrets);
+      if (secrets.some(secret => secret.length >= 4 && key.includes(secret))) continue;
+      if (key && FORBIDDEN_KEYS.has(normalKey(key))) continue;
+      out[key] = walkRedacted(inner, secrets);
     }
-    return out as T;
+    return out;
   }
   return value;
 }

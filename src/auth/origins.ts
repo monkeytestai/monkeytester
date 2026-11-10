@@ -71,47 +71,159 @@ export function isNonPublicHost(hostname: string): boolean {
   return false;
 }
 
-/** Classify one IP. IPv4-mapped IPv6 is classified as the inner IPv4 address. */
+function stripIp(raw: string): string {
+  return raw.trim().toLowerCase().replace(/^\[|\]$/g, '').split('%')[0] ?? '';
+}
+
+function parseIpv4(raw: string): number[] | undefined {
+  const parts = raw.split('.');
+  if (parts.length !== 4) return undefined;
+  const nums: number[] = [];
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return undefined;
+    const value = Number(part);
+    if (value > 255) return undefined;
+    nums.push(value);
+  }
+  return nums;
+}
+
+/** 16 bytes, or undefined when the text is not an IPv6 address. */
+function parseIpv6(raw: string): Uint8Array | undefined {
+  let ip = stripIp(raw);
+  if (!ip.includes(':')) return undefined;
+  const lastColon = ip.lastIndexOf(':');
+  const tail = ip.slice(lastColon + 1);
+  if (tail.includes('.')) {
+    const v4 = parseIpv4(tail);
+    if (!v4) return undefined;
+    const hi = ((v4[0]! << 8) | v4[1]!).toString(16);
+    const lo = ((v4[2]! << 8) | v4[3]!).toString(16);
+    ip = `${ip.slice(0, lastColon)}:${hi}:${lo}`;
+  }
+  const halves = ip.split('::');
+  if (halves.length > 2) return undefined;
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves[1] ? halves[1].split(':') : [];
+  if (halves.length === 1 && left.length !== 8) return undefined;
+  const missing = 8 - (left.length + right.length);
+  if (halves.length === 2 && missing < 1) return undefined;
+  const groups = halves.length === 2 ? [...left, ...Array(missing).fill('0'), ...right] : left;
+  if (groups.length !== 8) return undefined;
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 8; i++) {
+    const group = groups[i] ?? '';
+    if (!/^[0-9a-f]{1,4}$/.test(group)) return undefined;
+    const value = Number.parseInt(group, 16);
+    bytes[i * 2] = value >> 8;
+    bytes[i * 2 + 1] = value & 255;
+  }
+  return bytes;
+}
+
+function mappedIpv4(bytes: Uint8Array): number[] | undefined {
+  for (let i = 0; i < 10; i++) if (bytes[i] !== 0) return undefined;
+  if (bytes[10] !== 0xff || bytes[11] !== 0xff) return undefined;
+  return [bytes[12]!, bytes[13]!, bytes[14]!, bytes[15]!];
+}
+
+function ipv4NonPublic(parts: number[]): boolean {
+  const a = parts[0] ?? 0;
+  const b = parts[1] ?? 0;
+  const c = parts[2] ?? 0;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 0 && c === 0) return true;
+  if (a === 192 && b === 0 && c === 2) return true;
+  if (a === 192 && b === 88 && c === 99) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 192 && b === 31 && c === 196) return true;
+  if (a === 192 && b === 52 && c === 193) return true;
+  if (a === 192 && b === 175 && c === 48) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a === 198 && b === 51 && c === 100) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
+  if (a >= 224) return true;
+  return false;
+}
+
+function ipv6NonPublic(bytes: Uint8Array): boolean {
+  const mapped = mappedIpv4(bytes);
+  if (mapped) return ipv4NonPublic(mapped);
+  let zero = true;
+  for (const byte of bytes) if (byte !== 0) zero = false;
+  if (zero || (bytes[15] === 1 && bytes.slice(0, 15).every(byte => byte === 0))) return true;
+  const b0 = bytes[0] ?? 0;
+  const b1 = bytes[1] ?? 0;
+  if ((b0 & 0xfe) === 0xfc) return true;
+  if (b0 === 0xfe && (b1 & 0xc0) === 0x80) return true;
+  if (b0 === 0xfe && (b1 & 0xc0) === 0xc0) return true;
+  if (b0 === 0xff) return true;
+  if (b0 === 0x20 && b1 === 0x02) return true;
+  if (b0 === 0x20 && b1 === 0x01 && bytes[2] === 0x0d && bytes[3] === 0xb8) return true;
+  if (b0 === 0x20 && b1 === 0x01 && bytes[2] === 0x00 && bytes[3] === 0x00) return true;
+  if (b0 === 0x20 && b1 === 0x01 && bytes[2] === 0x00 && ((bytes[3] ?? 0) >> 4) === 0x1) return true;
+  if (b0 === 0x20 && b1 === 0x01 && bytes[2] === 0x00 && (bytes[3] ?? 0) >= 0x20 && (bytes[3] ?? 0) <= 0x2f) return true;
+  if (b0 === 0x20 && b1 === 0x01 && bytes[2] === 0x00 && bytes[3] === 0x02) return true;
+  if (b0 === 0x00 && b1 === 0x64 && bytes[2] === 0xff && bytes[3] === 0x9b) return true;
+  if (b0 === 0x01 && bytes.slice(1, 8).every(byte => byte === 0)) return true;
+  return false;
+}
+
+/** Stable text for comparisons. IPv4-mapped addresses collapse to dotted IPv4. */
+export function canonicalAddress(raw: string): string {
+  const text = stripIp(raw);
+  const v4 = parseIpv4(text);
+  if (v4) return v4.join('.');
+  const v6 = parseIpv6(text);
+  if (!v6) return text;
+  const mapped = mappedIpv4(v6);
+  if (mapped) return mapped.join('.');
+  const groups: string[] = [];
+  for (let i = 0; i < 8; i++) groups.push((((v6[i * 2]! << 8) | v6[i * 2 + 1]!) >>> 0).toString(16));
+  return groups.join(':');
+}
+
+export function isLiteralAddress(raw: string): boolean {
+  const text = stripIp(raw);
+  return Boolean(parseIpv4(text) || parseIpv6(text));
+}
+
+export function isLoopbackAddress(raw: string): boolean {
+  const text = stripIp(raw);
+  const v4 = parseIpv4(text);
+  if (v4) return v4[0] === 127;
+  const v6 = parseIpv6(text);
+  if (!v6) return false;
+  const mapped = mappedIpv4(v6);
+  if (mapped) return mapped[0] === 127;
+  if (v6[15] !== 1) return false;
+  for (let i = 0; i < 15; i++) if (v6[i] !== 0) return false;
+  return true;
+}
+
+/**
+ * Classify one IP. IPv4-mapped IPv6 is classified as the inner IPv4 address.
+ * Unparseable strings that look like addresses are non-public (fail closed).
+ * Ordinary hostnames return false; the caller resolves those separately.
+ */
 export function addressIsNonPublic(raw: string): boolean {
-  let ip = raw.trim().toLowerCase().replace(/^\[|\]$/g, '').split('%')[0] ?? '';
-  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(ip);
-  if (dotted?.[1]) ip = dotted[1];
-  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ip);
-  if (hex?.[1] && hex[2]) {
-    const hi = Number.parseInt(hex[1], 16);
-    const lo = Number.parseInt(hex[2], 16);
-    ip = `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
-  }
-  if (ip.includes('.')) {
-    const parts = ip.split('.').map(part => Number(part));
-    if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-    const a = parts[0] ?? 0;
-    const b = parts[1] ?? 0;
-    const c = parts[2] ?? 0;
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 0 && c === 2) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 198 && (b === 18 || b === 19)) return true;
-    if (a === 198 && b === 51 && c === 100) return true;
-    if (a === 203 && b === 0 && c === 113) return true;
-    if (a >= 224) return true;
-    return false;
-  }
-  if (!ip.includes(':')) return false;
-  if (ip === '::' || ip === '::1') return true;
-  if (ip.startsWith('fe80:') || ip.startsWith('fc') || ip.startsWith('fd') || ip.startsWith('ff')) return true;
-  if (ip.startsWith('2001:db8')) return true;
+  const text = stripIp(raw);
+  const v4 = parseIpv4(text);
+  if (v4) return ipv4NonPublic(v4);
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(text)) return true;
+  const v6 = parseIpv6(text);
+  if (v6) return ipv6NonPublic(v6);
+  if (text.includes(':')) return true;
   return false;
 }
 
 /**
- * Resolve a hosted name before a browser is opened. This is a preflight.
- * Chromium may resolve the name again later. A worker that can reach
- * private or link-local addresses must block those routes itself. This
- * function does not pin that later connection.
+ * Resolve a hosted name before a browser is opened. The signed-in browser
+ * path pins the connection in `prepareEgress`. This helper is the same
+ * address check for callers that only have a hostname.
  */
 export async function hostedDnsPreflight(hostname: string): Promise<{ ok: true } | { ok: false; detail: string }> {
   if (isNonPublicHost(hostname) || addressIsNonPublic(hostname)) {
@@ -178,31 +290,68 @@ export function assertSessionBound(state: AuthStorageState, policy: AuthOriginPo
   return { ok: true, detail: '' };
 }
 
-const COOKIE_FIELDS = new Set(['name', 'value', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite']);
+const COOKIE_FIELDS = ['name', 'value', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite'] as const;
+const STATE_FIELDS = new Set(['cookies', 'origins']);
+const ORIGIN_FIELDS = new Set(['origin', 'localStorage']);
+const STORE_FIELDS = new Set(['name', 'value']);
+const SAME_SITE = new Set(['Strict', 'Lax', 'None']);
 
 function csrfName(name: string): boolean {
   return /csrf|xsrf/i.test(name);
 }
 
-/** Reject an empty jar, a CSRF-only jar, and unexpected cookie fields. */
+function exactKeys(value: object, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).every(key => allowed.has(key));
+}
+
+/** Reject an empty jar, a CSRF-only jar, unknown fields, and oversized items. */
 export function acceptSessionMaterial(state: AuthStorageState): BindingCheck {
-  if (!state || !Array.isArray(state.cookies) || !Array.isArray(state.origins)) {
-    return { ok: false, detail: 'The session was not a storage state. It was not loaded.' };
+  const bad = 'The session was not a bounded storage state. It was not loaded.';
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return { ok: false, detail: bad };
+  if (!exactKeys(state, STATE_FIELDS) || !Array.isArray(state.cookies) || !Array.isArray(state.origins)) {
+    return { ok: false, detail: bad };
   }
-  if (JSON.stringify(state).length > 200_000) {
-    return { ok: false, detail: 'The session is too large. It was not loaded.' };
-  }
+  if (state.cookies.length > 100 || state.origins.length > 30) return { ok: false, detail: 'The session is too large. It was not loaded.' };
+  let encoded = 0;
+  try { encoded = JSON.stringify(state).length; } catch { return { ok: false, detail: bad }; }
+  if (encoded > 200_000) return { ok: false, detail: 'The session is too large. It was not loaded.' };
   for (const cookie of state.cookies) {
-    if (!cookie || typeof cookie !== 'object') return { ok: false, detail: 'The session has a malformed cookie. It was not loaded.' };
-    if (Object.keys(cookie).some(key => !COOKIE_FIELDS.has(key))) {
-      return { ok: false, detail: 'The session has an unexpected cookie field. It was not loaded.' };
+    if (!cookie || typeof cookie !== 'object' || Array.isArray(cookie)) return { ok: false, detail: bad };
+    if (!exactKeys(cookie, new Set(COOKIE_FIELDS)) || COOKIE_FIELDS.some(key => !(key in cookie))) {
+      return { ok: false, detail: 'The session has an unexpected or missing cookie field. It was not loaded.' };
     }
-    if (!cookie.name || typeof cookie.value !== 'string' || !cookie.domain || cookie.name.length > 256 || cookie.value.length > 4096) {
-      return { ok: false, detail: 'The session has a malformed cookie. It was not loaded.' };
+    if (typeof cookie.name !== 'string' || typeof cookie.value !== 'string' || typeof cookie.domain !== 'string' || typeof cookie.path !== 'string') {
+      return { ok: false, detail: bad };
+    }
+    if (!cookie.name || cookie.name.length > 256 || cookie.value.length > 4096 || cookie.domain.length > 253 || !cookie.path.startsWith('/') || cookie.path.length > 2048) {
+      return { ok: false, detail: bad };
+    }
+    if (typeof cookie.expires !== 'number' || !Number.isFinite(cookie.expires)) return { ok: false, detail: bad };
+    if (typeof cookie.httpOnly !== 'boolean' || typeof cookie.secure !== 'boolean') return { ok: false, detail: bad };
+    if (!SAME_SITE.has(cookie.sameSite)) return { ok: false, detail: bad };
+  }
+  for (const entry of state.origins) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || !exactKeys(entry, ORIGIN_FIELDS)) {
+      return { ok: false, detail: 'The session has an unexpected storage field. It was not loaded.' };
+    }
+    if (typeof entry.origin !== 'string' || entry.origin.length > 300 || !Array.isArray(entry.localStorage)) {
+      return { ok: false, detail: bad };
+    }
+    if (entry.localStorage.length > 200) return { ok: false, detail: 'The session is too large. It was not loaded.' };
+    let parsed = '';
+    try { parsed = new URL(entry.origin).origin; } catch { parsed = ''; }
+    if (!parsed || parsed !== entry.origin) return { ok: false, detail: bad };
+    for (const item of entry.localStorage) {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || !exactKeys(item, STORE_FIELDS)) {
+        return { ok: false, detail: 'The session has an unexpected storage field. It was not loaded.' };
+      }
+      if (typeof item.name !== 'string' || typeof item.value !== 'string' || !item.name || item.name.length > 256 || item.value.length > 8192) {
+        return { ok: false, detail: bad };
+      }
     }
   }
   const usefulCookie = state.cookies.some(cookie => cookie.value && !csrfName(cookie.name));
-  const usefulStore = state.origins.some(origin => (origin.localStorage || []).some(item => item?.value && !csrfName(item.name || '')));
+  const usefulStore = state.origins.some(origin => origin.localStorage.some(item => item.value && !csrfName(item.name)));
   if (!usefulCookie && !usefulStore) {
     return { ok: false, detail: 'The browser did not store an application session. An empty jar or only a CSRF cookie is not signed in.' };
   }

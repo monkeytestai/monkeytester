@@ -14,7 +14,7 @@
  * sensitive-submit / OAuth guards are the live-run functions.
  */
 
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { LLM } from '../llm/index.js';
@@ -66,9 +66,11 @@ import {
 } from './browserError.js';
 import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, setStepIntent, type SensitiveKind } from './sensitive.js';
 import { openFencedContext } from '../auth/browser.js';
+import { launchFencedBrowser, type EgressPin } from '../auth/egress.js';
 import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
 import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
 import { authBlockedRun, publicMetadata } from '../auth/report.js';
+import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
 import { authCheckForFlowId, isAuthNegativeFlowId } from '../planner/authNegative.js';
 import { isSignupFlowId, signupCheckForFlowId } from '../signup/plan.js';
 import { runAuthCheck } from './authNegative.js';
@@ -117,11 +119,23 @@ export interface ReplayOptions {
   allowSensitive?: SensitiveKind[];
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
+  egressPin?: EgressPin;
   /** When the source run was authenticated, a new jar is required. */
   priorAuth?: import('../auth/contract.js').AuthPublicMetadata;
 }
 
 export async function replayTraces(
+  traces: FlowTrace[],
+  opts: ReplayOptions,
+): Promise<RunResult> {
+  return withSensitiveSinks(secretNeedles(opts.storageState), async () => {
+    adoptAttached(opts.storageState);
+    const result = await replayTracesScoped(traces, { ...opts, llm: opts.llm ? scrubModel(opts.llm) : opts.llm });
+    return redactValue(result, secretNeedles(opts.storageState));
+  });
+}
+
+async function replayTracesScoped(
   traces: FlowTrace[],
   opts: ReplayOptions,
 ): Promise<RunResult> {
@@ -146,7 +160,24 @@ export async function replayTraces(
   }
 
   const owned = !opts.browser;
-  const browser = opts.browser ?? await chromium.launch({ headless: opts.headless ?? true });
+  let browser = opts.browser;
+  if (!browser) {
+    const launch = await launchFencedBrowser({
+      headless: opts.headless ?? true,
+      policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
+    });
+    if (!launch.ok) {
+      return authBlockedRun(traces[0]?.startUrl || '', publicMetadata({
+        mode: 'session',
+        outcome: 'target_rejected',
+        policy: opts.authOrigin ?? { targetOrigin: 'https://invalid.invalid', idpOrigins: [] },
+        custody: 'in-memory',
+        detail: launch.detail,
+      }));
+    }
+    browser = launch.browser;
+    if (launch.pin) opts = { ...opts, egressPin: launch.pin };
+  }
   const signup = emptySignupLedger();
   try {
     for (const trace of traces){
@@ -156,7 +187,7 @@ export async function replayTraces(
     if (owned) await browser.close().catch(() => {});
   }
 
-  return redactValue({
+  return {
     startUrl: traces[0]?.startUrl || '',
     startedAt,
     finishedAt: new Date().toISOString(),
@@ -164,7 +195,16 @@ export async function replayTraces(
     bugs: [],
     stats: aggregate(flows),
     ...signupFields(signup),
-  }, secretNeedles(opts.storageState));
+    ...(opts.storageState && opts.authOrigin ? {
+      auth: publicMetadata({
+        mode: 'session',
+        outcome: 'authenticated',
+        policy: opts.authOrigin,
+        custody: 'in-memory',
+        detail: 'Signed in for this process only. The session was not written on this result.',
+      }),
+    } : {}),
+  };
 }
 
 async function runOneTrace(
@@ -1028,6 +1068,7 @@ async function openContext(browser: Browser, opts: ReplayOptions & { screenshots
     }),
     storageState: opts.storageState,
     authOrigin: opts.authOrigin,
+    egressPin: opts.egressPin,
   });
   await installPageNameHelper(context);
   context.on('page', page => {

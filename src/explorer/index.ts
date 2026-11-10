@@ -29,10 +29,14 @@
  *   - It does not click destructive buttons. The visit is read-only.
  */
 
-import { chromium, type APIRequestContext, type Browser, type Page } from 'playwright';
+import type { APIRequestContext, Browser, Page } from 'playwright';
 import { openFencedContext } from '../auth/browser.js';
 import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
+import { launchFencedBrowser } from '../auth/egress.js';
+import { originAllowed } from '../auth/origins.js';
 import { captureDisabled, redactValue, secretNeedles } from '../auth/redact.js';
+import { publicMetadata } from '../auth/report.js';
+import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
 import { basename } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -104,6 +108,18 @@ export async function explore(
   llm: LLM,
   opts: ExploreOptions = {}
 ): Promise<SiteMap> {
+  return withSensitiveSinks(secretNeedles(opts.storageState), async () => {
+    adoptAttached(opts.storageState);
+    const map = await exploreScoped(startUrl, scrubModel(llm), opts);
+    return redactValue(map, secretNeedles(opts.storageState));
+  });
+}
+
+async function exploreScoped(
+  startUrl: string,
+  llm: LLM,
+  opts: ExploreOptions = {}
+): Promise<SiteMap> {
 
   const maxPages    = opts.maxPages ?? 8;
   const timeout     = opts.pageTimeoutMs ?? 20_000;
@@ -131,7 +147,32 @@ export async function explore(
     data: { startUrl, maxPages },
   });
 
-  const browser: Browser = await chromium.launch({ headless });
+  const launch = await launchFencedBrowser({
+    headless,
+    policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
+  });
+  if (!launch.ok) {
+    const detail = launch.detail;
+    return {
+      startUrl,
+      siteType: 'unknown',
+      summary: detail,
+      pages: [],
+      pendingUrls: [],
+      failedUrls: [{ url: startUrl, reason: detail }],
+      warnings: [detail],
+      ...(opts.authOrigin ? {
+        auth: publicMetadata({
+          mode: 'session',
+          outcome: 'target_rejected',
+          policy: opts.authOrigin,
+          custody: 'in-memory',
+          detail,
+        }),
+      } : {}),
+    };
+  }
+  const browser: Browser = launch.browser;
 
   try {
 
@@ -142,12 +183,13 @@ export async function explore(
       viewport: { width: 1280, height: 800 },
       storageState: opts.storageState,
       authOrigin: opts.authOrigin,
+      egressPin: launch.pin,
     });
     await installPageNameHelper(context);
 
     // sitemap.xml and robots.txt are optional. A miss is not a failed page.
     // Seeds stay inside the page cap; auth URLs they name share AUTH_LINK_BUDGET.
-    const listed = await listedSiteUrls(context.request, startUrl, maxPages);
+    const listed = await listedSiteUrls(context.request, startUrl, maxPages, opts.authOrigin);
     const room = Math.max(0, maxPages - queue.length);
     authUrlsQueued = enqueueLinks(
       queue,
@@ -385,6 +427,7 @@ async function listedSiteUrls(
   request: APIRequestContext,
   startUrl: string,
   cap: number,
+  policy?: AuthOriginPolicy,
 ): Promise<{ url: string; fromSitemap: boolean }[]> {
   if (cap < 1) return [];
   let origin: string;
@@ -407,7 +450,7 @@ async function listedSiteUrls(
     found.push({ url: canonical, fromSitemap });
   };
 
-  const robotsText = await readDiscoveryText(request, `${origin}/robots.txt`, startUrl);
+  const robotsText = await readDiscoveryText(request, `${origin}/robots.txt`, startUrl, 0, policy);
   const robotUrls = robotsText ? urlsFromRobots(robotsText, startUrl) : [];
   for (const url of robotUrls) {
     if (!/sitemap/i.test(url)) push(url, false);
@@ -419,14 +462,14 @@ async function listedSiteUrls(
     if (seenSitemaps.has(target) || found.length >= cap) continue;
     seenSitemaps.add(target);
     if (!isSameCrawlSite(target, startUrl)) continue;
-    const xml = await readDiscoveryText(request, target, startUrl);
+    const xml = await readDiscoveryText(request, target, startUrl, 0, policy);
     if (!xml) continue;
     for (const loc of urlsFromSitemap(xml)) {
       if (found.length >= cap) break;
       if (/sitemap[^/]*\.xml(?:\?|$)/i.test(loc) && !seenSitemaps.has(loc)) {
         seenSitemaps.add(loc);
         if (!isSameCrawlSite(loc, startUrl)) continue;
-        const nested = await readDiscoveryText(request, loc, startUrl);
+        const nested = await readDiscoveryText(request, loc, startUrl, 0, policy);
         if (nested) for (const inner of urlsFromSitemap(nested)) push(inner, true);
       } else {
         push(loc, true);
@@ -447,8 +490,21 @@ function stripQuery(value: string): string {
   }
 }
 
-async function readDiscoveryText(request: APIRequestContext, url: string, scope: string, hops = 0): Promise<string | undefined> {
-  if (hops > 3 || !isSameCrawlSite(url, scope)) return undefined;
+function discoveryAllowed(url: string, scope: string, policy?: AuthOriginPolicy): boolean {
+  if (!isSameCrawlSite(url, scope)) return false;
+  if (!policy) return true;
+  try { return originAllowed(new URL(url, scope), policy); }
+  catch { return false; }
+}
+
+async function readDiscoveryText(
+  request: APIRequestContext,
+  url: string,
+  scope: string,
+  hops = 0,
+  policy?: AuthOriginPolicy,
+): Promise<string | undefined> {
+  if (hops > 3 || !discoveryAllowed(url, scope, policy)) return undefined;
   try {
     const response = await request.get(url, { timeout: 8_000, failOnStatusCode: false, maxRedirects: 0 });
     const status = response.status();
@@ -457,7 +513,8 @@ async function readDiscoveryText(request: APIRequestContext, url: string, scope:
       if (!location) return undefined;
       let next = '';
       try { next = new URL(location, url).href; } catch { return undefined; }
-      return readDiscoveryText(request, next, scope, hops + 1);
+      if (!discoveryAllowed(next, scope, policy)) return undefined;
+      return readDiscoveryText(request, next, scope, hops + 1, policy);
     }
     if (!response.ok()) return undefined;
     const body = await response.text();

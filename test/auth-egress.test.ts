@@ -14,6 +14,7 @@ import { createMemorySecretProvider, establishFormAuth, openFencedContext } from
 import { explore } from '../src/explorer/index.js';
 import { runPlan } from '../src/runner/index.js';
 import { replayTraces } from '../src/runner/replay.js';
+import { verifyBugs } from '../src/verify/index.js';
 import type { LLM } from '../src/llm/index.js';
 import type { AuthStorageState } from '../src/auth/contract.js';
 import type { TestPlan } from '../src/types.js';
@@ -219,6 +220,7 @@ describe('composed signed-in egress', () => {
       targetUrl: `${appOrigin}/login`,
       provider: createMemorySecretProvider({ username: 'ada@example.test', password: PASSWORD }),
       headless: true,
+      postLoginUrl: '/app',
     });
     expect(result.ok).toBe(false);
     expect(JSON.stringify(result)).not.toContain(PASSWORD);
@@ -261,6 +263,67 @@ describe('composed signed-in egress', () => {
       await browser.close();
     }
   });
+
+  it('blocks the same traffic inside verifyBugs', async () => {
+    hits = 0;
+    const dir = mkdtempSync(join(tmpdir(), 'mt-verify-'));
+    await verifyBugs({
+      startUrl: `${appOrigin}/home`,
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      flows: [],
+      bugs: [{
+        id: 'b1',
+        fingerprint: 'abc',
+        title: 'Home',
+        severity: 'minor',
+        affectedFlow: 'Visit',
+        reproSteps: ['Open home'],
+        observed: 'Home',
+        expected: 'Home',
+        evidence: { screenshots: [], consoleErrors: [], networkFailures: [] },
+        triageNotes: 'fixture',
+        trace: {
+          flowId: 'visit',
+          startUrl: `${appOrigin}/home`,
+          steps: [{ index: 0, action: 'Open', tool: 'goto', target: `${appOrigin}/home`, status: 'passed' }],
+        },
+      }],
+      stats: {
+        flowsTotal: 0, flowsPassed: 0, flowsFailed: 0, flowsBlocked: 0, flowsInconclusive: 0,
+        stepsTotal: 0, stepsPassed: 0, stepsFailed: 0,
+        bugsCritical: 0, bugsMajor: 0, bugsMinor: 0,
+      },
+      auth: plan().auth,
+    }, {
+      screenshotsDir: dir,
+      headless: true,
+      recordVideo: false,
+      storageState: jar(),
+      authOrigin: { targetOrigin: appOrigin, idpOrigins: [] },
+    });
+    await new Promise(resolve => setTimeout(resolve, 400));
+    expect(hits).toBe(0);
+  });
+
+  it('blocks an off-origin fetch when the page route calls continue', async () => {
+    hits = 0;
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const context = await openFencedContext(browser, {
+        storageState: jar(),
+        authOrigin: { targetOrigin: appOrigin, idpOrigins: [] },
+      });
+      const page = await context.newPage();
+      await page.route('**/*', route => route.continue());
+      await page.goto(`${appOrigin}/home`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+      await page.waitForTimeout(400);
+      expect(hits).toBe(0);
+      await context.close();
+    } finally {
+      await browser.close();
+    }
+  });
 });
 
 describe('address classification', () => {
@@ -275,5 +338,30 @@ describe('address classification', () => {
     }
     expect(addressIsNonPublic('1.1.1.1')).toBe(false);
     expect(addressIsNonPublic('8.8.8.8')).toBe(false);
+    expect(addressIsNonPublic('fe9a::1')).toBe(true);
+    expect(addressIsNonPublic('192.0.0.8')).toBe(true);
+    expect(addressIsNonPublic('192.88.99.1')).toBe(true);
+    expect(addressIsNonPublic('::ffff:10.1.2.3')).toBe(true);
+    expect(addressIsNonPublic('::ffff:0808:0808')).toBe(false);
+  });
+
+  it('pins the resolved addresses and denies a later private lookup', async () => {
+    const { prepareEgress, connectionAllowed, setEgressLookupForTests } = await import('../src/auth/egress.js');
+    const answers = new Map<string, string[]>([['app.example.test', ['93.184.216.34']]]);
+    setEgressLookupForTests(async host => answers.get(host) ?? []);
+    try {
+      const policy = { targetOrigin: 'https://app.example.test', idpOrigins: [] };
+      const prepared = await prepareEgress(policy);
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) return;
+      expect(prepared.launchArgs.join(' ')).toContain('MAP app.example.test 93.184.216.34');
+      answers.set('app.example.test', ['10.1.2.3']);
+      expect(await connectionAllowed(new URL('https://app.example.test/home'), policy, prepared.pin)).toBe(false);
+      const loop = await prepareEgress({ targetOrigin: 'http://127.0.0.1:9', idpOrigins: [] });
+      expect(loop.ok).toBe(true);
+      if (loop.ok) expect(loop.pin.mode).toBe('local-loopback');
+    } finally {
+      setEgressLookupForTests(undefined);
+    }
   });
 });
