@@ -79,9 +79,19 @@ describe('saved session proof and signed-in probes', () => {
         res.end('<form><input type="password"><p>Sign in</p></form>');
         return;
       }
-      if (url.pathname === '/home') {
+      if (url.pathname === '/home' || url.pathname === '/dashboard') {
         res.writeHead(200, { 'content-type': 'text/html' });
         res.end('<p id="ready">Ready</p><a href="/logout">Log out</a><a href="/keep">Keep</a>');
+        return;
+      }
+      if (url.pathname === '/settings') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<p id="ready">Settings page</p>');
+        return;
+      }
+      if (url.pathname === '/billing') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<p id="ready">Billing page</p>');
         return;
       }
       res.writeHead(204);
@@ -118,6 +128,59 @@ describe('saved session proof and signed-in probes', () => {
     expect(proved.ok).toBe(true);
     if (proved.ok) expect(proved.metadata.status).toBe('authenticated');
     expect(JSON.stringify(proved)).not.toContain(COOKIE);
+  });
+
+  it('does not fail a signed-in run whose flows leave the post-login path', async () => {
+    const proved = await bindAuthProvider({
+      targetOrigin: origin,
+      storageState: jar(),
+      postLoginUrl: '/dashboard',
+    });
+    expect(proved.ok).toBe(true);
+    expect(hits['GET /dashboard'] || 0).toBeGreaterThan(0);
+    hits['GET /settings'] = 0;
+    hits['GET /billing'] = 0;
+    const plan: TestPlan = {
+      startUrl: `${origin}/settings`,
+      siteType: 'app',
+      flows: [
+        {
+          id: 'settings',
+          name: 'Settings',
+          description: 'open settings',
+          kind: 'happy_path',
+          startUrl: `${origin}/settings`,
+          steps: [{ action: 'Look at settings' }],
+          expectation: 'Settings is visible',
+          outcomeCheck: { kind: 'text_visible', value: 'Settings page' },
+          severityIfFails: 'minor',
+        },
+        {
+          id: 'billing',
+          name: 'Billing',
+          description: 'open billing',
+          kind: 'happy_path',
+          startUrl: `${origin}/billing`,
+          steps: [{ action: 'Look at billing' }],
+          expectation: 'Billing is visible',
+          outcomeCheck: { kind: 'text_visible', value: 'Billing page' },
+          severityIfFails: 'minor',
+        },
+      ],
+    };
+    const run = triage(await runPlan(plan, llm, {
+      screenshotsDir: mkdtempSync(join(tmpdir(), 'mt-paths-')),
+      headless: true,
+      recordVideo: false,
+      storageState: jar(),
+      authOrigin: { targetOrigin: origin, idpOrigins: [] },
+      postLoginUrl: '/dashboard',
+    }), {});
+    expect(run.outcome).not.toBe('could_not_test');
+    expect(run.auth?.outcome).toBe('authenticated');
+    expect(hits['GET /settings'] || 0).toBeGreaterThan(0);
+    expect(hits['GET /billing'] || 0).toBeGreaterThan(0);
+    expect(JSON.stringify(run)).not.toContain(COOKIE);
   });
 
   it('does not GET logout while signed in, and does when anonymous', async () => {

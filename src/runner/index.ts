@@ -167,7 +167,12 @@ export interface RunnerOptions {
    * named here. Additive.
    */
   allowSensitive?: SensitiveKind[];
-  /** Customer session. Required together with authOrigin. Not copied onto the run. */
+  /**
+   * Customer session. Required together with authOrigin. Not copied onto the run.
+   * A raw jar does not run the post-login proof. `Monkey`, `bindAuthProvider`,
+   * and the CLI do that before they call `runPlan`. Passing only this field
+   * still fences egress and can stamp `auth.outcome: 'authenticated'`.
+   */
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
   /** Set by the runner after the browser is launched with this pin. */

@@ -57,6 +57,7 @@ describe('composed signed-in egress', () => {
   let attackerOrigin = '';
   let closeAll: () => Promise<void> = async () => {};
   let hits = 0;
+  let appPages = 0;
   const attackerBodies: string[] = [];
 
   beforeAll(async () => {
@@ -100,6 +101,7 @@ describe('composed signed-in egress', () => {
         res.end('self.addEventListener("fetch", function () {});');
         return;
       }
+      appPages += 1;
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end(`<!doctype html><p>Home</p>
         <iframe src="${attackerOrigin}/frame"></iframe>
@@ -177,13 +179,14 @@ describe('composed signed-in egress', () => {
 
   it('blocks the same traffic inside replayTraces', async () => {
     hits = 0;
+    appPages = 0;
     const dir = mkdtempSync(join(tmpdir(), 'mt-replay-'));
     await replayTraces([{
       version: 1,
       flowId: 'visit',
       name: 'Visit',
       startUrl: `${appOrigin}/home`,
-      steps: [{ index: 0, action: 'Open', tool: 'goto', target: `${appOrigin}/home`, status: 'passed' }],
+      steps: [{ index: 0, action: 'Open', tool: 'goto', urlAfter: `${appOrigin}/home`, status: 'passed' }],
     }], {
       screenshotsDir: dir,
       headless: true,
@@ -193,6 +196,7 @@ describe('composed signed-in egress', () => {
     });
     await new Promise(resolve => setTimeout(resolve, 400));
     expect(hits).toBe(0);
+    expect(appPages).toBeGreaterThan(0);
   });
 
   it('does not run a signed-in plan or replay without a new session', async () => {
@@ -200,10 +204,11 @@ describe('composed signed-in egress', () => {
     const blocked = await runPlan(plan(), llm, { screenshotsDir: dir, headless: true, recordVideo: false });
     expect(blocked.outcome_reason).toBe('auth_not_authorized');
     expect(blocked.bugs).toEqual([]);
+    appPages = 0;
     const replayed = await replayTraces([{
       version: 1,
       flowId: 'visit', name: 'Visit', startUrl: appOrigin,
-      steps: [{ index: 0, action: 'Open', tool: 'goto', target: `${appOrigin}/home`, status: 'passed' }],
+      steps: [{ index: 0, action: 'Open', tool: 'goto', urlAfter: `${appOrigin}/home`, status: 'passed' }],
     }], {
       screenshotsDir: dir,
       headless: true,
@@ -211,6 +216,7 @@ describe('composed signed-in egress', () => {
       priorAuth: plan().auth,
     });
     expect(replayed.outcome_reason).toBe('auth_not_authorized');
+    expect(appPages).toBe(0);
   });
 
   it('does not deliver a 307 login body to the other origin', async () => {
@@ -266,6 +272,7 @@ describe('composed signed-in egress', () => {
 
   it('blocks the same traffic inside verifyBugs', async () => {
     hits = 0;
+    appPages = 0;
     const dir = mkdtempSync(join(tmpdir(), 'mt-verify-'));
     await verifyBugs({
       startUrl: `${appOrigin}/home`,
@@ -286,7 +293,7 @@ describe('composed signed-in egress', () => {
         trace: {
           flowId: 'visit',
           startUrl: `${appOrigin}/home`,
-          steps: [{ index: 0, action: 'Open', tool: 'goto', target: `${appOrigin}/home`, status: 'passed' }],
+          steps: [{ index: 0, action: 'Open', tool: 'goto', urlAfter: `${appOrigin}/home`, status: 'passed' }],
         },
       }],
       stats: {
@@ -304,6 +311,7 @@ describe('composed signed-in egress', () => {
     });
     await new Promise(resolve => setTimeout(resolve, 400));
     expect(hits).toBe(0);
+    expect(appPages).toBeGreaterThan(0);
   });
 
   it('blocks an off-origin fetch when the page route calls continue', async () => {

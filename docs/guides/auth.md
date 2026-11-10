@@ -47,7 +47,9 @@ Form login stops when the site asks for a second factor or SSO. Use `auth login`
 
 While a session is bound, screenshots and video are not recorded, and requests that would carry the session or a known secret off the authorized origin are blocked. Dedicated workers, shared workers, and WebRTC are disabled so they cannot open their own sockets. Reports can still contain private application data from the signed-in pages. That data is not scrubbed. `auth.privateDataScrubbed` is `false`. The runner still sends scrubbed signed-in page text to the model provider you configured. That provider is yours.
 
-A saved session (`--use-session` or `local_session`) needs the same `--post-login-url` or `--post-login-selector`. The engine opens the target and checks it. A password field later in the run is `could_not_test`, not a pass. The sign-in expiry is checked again before each flow.
+A saved session (`--use-session` or `local_session`) needs the same `--post-login-url` or `--post-login-selector`. The engine opens that post-login URL and checks it once. Later flows may leave that path. During the run, a password field, or a missing post-login selector, is `could_not_test`, not a pass. The sign-in expiry is checked again before each flow.
+
+`runPlan`, `replayTraces`, and `explore` do not repeat that proof when you pass a raw `storageState`. They still fence egress. `Monkey` and the CLI prove the session before they call those functions. `AUTH_PROVIDER_ABI.hostedEgress` is `deny-nonpublic-recheck`.
 
 Loopback (`127.0.0.1`, `localhost`, `::1`) is allowed for a local dev server you named. Any other `http` target is refused. There is no flag that turns the origin check off.
 
@@ -59,7 +61,7 @@ Sign-up, contact, payment, and account deletion stay on their existing rules. A 
 
 The provider accepts `hosted_credentials` or `local_session` for one `open()`. A second `open()` does not reuse the secret. `release()` aborts an in-flight sign-in and drops that object's copies. `RuntimeAuthProvider.open(policy)` is a different interface and can be called again until `close()`. `executeAndTriage` takes `auth: { targetOrigin, storageState, expiresAt }`, not a provider object.
 
-Hosted targets are public `https` only. The local CLI loopback exception does not apply to `createAuthProvider`. Hosted DNS is a preflight plus a per-request recheck, not a connection-time pin of every socket. `AUTH_PROVIDER_ABI.hostedDns` is `preflight-plus-per-request-recheck`. A hosted worker must block private, link-local, and metadata ranges in its own network. See [Auth provider contract](/reference/auth-contract).
+Hosted targets are public `https` only. The local CLI loopback exception does not apply to `createAuthProvider`. Hosted DNS is a preflight plus a per-request recheck, not a connection-time pin of every socket. `AUTH_PROVIDER_ABI.hostedDns` is `preflight-plus-per-request-recheck`. `AUTH_PROVIDER_ABI.hostedEgress` is `deny-nonpublic-recheck`: a non-public address is refused, and a later lookup is checked again. That recheck is not a guarantee that every connection stays on the first address. A hosted worker must block private, link-local, and metadata ranges in its own network. See [Auth provider contract](/reference/auth-contract).
 
 ## Auth-negative checks
 

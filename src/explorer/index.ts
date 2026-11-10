@@ -98,7 +98,11 @@ export interface ExploreOptions {
   onPage?: (page: SiteMapPage) => void;
   /** Optional live event bus. Receives explorer lifecycle events. */
   events?: EventBus;
-  /** Signed-in jar. Pair with authOrigin. Not copied onto the site map. */
+  /**
+   * Signed-in jar. Pair with authOrigin. Not copied onto the site map.
+   * Explore does not prove the login. `Monkey` and the CLI do that first.
+   * A raw jar still fences egress.
+   */
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
 }

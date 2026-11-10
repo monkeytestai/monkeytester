@@ -46,7 +46,7 @@ console.log(summariseDiff(diff));
 
 | Export | Role |
 | --- | --- |
-| `explore`, `plan`, `groundedTestPlan`, `runPlan` | The phases, if you drive them yourself |
+| `explore`, `plan`, `groundedTestPlan`, `runPlan` | The phases, if you drive them yourself. A raw `storageState` is fenced and is not proved again. `Monkey` and the CLI prove a saved session first. |
 | `triage`, `triagePolished` | Rule-based triage, and optional copy polish |
 | `createLLM`, `autoLLMConfig`, `detectProviderFromEnv` | Provider setup |
 | `CHEAP_FAST_MODEL`, `SMART_MODEL` | Default model ids |

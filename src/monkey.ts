@@ -25,6 +25,7 @@ import { EventBus, noopBus } from './events.js';
 import { bindAuthProvider, type AuthBindInput } from './auth/bind.js';
 import type { AuthOriginPolicy, AuthPublicMetadata, AuthStorageState } from './auth/contract.js';
 import { authBlockedRun, outcomeFromAuth, publicMetadata } from './auth/report.js';
+import { secretNeedles } from './auth/redact.js';
 import { attachedSecrets, scrubString } from './auth/secrets.js';
 import type {
   MonkeyLLMConfig,
@@ -634,7 +635,10 @@ async function gateCustomerAuth(auth?: AuthBindInput): Promise<
 
 function caughtMessage(err: unknown, holder?: object): string {
   const raw = err instanceof Error ? err.message : String(err);
-  return scrubString(raw, holder ? attachedSecrets(holder) : []);
+  const extra = holder
+    ? [...attachedSecrets(holder), ...secretNeedles(holder as AuthStorageState)]
+    : [];
+  return scrubString(raw, extra);
 }
 
 function preferRunAuth(run: RunResult, fallback?: AuthPublicMetadata): RunResult {

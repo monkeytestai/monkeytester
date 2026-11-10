@@ -64,14 +64,13 @@ export async function observeSignedInPage(page: Page, opts: {
   sessionWatch?: SessionWatch;
 }): Promise<void> {
   if (!opts.storageState || !opts.authOrigin || !opts.sessionWatch) return;
+  // The post-login URL is checked once, when the session is bound.
+  // Later pages are allowed to leave that path. A password field, or a
+  // missing post-login selector, means the session is no longer proved.
   if (await passwordFieldVisible(page)) opts.sessionWatch.lost = true;
-  if ((opts.postLoginUrl || opts.postLoginSelector) && !(await loginProved(
-    page,
-    opts.authOrigin,
-    opts.postLoginUrl,
-    opts.postLoginSelector,
-  ))) {
-    opts.sessionWatch.unproved = true;
+  if (opts.postLoginSelector) {
+    const count = await page.locator(opts.postLoginSelector).count().catch(() => 0);
+    if (count < 1) opts.sessionWatch.unproved = true;
   }
 }
 
@@ -95,7 +94,12 @@ export async function proveStoredSession(input: {
       viewport: { width: 1280, height: 800 },
     });
     const page = await context.newPage();
-    await page.goto(input.targetUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => {});
+    let openUrl = input.targetUrl;
+    if (input.postLoginUrl) {
+      try { openUrl = new URL(input.postLoginUrl, input.policy.targetOrigin).href; }
+      catch { return false; }
+    }
+    await page.goto(openUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => {});
     if (await passwordFieldVisible(page)) return false;
     const proved = await loginProved(page, input.policy, input.postLoginUrl, input.postLoginSelector);
     if (proved) markSessionProved(input.storageState);

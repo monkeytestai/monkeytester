@@ -118,6 +118,11 @@ export interface ReplayOptions {
   inbox?: InboxProvider;
   /** Same allow-list as `RunnerOptions.allowSensitive`. */
   allowSensitive?: SensitiveKind[];
+  /**
+   * Customer session. Required together with authOrigin.
+   * Replay does not prove the login. The CLI and `Monkey` do that first.
+   * A raw jar still fences egress.
+   */
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
   egressPin?: EgressPin;
