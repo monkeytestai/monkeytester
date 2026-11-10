@@ -6,16 +6,12 @@
  * is marked `healed` when the original failure does not come back.
  */
 
-import type { Browser } from 'playwright';
-import { launchFencedBrowser } from '../auth/egress.js';
-import { publicMetadata } from '../auth/report.js';
+import { chromium, type Browser } from 'playwright';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { BugReport, BugTrace, FlowTrace, RunResult } from '../types.js';
 import { bugMatchesFingerprint } from '../diff/index.js';
 import { replayTraces, type ReplayOptions } from '../runner/replay.js';
-import type { AuthBindInput } from '../auth/bind.js';
-import type { AuthPublicMetadata } from '../auth/contract.js';
 import {
   aggregateVerdict,
   classifyAttempt,
@@ -25,8 +21,6 @@ import {
 } from './verdict.js';
 
 export interface VerifyOptions extends ReplayOptions {
-  /** Fresh in-memory session. A signed-in source run is not replayed without one. */
-  auth?: AuthBindInput;
   /** How many times to replay each bug. Default 1. */
   repeat?: number;
   /** When set, only bugs with these fingerprints are checked. */
@@ -65,35 +59,9 @@ export interface VerifyReport {
   };
   /** 1 when any bug is `still_broken` or `flaky`; otherwise 0. */
   exitCode: 0 | 1;
-  /** Set when this verify was signed in or refused for lack of a new session. */
-  auth?: AuthPublicMetadata;
 }
 
 export async function verifyBugs(run: RunResult, opts: VerifyOptions): Promise<VerifyReport> {
-  if (run.auth?.outcome === 'authenticated' && !opts.storageState) {
-    const repeat = opts.repeat ?? 1;
-    const results: BugVerdict[] = (opts.bugs ?? run.bugs).map(bug => ({
-      fingerprint: bug.fingerprint,
-      fingerprintV2: bug.fingerprintV2,
-      bugId: bug.id,
-      title: bug.title,
-      severity: bug.severity,
-      attempts: Array.from({ length: repeat }, () => 'blocked' as const),
-      verdict: 'blocked' as const,
-      fired: 0,
-      repeat,
-      detail: 'Signed-in verify needs a new session. The previous session was not copied. This is not a fix.',
-    }));
-    const report: VerifyReport = {
-      repeat,
-      heal: opts.heal === true,
-      results,
-      stats: { total: results.length, fixed: 0, still_broken: 0, flaky: 0, healed: 0, blocked: results.length },
-      exitCode: 1,
-      auth: run.auth,
-    };
-    return report;
-  }
   const repeat = opts.repeat ?? 1;
   if (!Number.isInteger(repeat) || repeat < 1){
     throw new Error(`verify repeat must be a positive integer (got ${repeat})`);
@@ -107,37 +75,14 @@ export async function verifyBugs(run: RunResult, opts: VerifyOptions): Promise<V
 
   const results: BugVerdict[] = [];
   const needsBrowser = bugs.some(bug => (bug.trace?.steps.length ?? 0) > 0);
-  let browser = opts.browser;
-  let egressPin = opts.egressPin;
-  if (needsBrowser && !browser) {
-    const launch = await launchFencedBrowser({
-      headless: opts.headless ?? true,
-      policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
-    });
-    if (!launch.ok) {
-      return {
-        repeat,
-        heal: opts.heal === true,
-        results: [],
-        stats: { total: 0, fixed: 0, still_broken: 0, flaky: 0, healed: 0, blocked: 0 },
-        exitCode: 1,
-        auth: publicMetadata({
-          mode: 'session',
-          outcome: 'target_rejected',
-          policy: opts.authOrigin ?? { targetOrigin: 'https://invalid.invalid', idpOrigins: [] },
-          custody: 'in-memory',
-          detail: launch.detail,
-        }),
-      };
-    }
-    browser = launch.browser;
-    egressPin = launch.pin ?? egressPin;
-  }
+  const browser = needsBrowser
+    ? (opts.browser ?? await chromium.launch({ headless: opts.headless ?? true }))
+    : undefined;
   const ownsBrowser = needsBrowser && !opts.browser;
 
   try {
     for (const bug of bugs){
-      results.push(await verifyOne(run, bug, { ...opts, screenshotsDir, browser, egressPin }, repeat));
+      results.push(await verifyOne(run, bug, { ...opts, screenshotsDir, browser }, repeat));
     }
   } finally {
     if (ownsBrowser) await browser?.close().catch(() => {});
@@ -157,15 +102,6 @@ export async function verifyBugs(run: RunResult, opts: VerifyOptions): Promise<V
     results,
     stats,
     exitCode: 0,
-    ...(opts.storageState && opts.authOrigin ? {
-      auth: publicMetadata({
-        mode: 'session',
-        outcome: 'authenticated',
-        policy: opts.authOrigin,
-        custody: 'in-memory',
-        detail: 'Signed in for this process only. The session was not written on this report.',
-      }),
-    } : {}),
   };
   report.exitCode = verifyExitCode(report);
   return report;

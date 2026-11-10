@@ -141,8 +141,6 @@ Found 1 confirmed bug. Open the top one and confirm it on the site before treati
 
 On a login-only crawl (`public_screens` is `0`) the same case says deeper journeys need an account, and `outcome_reason` is `login_required`.
 
-An existing account can be signed in on the machine that runs the CLI (`monkeytest auth login`, or `--username-env` / `--password-env`). The session file stays local. The hosted product does not take those credentials. See the auth guide.
-
 ## How is this different?
 
 | | What it is | Who supplies the goal | What you keep |

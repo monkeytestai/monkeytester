@@ -30,9 +30,6 @@ import {
   classifyDocumentRedirect,
   waitForSettledLocation,
 } from '../explorer/authRedirect.js';
-import { MODEL_CREDENTIAL_RULE } from '../auth/contract.js';
-import { redactValue, secretsFor } from '../auth/redact.js';
-import { absorbPageSecrets } from '../auth/secrets.js';
 import { blockSensitiveClick, contactAbortOutcome, isOauthNavigation, refreshFormActions, submissionPolicy } from './sensitive.js';
 
 const ACTION_TOOLS = ['click', 'fill', 'goto', 'wait', 'assert_text', 'press', 'noop'] as const;
@@ -475,7 +472,6 @@ Locator guidance:
   - Never invent selectors, search boxes, or exact page titles. Use only elements visible in the skeleton.
   - Do not turn page-title expectations into bugs; exploratory users observe what loaded.
   - If the step asks to log in, enter OTP, or create an account, use "noop".
-  - ${MODEL_CREDENTIAL_RULE}
   - "tool" and "locator" are exact lowercase strings from the lists above, not objects.
   - "target" and "value" are strings. Omit a key instead of sending null.
 
@@ -515,19 +511,11 @@ export interface ActionOutcome {
   suggestions?: import('../types.js').Suggestion[];
 }
 
-function isPasswordFill(
-  meta: { type?: string; name?: string; label?: string; placeholder?: string } | undefined,
-  action: ResolvedAction,
-): boolean {
-  const blob = `${meta?.type || ''} ${meta?.name || ''} ${meta?.label || ''} ${meta?.placeholder || ''} ${action.target || ''}`.toLowerCase();
-  return (meta?.type || '').toLowerCase() === 'password' || /\bpassword\b/.test(blob);
-}
-
 export async function executeAction(
   page: Page,
   action: ResolvedAction,
   timeoutMs: number,
-  options?: { strictOracles?: boolean; located?: LocateHit; intent?: string; readMostly?: boolean },
+  options?: { strictOracles?: boolean; located?: LocateHit; intent?: string },
 ): Promise<ActionOutcome> {
 
   try {
@@ -587,13 +575,6 @@ export async function executeAction(
         const disabled = await disabledOutcome(locator, acted, options?.strictOracles);
         if (disabled) return disabled;
         const meta = await readFillTarget(locator);
-        if (options?.readMostly && isPasswordFill(meta, action)) {
-          return {
-            status: 'skipped',
-            observation: 'Signed-in runs do not type into password fields.',
-            error: 'read-mostly',
-          };
-        }
         if (meta?.type === 'checkbox' || meta?.type === 'radio') {
           await locator.check({ timeout: timeoutMs });
           return done('passed', `Checked ${describeTarget(acted)}.`, acted);
@@ -881,7 +862,6 @@ export function mergeLocatorIdentity(
 }
 
 export async function skeletonForLLM(page: Page): Promise<PageSkeletonForLLM> {
-  await absorbPageSecrets(page);
 
   const url = page.url();
   const title = await page.title().catch(() => '');
@@ -990,11 +970,11 @@ export async function skeletonForLLM(page: Page): Promise<PageSkeletonForLLM> {
 
   }));
 
-  return redactValue({
+  return {
     url,
     title,
     ...collected,
-  }, secretsFor(page));
+  };
 
 }
 

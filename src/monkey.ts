@@ -22,11 +22,6 @@ import { BASIC_PRESET } from './depth.js';
 import { plannerBudgetMs } from './budget.js';
 import { verifyBugs, type VerifyOptions, type VerifyReport } from './verify/index.js';
 import { EventBus, noopBus } from './events.js';
-import { bindAuthProvider, type AuthBindInput } from './auth/bind.js';
-import type { AuthOriginPolicy, AuthPublicMetadata, AuthStorageState } from './auth/contract.js';
-import { authBlockedRun, outcomeFromAuth, publicMetadata } from './auth/report.js';
-import { secretNeedles } from './auth/redact.js';
-import { attachedSecrets, scrubString } from './auth/secrets.js';
 import type {
   MonkeyLLMConfig,
   SiteMap,
@@ -90,8 +85,6 @@ export interface ExploreAndPlanOptions {
   plan?: PlannerOptions;
   /** Optional live event bus. Receives `LiveEvent`s for the explorer + planner phases. */
   events?: EventBus;
-  /** In-memory session bound before explore and plan. Not read from a previous run. */
-  auth?: AuthBindInput;
 }
 
 export interface ExecuteOptions extends ExploreAndPlanOptions {
@@ -112,8 +105,6 @@ export interface ExecuteFromPlanOptions {
   run: RunnerOptions;
   /** Optional live event bus. Receives runner + triager events only. */
   events?: EventBus;
-  /** Fresh session for this rerun. A previous plan does not carry a jar. */
-  auth?: AuthBindInput;
 }
 
 export class Monkey {
@@ -160,23 +151,15 @@ export class Monkey {
   ): Promise<{ siteMap: SiteMap; plan: TestPlan }> {
 
     const events = opts.events ?? noopBus();
-    const gate = await gateCustomerAuth(opts.auth);
-    if (!gate.ok) {
-      return {
-        siteMap: emptySiteMap(startUrl, gate.metadata.detail),
-        plan: { startUrl, siteType: 'unknown', flows: [], notes: gate.metadata.detail, auth: gate.metadata },
-      };
-    }
 
-    const siteMap = await explore(startUrl, this.explorerLLM, { ...opts.explore, events, ...gate.browser });
+    const siteMap = await explore(startUrl, this.explorerLLM, { ...opts.explore, events });
     const testPlan = await plan(siteMap, this.plannerLLM, {
       ...opts.plan,
       maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
       signupInbox: opts.plan?.signupInbox === true || Boolean(this.inbox),
-      signedIn: Boolean(gate.browser.storageState),
       events,
     });
-    return { siteMap, plan: gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan };
+    return { siteMap, plan: testPlan };
 
   }
 
@@ -195,26 +178,12 @@ export class Monkey {
     const events = opts.events ?? noopBus();
     const budgetMs = opts.run.totalBudgetMs;
     const deadlineAt = opts.run.deadlineAt ?? (budgetMs ? Date.now() + budgetMs : undefined);
-    const gate = await gateCustomerAuth(opts.auth);
-    if (!gate.ok) {
-      const blockedPlan: TestPlan = {
-        startUrl, siteType: 'unknown', flows: [], notes: gate.metadata.detail, auth: gate.metadata,
-      };
-      return { siteMap: emptySiteMap(startUrl, gate.metadata.detail), plan: blockedPlan, run: authBlockedRun(startUrl, gate.metadata) };
-    }
 
     const siteMap = await explore(startUrl, this.explorerLLM, {
       ...opts.explore,
       events,
       pageTimeoutMs: opts.explore?.pageTimeoutMs ?? (budgetMs ? BASIC_PRESET.pageTimeoutMs : undefined),
-      ...gate.browser,
     });
-    if (siteMap.auth && siteMap.auth.outcome !== 'authenticated') {
-      const blockedPlan: TestPlan = {
-        startUrl, siteType: 'unknown', flows: [], notes: siteMap.auth.detail, auth: siteMap.auth,
-      };
-      return { siteMap, plan: blockedPlan, run: authBlockedRun(startUrl, siteMap.auth) };
-    }
 
     let testPlan: TestPlan;
     const planLimit = plannerBudgetMs({ totalBudgetMs: budgetMs, deadlineAt });
@@ -223,11 +192,10 @@ export class Monkey {
         ...opts.plan,
         maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
         signupInbox: opts.plan?.signupInbox === true || Boolean(opts.run.inbox ?? this.inbox),
-        signedIn: Boolean(gate.browser.storageState),
         events,
       }));
     } catch (err) {
-      const msg = caughtMessage(err, gate.browser.storageState);
+      const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[monkeytester] planner fallback: ${truncate(msg, 300)}`);
       events.emit({
         phase: 'planner', type: 'engine.error',
@@ -241,11 +209,10 @@ export class Monkey {
         opts.plan?.focus,
       ), msg);
       if (fallback.flows.length === 0) {
-        const plan = gate.metadata ? { ...fallback, auth: gate.metadata } : fallback;
         return {
           siteMap,
-          plan,
-          run: { ...withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, plan.notes, countPublicScreens(siteMap.pages)), siteMap, plan), ...(gate.metadata ? { auth: gate.metadata } : {}) },
+          plan: fallback,
+          run: withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, fallback.notes, countPublicScreens(siteMap.pages)), siteMap, fallback),
         };
       }
       testPlan = fallback;
@@ -256,11 +223,10 @@ export class Monkey {
         phase: 'planner', type: 'plan.skipped',
         message: 'Planner produced no flows — nothing to execute.',
       });
-      const plan = gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan;
       return {
         siteMap,
-        plan,
-        run: { ...withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, plan.notes, countPublicScreens(siteMap.pages)), siteMap, plan), ...(gate.metadata ? { auth: gate.metadata } : {}) },
+        plan: testPlan,
+        run: withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, testPlan.notes, countPublicScreens(siteMap.pages)), siteMap, testPlan),
       };
     }
 
@@ -278,7 +244,6 @@ export class Monkey {
         inbox: opts.run.inbox ?? this.inbox,
         strictOracles: opts.run.strictOracles ?? this.strictOracles,
         failOn5xx: opts.run.failOn5xx ?? this.failOn5xx,
-        ...gate.browser,
       });
       events.emit({
         phase: 'runner', type: 'run.complete',
@@ -286,7 +251,7 @@ export class Monkey {
         data: rawRun.stats,
       });
     } catch (err) {
-      const msg = caughtMessage(err, gate.browser.storageState);
+      const msg = err instanceof Error ? err.message : String(err);
       events.emit({
         phase: 'runner', type: 'engine.error',
         message: `Runner failed: ${truncate(msg, 160)}`,
@@ -296,10 +261,9 @@ export class Monkey {
         siteMap,
         plan: {
           ...testPlan,
-          ...(gate.metadata ? { auth: gate.metadata } : {}),
           notes: [testPlan.notes, `Runner failed before executing flows: ${msg}`].filter(Boolean).join('\n'),
         },
-        run: { ...withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, `Runner failed before executing flows: ${msg}`, countPublicScreens(siteMap.pages)), siteMap, testPlan), ...(gate.metadata ? { auth: gate.metadata } : {}) },
+        run: withRunWarnings(finishEmpty(startUrl, siteMap.pages.length, `Runner failed before executing flows: ${msg}`, countPublicScreens(siteMap.pages)), siteMap, testPlan),
       };
     }
 
@@ -336,9 +300,7 @@ export class Monkey {
       notes: testPlan.notes,
     });
 
-    const stampedPlan = gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan;
-    const stampedRun = preferRunAuth(withRunWarnings(run, siteMap, stampedPlan), gate.metadata);
-    return { siteMap, plan: stampedPlan, run: stampedRun };
+    return { siteMap, plan: testPlan, run: withRunWarnings(run, siteMap, testPlan) };
 
   }
 
@@ -370,21 +332,13 @@ export class Monkey {
   ): Promise<{ plan: TestPlan; run: RunResult }> {
 
     const events = opts.events ?? noopBus();
-    const denied = rerunWithoutAuth(testPlan.auth, Boolean(opts.auth || opts.run.storageState), testPlan.startUrl);
-    if (denied) return { plan: testPlan, run: denied };
-    const gate = await gateCustomerAuth(opts.auth);
-    if (!gate.ok) return { plan: { ...testPlan, auth: gate.metadata }, run: authBlockedRun(testPlan.startUrl, gate.metadata) };
 
     if (testPlan.flows.length === 0){
       events.emit({
         phase: 'planner', type: 'plan.skipped',
         message: 'runFromPlan called with an empty plan — nothing to execute.',
       });
-      const empty = finishEmpty(testPlan.startUrl, undefined, testPlan.notes);
-      return {
-        plan: gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan,
-        run: gate.metadata ? { ...empty, auth: gate.metadata } : empty,
-      };
+      return { plan: testPlan, run: finishEmpty(testPlan.startUrl, undefined, testPlan.notes) };
     }
 
     let rawRun: RunResult;
@@ -400,7 +354,6 @@ export class Monkey {
         inbox: opts.run.inbox ?? this.inbox,
         strictOracles: opts.run.strictOracles ?? this.strictOracles,
         failOn5xx: opts.run.failOn5xx ?? this.failOn5xx,
-        ...gate.browser,
       });
       events.emit({
         phase: 'runner', type: 'run.complete',
@@ -408,17 +361,13 @@ export class Monkey {
         data: rawRun.stats,
       });
     } catch (err) {
-      const msg = caughtMessage(err, gate.browser.storageState);
+      const msg = err instanceof Error ? err.message : String(err);
       events.emit({
         phase: 'runner', type: 'engine.error',
         message: `Re-run failed: ${truncate(msg, 160)}`,
         data: { error: msg },
       });
-      const empty = finishEmpty(testPlan.startUrl, undefined, msg);
-      return {
-        plan: gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan,
-        run: gate.metadata ? { ...empty, auth: gate.metadata } : empty,
-      };
+      return { plan: testPlan, run: finishEmpty(testPlan.startUrl, undefined, msg) };
     }
 
     const triageOpts = {
@@ -445,10 +394,7 @@ export class Monkey {
     }
 
     run = await applyPlannerVerdict(run, this.plannerLLM, { notes: testPlan.notes });
-    return {
-      plan: gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan,
-      run: preferRunAuth(run, gate.metadata),
-    };
+    return { plan: testPlan, run };
 
   }
 
@@ -459,12 +405,8 @@ export class Monkey {
    */
   async replayRecorded(
     source: RunResult,
-    opts: ReplayOptions & { heal?: boolean; auth?: AuthBindInput },
+    opts: ReplayOptions & { heal?: boolean },
   ): Promise<{ run: RunResult }> {
-    const denied = rerunWithoutAuth(source.auth, Boolean(opts.auth || opts.storageState), source.startUrl);
-    if (denied) return { run: denied };
-    const gate = await gateCustomerAuth(opts.auth);
-    if (!gate.ok) return { run: authBlockedRun(source.startUrl, gate.metadata) };
     const traces = source.flows
       .map(flow => flow.trace)
       .filter((trace): trace is NonNullable<typeof trace> => !!trace && trace.steps.length > 0);
@@ -475,14 +417,11 @@ export class Monkey {
       inbox: opts.inbox ?? this.inbox,
       strictOracles: opts.strictOracles ?? this.strictOracles,
       failOn5xx: opts.failOn5xx ?? this.failOn5xx,
-      priorAuth: source.auth,
-      ...gate.browser,
     });
     const failOn5xx = opts.failOn5xx ?? this.failOn5xx;
-    const triaged = this.triagerLLM
+    const run = this.triagerLLM
       ? await triagePolished(raw, { llm: this.triagerLLM, failOn5xx })
       : triage(raw, { failOn5xx });
-    const run = preferRunAuth(triaged, gate.metadata);
     return { run };
   }
 
@@ -491,17 +430,11 @@ export class Monkey {
    * flaky / healed / blocked verdict. No LLM unless `opts.heal` is set.
    */
   async verifyRecorded(source: RunResult, opts: VerifyOptions): Promise<VerifyReport> {
-    const denied = rerunWithoutAuth(source.auth, Boolean(opts.auth || opts.storageState), source.startUrl);
-    if (denied) return blockedVerify(denied);
-    const gate = await gateCustomerAuth(opts.auth);
-    if (!gate.ok) return blockedVerify(authBlockedRun(source.startUrl, gate.metadata));
     return verifyBugs(source, {
       ...opts,
       llm: opts.heal ? (opts.llm ?? this.runnerLLM) : opts.llm,
       strictOracles: opts.strictOracles ?? this.strictOracles,
       failOn5xx: opts.failOn5xx ?? this.failOn5xx,
-      priorAuth: source.auth,
-      ...gate.browser,
     });
   }
 
@@ -536,7 +469,7 @@ export class Monkey {
         signupInbox: opts.plan?.signupInbox === true || Boolean(this.inbox),
       });
     } catch (err) {
-      const msg = caughtMessage(err);
+      const msg = err instanceof Error ? err.message : String(err);
       const fallback = markPlannerFallback(groundedTestPlan(
         siteMap,
         opts.plan?.maxFlows ?? 6,
@@ -607,93 +540,6 @@ function withRunWarnings(run: RunResult, siteMap: SiteMap, plan: TestPlan): RunR
  * it so the checks keep the reserve. A slow model rejects into the caller's
  * grounded fallback instead of holding the run until the checks are starved.
  */
-async function gateCustomerAuth(auth?: AuthBindInput): Promise<
-  | { ok: false; metadata: AuthPublicMetadata }
-  | { ok: true; metadata?: AuthPublicMetadata; browser: {
-    storageState?: AuthStorageState;
-    authOrigin?: AuthOriginPolicy;
-    sessionExpiresAt?: string;
-    postLoginUrl?: string;
-    postLoginSelector?: string;
-  } }
-> {
-  if (!auth) return { ok: true, browser: {} };
-  const bound = await bindAuthProvider(auth);
-  if (!bound.ok) return { ok: false, metadata: bound.metadata };
-  return {
-    ok: true,
-    metadata: bound.metadata,
-    browser: {
-      storageState: bound.storageState,
-      authOrigin: bound.authOrigin,
-      ...(bound.metadata.expiresAt ? { sessionExpiresAt: bound.metadata.expiresAt } : {}),
-      ...(auth.postLoginUrl ? { postLoginUrl: auth.postLoginUrl } : {}),
-      ...(auth.postLoginSelector ? { postLoginSelector: auth.postLoginSelector } : {}),
-    },
-  };
-}
-
-function caughtMessage(err: unknown, holder?: object): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  const extra = holder
-    ? [...attachedSecrets(holder), ...secretNeedles(holder as AuthStorageState)]
-    : [];
-  return scrubString(raw, extra);
-}
-
-function preferRunAuth(run: RunResult, fallback?: AuthPublicMetadata): RunResult {
-  const auth = run.auth && run.auth.outcome !== 'authenticated' ? run.auth : fallback;
-  if (!auth) return run;
-  return { ...run, auth, ...(outcomeFromAuth(auth) ?? {}) };
-}
-
-function blockedVerify(run: RunResult): VerifyReport {
-  const detail = run.auth?.detail || 'Signed-in verify needs a new session. This is not a fix.';
-  const results = run.bugs.map(bug => ({
-    fingerprint: bug.fingerprint,
-    fingerprintV2: bug.fingerprintV2,
-    bugId: bug.id,
-    title: bug.title,
-    severity: bug.severity,
-    attempts: ['blocked' as const],
-    verdict: 'blocked' as const,
-    fired: 0,
-    repeat: 1,
-    detail,
-  }));
-  return {
-    repeat: 1,
-    heal: false,
-    results,
-    stats: { total: results.length, fixed: 0, still_broken: 0, flaky: 0, healed: 0, blocked: results.length },
-    exitCode: 1,
-    auth: run.auth,
-  };
-}
-
-function rerunWithoutAuth(prior: AuthPublicMetadata | undefined, hasFresh: boolean, startUrl: string): RunResult | undefined {
-  if (prior?.outcome !== 'authenticated' || hasFresh) return undefined;
-  return authBlockedRun(startUrl, publicMetadata({
-    mode: prior.mode,
-    outcome: 'not_authorized',
-    policy: { targetOrigin: prior.targetOrigin, idpOrigins: prior.idpOrigins },
-    custody: prior.custody,
-    detail: 'Our test couldn\'t complete the run because the previous sign-in is not copied onto a rerun. Pass a new in-memory session or --use-session. This is not a verified run.',
-  }));
-}
-
-function emptySiteMap(startUrl: string, detail: string): SiteMap {
-  return {
-    startUrl,
-    siteType: 'unknown',
-    summary: detail,
-    pages: [],
-    pendingUrls: [],
-    failedUrls: [],
-    pagesExplored: 0,
-  };
-}
-
 async function planWithinBudget(limitMs: number | undefined, work: () => Promise<TestPlan>): Promise<TestPlan> {
   if (limitMs === undefined) return work();
   if (limitMs <= 0) {

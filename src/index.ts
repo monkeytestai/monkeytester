@@ -72,41 +72,6 @@ export type { DerivedOutcome, OutcomeContext, VerdictFacts } from './outcome.js'
 
 export { ENGINE_VERSION } from './version.js';
 
-export {
-  AUTH_PROVIDER_ABI,
-  AUTH_PROVIDER_CONTRACT,
-  AUTH_PROVIDER_CONTRACT_ID,
-  createAuthProvider,
-  bindAuthProvider,
-  establishFormAuth,
-  establishManualAuth,
-  establishWithRuntimeProvider,
-  createEnvSecretProvider,
-  createMemorySecretProvider,
-  createRuntimeSessionProvider,
-  openFencedContext,
-  authBlockedRun,
-  decideRerunAuth,
-  resolveAuthInvocation,
-  readAuthSession,
-  writeAuthSession,
-  deleteAuthSession,
-  defaultSessionPath,
-  rejectCredentialArg,
-} from './auth/index.js';
-export type {
-  AuthBindInput,
-  AuthProvider,
-  AuthOriginPolicy,
-  AuthOutcome,
-  AuthPublicMetadata,
-  AuthResult,
-  AuthSecretProvider,
-  AuthStatus,
-  AuthStorageState,
-  RuntimeAuthProvider,
-} from './auth/index.js';
-
 export { createHttpInbox } from './inbox/http.js';
 export type { HttpInboxOptions } from './inbox/http.js';
 export { loadInboxProvider } from './inbox/load.js';

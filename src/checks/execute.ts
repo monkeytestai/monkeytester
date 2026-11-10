@@ -10,9 +10,6 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Browser, Page, Response } from 'playwright';
-import { openFencedContext } from '../auth/browser.js';
-import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
-import { captureDisabled } from '../auth/redact.js';
 import type {
   ConsoleErrorEvidence,
   FlowResult,
@@ -82,23 +79,9 @@ export interface ExecuteChecksOptions {
   onFlowStart?: (flow: TestFlow) => void;
   onStep?: (flow: TestFlow, result: StepResult) => void;
   onFlowComplete?: (result: FlowResult) => void;
-  storageState?: AuthStorageState;
-  authOrigin?: AuthOriginPolicy;
-  egressPin?: import('../auth/egress.js').EgressPin;
 }
 
 const buckets = new WeakMap<Page, Collected>();
-
-function stripSignedInUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    url.search = '';
-    url.hash = '';
-    return url.href;
-  } catch {
-    return 'omitted while signed in';
-  }
-}
 
 function bucket(page: Page): Collected {
   let found = buckets.get(page);
@@ -108,19 +91,17 @@ function bucket(page: Page): Collected {
     const target = found;
     page.on('console', message => {
       if (message.type() !== 'error') return;
-      const quiet = captureDisabled(page);
       target.hits.push({
         kind: 'console',
-        message: quiet ? 'omitted while signed in' : message.text(),
-        ...(quiet ? {} : { sourceUrl: message.location()?.url }),
+        message: message.text(),
+        sourceUrl: message.location()?.url,
       });
     });
     page.on('pageerror', error => {
-      const quiet = captureDisabled(page);
-      const sourceUrl = quiet ? undefined : scriptUrlFromError(error);
+      const sourceUrl = scriptUrlFromError(error);
       target.hits.push({
         kind: 'pageerror',
-        message: quiet ? 'omitted while signed in' : error.message,
+        message: error.message,
         ...(sourceUrl ? { sourceUrl } : {}),
       });
     });
@@ -129,7 +110,7 @@ function bucket(page: Page): Collected {
       if (status < 400) return;
       const request = response.request();
       target.requests.push({
-        url: captureDisabled(page) ? stripSignedInUrl(response.url()) : response.url(),
+        url: response.url(),
         method: request.method(),
         status,
         resourceType: request.resourceType(),
@@ -228,18 +209,8 @@ export async function executePageChecks(
   mkdirSync(opts.screenshotsDir, { recursive: true });
   for (const flow of flows) opts.onFlowStart?.(flow);
 
-  const desktop = await openFencedContext(browser, {
-    viewport: { width: 1280, height: 720 },
-    storageState: opts.storageState,
-    authOrigin: opts.authOrigin,
-    egressPin: opts.egressPin,
-  });
-  const mobile = await openFencedContext(browser, {
-    viewport: MOBILE_VIEWPORT,
-    storageState: opts.storageState,
-    authOrigin: opts.authOrigin,
-    egressPin: opts.egressPin,
-  });
+  const desktop = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const mobile = await browser.newContext({ viewport: MOBILE_VIEWPORT });
   const desktopPage = await desktop.newPage();
   const mobilePage = await mobile.newPage();
   const linkBudget: LinkBudget = { remaining: BROKEN_LINK_CAP };
@@ -478,7 +449,7 @@ async function probeLinks(
   pageUrl: string,
   budget: LinkBudget,
 ): Promise<{ url: string; status?: number; failureText?: string }[]> {
-  if (budget.remaining <= 0 || captureDisabled(page)) return [];
+  if (budget.remaining <= 0) return [];
   const hrefs = await page.$$eval('a[href]', anchors => anchors.map(anchor => anchor.getAttribute('href') || '')).catch(() => [] as string[]);
   const links = sameSiteLinks(hrefs, pageUrl, budget.remaining);
   const broken: { url: string; status?: number; failureText?: string }[] = [];
@@ -486,24 +457,7 @@ async function probeLinks(
     if (budget.remaining <= 0) break;
     budget.remaining -= 1;
     try {
-      const signedIn = captureDisabled(page);
-      if (signedIn) {
-        let linkUrl: URL;
-        let current: URL;
-        try {
-          linkUrl = new URL(link);
-          current = new URL(pageUrl);
-        } catch {
-          continue;
-        }
-        if (linkUrl.origin !== current.origin) continue;
-      }
-      const response = await page.request.get(link, {
-        timeout: 5_000,
-        failOnStatusCode: false,
-        maxRedirects: signedIn ? 0 : 2,
-      });
-      if (signedIn && response.status() >= 300 && response.status() < 400) continue;
+      const response = await page.request.get(link, { timeout: 5_000, failOnStatusCode: false, maxRedirects: 2 });
       if (isBrokenStatus(response.status())) broken.push({ url: link, status: response.status() });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -661,7 +615,7 @@ async function record(
     ...(outcome.suggestions?.length ? { suggestions: outcome.suggestions } : {}),
     ...(outcome.axeRules?.length ? { axeRules: outcome.axeRules } : {}),
   };
-  if (outcome.status === 'failed' && page && !opts.storageState && !captureDisabled(page)) {
+  if (outcome.status === 'failed' && page) {
     const path = shotPath(opts.screenshotsDir, flow.id, index, outcome.status);
     try {
       await page.screenshot({ path, fullPage: false });

@@ -14,7 +14,7 @@
  * sensitive-submit / OAuth guards are the live-run functions.
  */
 
-import type { Browser, BrowserContext, Page } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { LLM } from '../llm/index.js';
@@ -65,13 +65,6 @@ import {
   settleActionBrowserError,
 } from './browserError.js';
 import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, setStepIntent, type SensitiveKind } from './sensitive.js';
-import { openFencedContext } from '../auth/browser.js';
-import { launchFencedBrowser, type EgressPin } from '../auth/egress.js';
-import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
-import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
-import { authBlockedRun, outcomeFromAuth, publicMetadata } from '../auth/report.js';
-import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
-import { observeSignedInPage, type SessionWatch } from '../auth/proof.js';
 import { authCheckForFlowId, isAuthNegativeFlowId } from '../planner/authNegative.js';
 import { isSignupFlowId, signupCheckForFlowId } from '../signup/plan.js';
 import { runAuthCheck } from './authNegative.js';
@@ -118,34 +111,9 @@ export interface ReplayOptions {
   inbox?: InboxProvider;
   /** Same allow-list as `RunnerOptions.allowSensitive`. */
   allowSensitive?: SensitiveKind[];
-  /**
-   * Customer session. Required together with authOrigin.
-   * Replay does not prove the login. The CLI and `Monkey` do that first.
-   * A raw jar still fences egress.
-   */
-  storageState?: AuthStorageState;
-  authOrigin?: AuthOriginPolicy;
-  egressPin?: EgressPin;
-  sessionExpiresAt?: string;
-  postLoginUrl?: string;
-  postLoginSelector?: string;
-  sessionWatch?: SessionWatch;
-  /** When the source run was authenticated, a new jar is required. */
-  priorAuth?: import('../auth/contract.js').AuthPublicMetadata;
 }
 
 export async function replayTraces(
-  traces: FlowTrace[],
-  opts: ReplayOptions,
-): Promise<RunResult> {
-  return withSensitiveSinks(secretNeedles(opts.storageState), async () => {
-    adoptAttached(opts.storageState);
-    const result = await replayTracesScoped(traces, { ...opts, llm: opts.llm ? scrubModel(opts.llm) : opts.llm });
-    return redactValue(result, secretNeedles(opts.storageState));
-  });
-}
-
-async function replayTracesScoped(
   traces: FlowTrace[],
   opts: ReplayOptions,
 ): Promise<RunResult> {
@@ -155,66 +123,15 @@ async function replayTracesScoped(
   const startedAt = new Date().toISOString();
   const flows: FlowResult[] = [];
 
-  if (opts.priorAuth?.outcome === 'authenticated' && !opts.storageState) {
-    return authBlockedRun(traces[0]?.startUrl || '', publicMetadata({
-      mode: opts.priorAuth.mode,
-      outcome: 'not_authorized',
-      policy: { targetOrigin: opts.priorAuth.targetOrigin, idpOrigins: opts.priorAuth.idpOrigins },
-      custody: opts.priorAuth.custody,
-      detail: 'Our test couldn\'t complete the run because replay of a signed-in trace needs a new session. This is not a verified run.',
-    }));
-  }
-
   if (traces.length === 0){
     return emptyReplay(startedAt);
   }
 
-  const sessionWatch: SessionWatch = { lost: false, unproved: false };
-  opts = { ...opts, sessionWatch };
-  let envelopeExpired = false;
-  const envelopeClosed = () => {
-    if (!opts.storageState || !opts.sessionExpiresAt) return false;
-    const expiresMs = Date.parse(opts.sessionExpiresAt);
-    return Number.isNaN(expiresMs) || expiresMs <= Date.now();
-  };
-  if (envelopeClosed()) {
-    return authBlockedRun(traces[0]?.startUrl || '', publicMetadata({
-      mode: 'session',
-      outcome: 'expired',
-      policy: opts.authOrigin ?? { targetOrigin: 'https://invalid.invalid', idpOrigins: [] },
-      custody: 'in-memory',
-      ...(opts.sessionExpiresAt ? { expiresAt: opts.sessionExpiresAt } : {}),
-      detail: 'Our test couldn\'t complete the run because the sign-in envelope expired before replay started. This is not a verified run.',
-    }));
-  }
-
   const owned = !opts.browser;
-  let browser = opts.browser;
-  if (!browser) {
-    const launch = await launchFencedBrowser({
-      headless: opts.headless ?? true,
-      policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
-    });
-    if (!launch.ok) {
-      return authBlockedRun(traces[0]?.startUrl || '', publicMetadata({
-        mode: 'session',
-        outcome: 'target_rejected',
-        policy: opts.authOrigin ?? { targetOrigin: 'https://invalid.invalid', idpOrigins: [] },
-        custody: 'in-memory',
-        detail: launch.detail,
-      }));
-    }
-    browser = launch.browser;
-    if (launch.pin) opts = { ...opts, egressPin: launch.pin };
-  }
+  const browser = opts.browser ?? await chromium.launch({ headless: opts.headless ?? true });
   const signup = emptySignupLedger();
   try {
     for (const trace of traces){
-      if (envelopeClosed()) {
-        envelopeExpired = true;
-        break;
-      }
-      if (sessionWatch.lost || sessionWatch.unproved) break;
       flows.push(await runOneTrace(browser, trace, { ...opts, screenshotsDir, signup }));
     }
   } finally {
@@ -229,29 +146,7 @@ async function replayTracesScoped(
     bugs: [],
     stats: aggregate(flows),
     ...signupFields(signup),
-    ...replayAuthFields(opts, { expired: envelopeExpired, lost: sessionWatch.lost, unproved: sessionWatch.unproved }),
   };
-}
-
-function replayAuthFields(opts: ReplayOptions, watch: { expired: boolean; lost: boolean; unproved: boolean }): Partial<RunResult> {
-  if (!opts.storageState || !opts.authOrigin) return {};
-  const outcome = watch.expired ? 'expired' as const : (watch.lost || watch.unproved) ? 'not_authorized' as const : 'authenticated' as const;
-  const detail = watch.expired
-    ? 'Our test couldn\'t complete the run because the sign-in envelope expired during replay. This is not a verified run.'
-    : watch.lost
-      ? 'Our test couldn\'t complete the run because the target showed a password field after the session was loaded. This is not a verified run.'
-      : watch.unproved
-        ? 'Our test couldn\'t complete the run because the target did not show the configured post-login URL or selector. This is not a verified run.'
-        : 'Signed in for this process only. The session was not written on this result.';
-  const auth = publicMetadata({
-    mode: 'session',
-    outcome,
-    policy: opts.authOrigin,
-    custody: 'in-memory',
-    ...(opts.sessionExpiresAt ? { expiresAt: opts.sessionExpiresAt } : {}),
-    detail,
-  });
-  return { auth, ...(outcomeFromAuth(auth) ?? {}) };
 }
 
 async function runOneTrace(
@@ -450,7 +345,6 @@ async function replayFlow(
       }
     }
     if (opts.failOn5xx) await flushStepEvents(page);
-    await observeSignedInPage(page, opts);
     const judged = await replayAssertion(page, trace, steps, {
       halted,
       failed,
@@ -637,7 +531,6 @@ async function playEngineStep(
       timeoutMs,
       llm: opts.llm ?? silentLlm,
       fallbacks: { used: opts.llm ? 0 : 1 },
-      readMostly: Boolean(opts.storageState),
     });
     return {
       action: { tool: outcome.tool, target: outcome.target, value: outcome.value },
@@ -734,7 +627,6 @@ async function playStep(
     const outcome = await executeAction(page, action, timeoutMs, {
       strictOracles: opts.strictOracles,
       intent: recorded.action,
-      readMostly: Boolean(opts.storageState),
     });
     return { action, locator: recorded.locator, outcome, resolution: 'recorded' };
   }
@@ -749,7 +641,6 @@ async function playStep(
     const outcome = await executeAction(page, asked, timeoutMs, {
       strictOracles: opts.strictOracles,
       intent: recorded.action,
-      readMostly: Boolean(opts.storageState),
     });
     return { action: matched, locator, outcome, resolution: 'recorded' };
   }
@@ -765,7 +656,6 @@ async function playStep(
       const outcome = await executeAction(page, asked, timeoutMs, {
         strictOracles: opts.strictOracles,
         intent: recorded.action,
-        readMostly: Boolean(opts.storageState),
       });
       return {
         action: recovered,
@@ -805,7 +695,6 @@ async function playStep(
     const outcome = await executeAction(page, asked, timeoutMs, {
       strictOracles: opts.strictOracles,
       intent: recorded.action,
-      readMostly: Boolean(opts.storageState),
     });
     return {
       action: healed,
@@ -1106,22 +995,16 @@ function blockedResult(recorded: TraceStep, observation: string): StepResult {
 }
 
 async function openContext(browser: Browser, opts: ReplayOptions & { screenshotsDir: string }): Promise<BrowserContext> {
-  const context = await openFencedContext(browser, {
+  const context = await browser.newContext({
     userAgent:
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/537.36 '
       + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 monkeytest.ai',
     viewport: { width: 1280, height: 800 },
-    ...(opts.recordVideo === false || opts.storageState ? {} : {
+    ...(opts.recordVideo === false ? {} : {
       recordVideo: { dir: opts.screenshotsDir, size: { width: 1280, height: 800 } },
     }),
-    storageState: opts.storageState,
-    authOrigin: opts.authOrigin,
-    egressPin: opts.egressPin,
   });
   await installPageNameHelper(context);
-  context.on('page', page => {
-    if (opts.storageState) rememberPageSecrets(page, secretNeedles(opts.storageState), true);
-  });
   return context;
 }
 
@@ -1132,7 +1015,6 @@ async function shot(
   index: number,
   status: string,
 ): Promise<string | undefined> {
-  if (captureDisabled(page)) return undefined;
   const filename = `replay-${slug(flowId)}-step-${String(index).padStart(2, '0')}-${status}.png`;
   const fullPath = join(dir, filename);
   try {

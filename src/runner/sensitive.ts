@@ -447,68 +447,48 @@ export function submissionPolicy(page: Page): SubmissionPolicy | undefined {
   return policies.get(page);
 }
 
-const submissionInstalled = new WeakSet<Page>();
-
-/**
- * Abort this request when it is an OAuth navigation or a disallowed submit.
- * Returns true when the route was aborted. The caller keeps every other
- * request inside the auth fence. Do not `continue()` past that fence.
- */
-export async function blockSensitiveRequest(route: Route, page: Page): Promise<boolean> {
-  const policy = policies.get(page);
-  if (!policy) return false;
-  const request = route.request();
-  const url = request.url();
-  if (request.isNavigationRequest() && isOauthNavigation(url)) {
-    policy.blocked = `oauth ${url}`;
-    await route.abort('blockedbyclient').catch(() => {});
-    return true;
-  }
-  const scan: SubmissionScan = {
-    url,
-    method: request.method(),
-    resourceType: request.resourceType(),
-    pageUrl: pageUrlOf(page),
-    formActionUrls: formActions.get(page),
-    headers: request.headers(),
-  };
-  if (!isUserFormSubmission(scan)) return false;
-  const body = request.postData();
-  if (isContactRequest({
-    url,
-    body,
-    contactActionUrls: contactActions.get(page),
-  })) {
-    const empty = policy.contactEmpty === true || !submissionHasPayload(body);
-    policy.blocked = empty ? `contact-empty ${url}` : `contact ${url}`;
-    await route.abort('blockedbyclient').catch(() => {});
-    return true;
-  }
-  const kind = sensitiveKindFromText(`${url}\n${body || ''}`);
-  const validation = kind ? isValidationPayload(body || '', kind) : false;
-  const payload = kind === 'payment' || kind === 'deletion' || (Boolean(kind) && submissionHasPayload(body) && !validation);
-  if (kind && payload && !allowsSensitiveSubmit(kind, policy)) {
-    policy.blocked = `${kind} ${url}`;
-    await route.abort('blockedbyclient').catch(() => {});
-    return true;
-  }
-  return false;
-}
-
 /** Abort sensitive form writes and navigations to an OAuth provider. */
 export async function installSubmissionGuards(page: Page, policy: SubmissionPolicy): Promise<void> {
   policies.set(page, policy);
-  if (submissionInstalled.has(page)) return;
-  submissionInstalled.add(page);
   page.on('domcontentloaded', () => { void refreshFormActions(page); });
   await page.route('**/*', async (route: Route) => {
-    if (await blockSensitiveRequest(route, page)) return;
-    // fallback() reaches the context fence when one is installed. On a
-    // signed-in page the fence replaces fallback/continue so this cannot
-    // send an off-origin request.
-    await route.fallback().catch(async () => {
+    const request = route.request();
+    const url = request.url();
+    if (request.isNavigationRequest() && isOauthNavigation(url)) {
+      policy.blocked = `oauth ${url}`;
       await route.abort('blockedbyclient').catch(() => {});
-    });
+      return;
+    }
+    const scan: SubmissionScan = {
+      url,
+      method: request.method(),
+      resourceType: request.resourceType(),
+      pageUrl: pageUrlOf(page),
+      formActionUrls: formActions.get(page),
+      headers: request.headers(),
+    };
+    if (isUserFormSubmission(scan)) {
+      const body = request.postData();
+      if (isContactRequest({
+        url,
+        body,
+        contactActionUrls: contactActions.get(page),
+      })) {
+        const empty = policy.contactEmpty === true || !submissionHasPayload(body);
+        policy.blocked = empty ? `contact-empty ${url}` : `contact ${url}`;
+        await route.abort('blockedbyclient').catch(() => {});
+        return;
+      }
+      const kind = sensitiveKindFromText(`${url}\n${body || ''}`);
+      const validation = kind ? isValidationPayload(body || '', kind) : false;
+      const payload = kind === 'payment' || kind === 'deletion' || (Boolean(kind) && submissionHasPayload(body) && !validation);
+      if (kind && payload && !allowsSensitiveSubmit(kind, policy)) {
+        policy.blocked = `${kind} ${url}`;
+        await route.abort('blockedbyclient').catch(() => {});
+        return;
+      }
+    }
+    await route.continue().catch(() => {});
   });
 }
 
