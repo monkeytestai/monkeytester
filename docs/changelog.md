@@ -1,11 +1,11 @@
 # Changelog
 
-The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm channels, this tree, and the hosted service are different: [Versions](/getting-started/versions). A registry check on 8 Nov 2026 at 10:16 IST reported `latest` 0.7.1 and `next` 0.7.2-beta.2. That is not a pin and not the hosted product. This branch does not publish.
+The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm channels, this tree, and the hosted service are different: [Versions](/getting-started/versions). This release publishes npm `next` as 0.7.2-beta.3. `latest` stays 0.7.1. A registry check on 8 Nov 2026 at 10:16 IST reported `latest` 0.7.1 and `next` 0.7.2-beta.2. That observation is not a pin and not the hosted product.
 
-## Unreleased
+## 0.7.2-beta.3
 
-- Local existing-account sign-in (`auth login`, or env-var names for a form). The session file stays on the machine. `AUTH_PROVIDER_CONTRACT` is `monkeytester.auth.provider.v1` for a later server pin. The hosted product does not sign in yet.
-- Signed-in egress is default-deny for other origins. A login needs a post-login URL or selector or the run is `could_not_test`. Workers, shared workers, and WebRTC are disabled while a session is loaded. A saved session needs the same post-login check.
+- Local existing-account sign-in (`auth login`, or env-var names for a form). The session file stays on the machine. `AUTH_PROVIDER_CONTRACT` is `monkeytester.auth.provider.v1` for a later server pin. The hosted product does not sign in yet. npm `latest` stays 0.7.1.
+- Signed-in egress is default-deny for other origins. A login needs a post-login URL or selector or the run is `could_not_test`. Workers, shared workers, and WebRTC are disabled while a session is loaded. A saved session needs the same post-login check. Later flows may leave the post-login path.
 
 ## 0.7.2-beta.2
 
