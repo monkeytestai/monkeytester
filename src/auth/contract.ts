@@ -144,7 +144,7 @@ export const AUTH_PROVIDER_ABI = Object.freeze({
    * There is no `localFixtureTarget: loopback-allowed` flag.
    */
   providerLoopback: 'rejected' as const,
-  hostedDns: 'resolve-and-pin' as const,
+  hostedDns: 'preflight-plus-per-request-recheck' as const,
   hostedEgress: 'deny-nonpublic-and-rebind' as const,
   /** `RuntimeAuthProvider.open` may repeat until `close`. That is not `createAuthProvider`. */
   runtimeSession: 'repeatable-until-close' as const,

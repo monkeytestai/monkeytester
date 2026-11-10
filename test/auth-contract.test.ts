@@ -24,6 +24,7 @@ import {
 import { saveRun } from '../src/persistence/index.js';
 import { checkHostedTarget, policyFrom } from '../src/auth/origins.js';
 import { redactValue } from '../src/auth/redact.js';
+import { withSensitiveSinks } from '../src/auth/secrets.js';
 import { assertEnvName } from '../src/auth/provider.js';
 import type { AuthStorageState } from '../src/auth/contract.js';
 
@@ -53,7 +54,7 @@ describe('AUTH_PROVIDER_CONTRACT', () => {
     expect(AUTH_PROVIDER_ABI.create).toBe('createAuthProvider');
     expect(AUTH_PROVIDER_ABI.allowSensitive).toBe('not-granted');
     expect(AUTH_PROVIDER_ABI.providerLoopback).toBe('rejected');
-    expect(AUTH_PROVIDER_ABI.hostedDns).toBe('resolve-and-pin');
+    expect(AUTH_PROVIDER_ABI.hostedDns).toBe('preflight-plus-per-request-recheck');
     expect(AUTH_PROVIDER_ABI.runtimeSession).toBe('repeatable-until-close');
     expect(AUTH_PROVIDER_ABI.open).toBe('once');
     expect(JSON.stringify(AUTH_PROVIDER_ABI)).not.toContain('loopback-allowed');
@@ -135,8 +136,8 @@ describe('createAuthProvider', () => {
       expiresAt: future,
     });
     const first = await provider.open();
-    expect(first.ok).toBe(true);
-    if (first.ok) expect(first.metadata.status).toBe('authenticated');
+    expect(first.ok).toBe(false);
+    if (!first.ok) expect(first.metadata.status).toBe('auth_required');
     expect(JSON.stringify(first)).not.toContain(COOKIE);
     const second = await provider.open();
     expect(second.ok).toBe(false);
@@ -176,7 +177,8 @@ describe('createAuthProvider', () => {
     input.storageState = { cookies: [], origins: [] };
     const kept = await provider.open();
     expect(passwordReads).toBe(readsAfterCreate);
-    expect(kept.ok).toBe(true);
+    expect(kept.ok).toBe(false);
+    expect(JSON.stringify(kept)).not.toContain(COOKIE);
 
     const empty = await bindAuthProvider({
       targetOrigin: 'https://app.example.com',
@@ -320,5 +322,25 @@ describe('local session file', () => {
     expect(text).not.toContain(COOKIE);
     expect(text).not.toContain('storageState');
     expect(redactValue(`saw ${COOKIE}`, [COOKIE])).toBe('saw [redacted]');
+  });
+});
+
+describe('stdout buffers', () => {
+  it('scrubs a Buffer write while a sensitive scope is active', async () => {
+    const chunks: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await withSensitiveSinks([PASSWORD], async () => {
+        process.stdout.write(Buffer.from(`prefix ${PASSWORD} suffix`));
+      });
+    } finally {
+      process.stdout.write = original;
+    }
+    expect(chunks.join('')).not.toContain(PASSWORD);
+    expect(chunks.join('')).toContain('[redacted]');
   });
 });

@@ -69,8 +69,9 @@ import { openFencedContext } from '../auth/browser.js';
 import { launchFencedBrowser, type EgressPin } from '../auth/egress.js';
 import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
 import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
-import { authBlockedRun, publicMetadata } from '../auth/report.js';
+import { authBlockedRun, outcomeFromAuth, publicMetadata } from '../auth/report.js';
 import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
+import { observeSignedInPage, type SessionWatch } from '../auth/proof.js';
 import { authCheckForFlowId, isAuthNegativeFlowId } from '../planner/authNegative.js';
 import { isSignupFlowId, signupCheckForFlowId } from '../signup/plan.js';
 import { runAuthCheck } from './authNegative.js';
@@ -120,6 +121,10 @@ export interface ReplayOptions {
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
   egressPin?: EgressPin;
+  sessionExpiresAt?: string;
+  postLoginUrl?: string;
+  postLoginSelector?: string;
+  sessionWatch?: SessionWatch;
   /** When the source run was authenticated, a new jar is required. */
   priorAuth?: import('../auth/contract.js').AuthPublicMetadata;
 }
@@ -159,6 +164,25 @@ async function replayTracesScoped(
     return emptyReplay(startedAt);
   }
 
+  const sessionWatch: SessionWatch = { lost: false, unproved: false };
+  opts = { ...opts, sessionWatch };
+  let envelopeExpired = false;
+  const envelopeClosed = () => {
+    if (!opts.storageState || !opts.sessionExpiresAt) return false;
+    const expiresMs = Date.parse(opts.sessionExpiresAt);
+    return Number.isNaN(expiresMs) || expiresMs <= Date.now();
+  };
+  if (envelopeClosed()) {
+    return authBlockedRun(traces[0]?.startUrl || '', publicMetadata({
+      mode: 'session',
+      outcome: 'expired',
+      policy: opts.authOrigin ?? { targetOrigin: 'https://invalid.invalid', idpOrigins: [] },
+      custody: 'in-memory',
+      ...(opts.sessionExpiresAt ? { expiresAt: opts.sessionExpiresAt } : {}),
+      detail: 'Our test couldn\'t complete the run because the sign-in envelope expired before replay started. This is not a verified run.',
+    }));
+  }
+
   const owned = !opts.browser;
   let browser = opts.browser;
   if (!browser) {
@@ -181,6 +205,11 @@ async function replayTracesScoped(
   const signup = emptySignupLedger();
   try {
     for (const trace of traces){
+      if (envelopeClosed()) {
+        envelopeExpired = true;
+        break;
+      }
+      if (sessionWatch.lost || sessionWatch.unproved) break;
       flows.push(await runOneTrace(browser, trace, { ...opts, screenshotsDir, signup }));
     }
   } finally {
@@ -195,16 +224,29 @@ async function replayTracesScoped(
     bugs: [],
     stats: aggregate(flows),
     ...signupFields(signup),
-    ...(opts.storageState && opts.authOrigin ? {
-      auth: publicMetadata({
-        mode: 'session',
-        outcome: 'authenticated',
-        policy: opts.authOrigin,
-        custody: 'in-memory',
-        detail: 'Signed in for this process only. The session was not written on this result.',
-      }),
-    } : {}),
+    ...replayAuthFields(opts, { expired: envelopeExpired, lost: sessionWatch.lost, unproved: sessionWatch.unproved }),
   };
+}
+
+function replayAuthFields(opts: ReplayOptions, watch: { expired: boolean; lost: boolean; unproved: boolean }): Partial<RunResult> {
+  if (!opts.storageState || !opts.authOrigin) return {};
+  const outcome = watch.expired ? 'expired' as const : (watch.lost || watch.unproved) ? 'not_authorized' as const : 'authenticated' as const;
+  const detail = watch.expired
+    ? 'Our test couldn\'t complete the run because the sign-in envelope expired during replay. This is not a verified run.'
+    : watch.lost
+      ? 'Our test couldn\'t complete the run because the target showed a password field after the session was loaded. This is not a verified run.'
+      : watch.unproved
+        ? 'Our test couldn\'t complete the run because the target did not show the configured post-login URL or selector. This is not a verified run.'
+        : 'Signed in for this process only. The session was not written on this result.';
+  const auth = publicMetadata({
+    mode: 'session',
+    outcome,
+    policy: opts.authOrigin,
+    custody: 'in-memory',
+    ...(opts.sessionExpiresAt ? { expiresAt: opts.sessionExpiresAt } : {}),
+    detail,
+  });
+  return { auth, ...(outcomeFromAuth(auth) ?? {}) };
 }
 
 async function runOneTrace(
@@ -403,6 +445,7 @@ async function replayFlow(
       }
     }
     if (opts.failOn5xx) await flushStepEvents(page);
+    await observeSignedInPage(page, opts);
     const judged = await replayAssertion(page, trace, steps, {
       halted,
       failed,

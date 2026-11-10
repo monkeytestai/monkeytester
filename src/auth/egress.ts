@@ -118,7 +118,11 @@ export async function launchFencedBrowser(opts: {
   if (!prepared.ok) return prepared;
   const browser = await chromium.launch({
     headless: opts.headless !== false,
-    args: prepared.launchArgs,
+    args: [
+      ...prepared.launchArgs,
+      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+      '--webrtc-ip-handling-policy=disable_non_proxied_udp',
+    ],
   });
   pinnedBrowsers.add(browser);
   return { ok: true, browser, pin: prepared.pin };

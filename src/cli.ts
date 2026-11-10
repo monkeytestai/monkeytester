@@ -585,13 +585,15 @@ type PreparedAuth =
   | { kind: 'blocked'; run: RunResult; exitCode: number }
   | { kind: 'ready'; storageState: AuthStorageState; authOrigin: AuthOriginPolicy; metadata: AuthPublicMetadata };
 
-function authBind(prepared: PreparedAuth) {
+function authBind(prepared: PreparedAuth, opts: CommonOpts) {
   if (prepared.kind !== 'ready') return undefined;
   return {
     targetOrigin: prepared.authOrigin.targetOrigin,
     idpOrigins: prepared.authOrigin.idpOrigins,
     storageState: prepared.storageState,
     ...(prepared.metadata.expiresAt ? { expiresAt: prepared.metadata.expiresAt } : {}),
+    ...(opts.postLoginUrl ? { postLoginUrl: opts.postLoginUrl } : {}),
+    ...(opts.postLoginSelector ? { postLoginSelector: opts.postLoginSelector } : {}),
   };
 }
 
@@ -687,7 +689,7 @@ async function cmdExplore(url: string | undefined, opts: CommonOpts){
   mkdirSync(screenshotsDir, { recursive: true });
 
   const { siteMap, plan } = await monkey.exploreAndPlan(url, {
-    ...(authBind(prepared) ? { auth: authBind(prepared) } : {}),
+    ...(authBind(prepared, opts) ? { auth: authBind(prepared, opts) } : {}),
     explore: {
       maxPages: opts.maxPages,
       headless: opts.headless,
@@ -727,7 +729,7 @@ async function cmdRun(url: string | undefined, opts: CommonOpts){
 
   const t0 = Date.now();
   const { siteMap, plan, run } = await monkey.executeAndTriage(url, {
-    ...(authBind(prepared) ? { auth: authBind(prepared) } : {}),
+    ...(authBind(prepared, opts) ? { auth: authBind(prepared, opts) } : {}),
     explore: {
       maxPages: opts.maxPages,
       headless: opts.headless,
@@ -815,10 +817,18 @@ async function replayStoredRun(stored: StoredRun, traces: FlowTrace[], opts: Com
     llm: opts.heal ? runnerLLM(opts) : undefined,
     strictOracles: true,
     failOn5xx: opts.failOn5xx,
-    ...(prepared.kind === 'ready' ? { storageState: prepared.storageState, authOrigin: prepared.authOrigin } : {}),
+    ...(prepared.kind === 'ready' ? {
+      storageState: prepared.storageState,
+      authOrigin: prepared.authOrigin,
+      ...(prepared.metadata.expiresAt ? { sessionExpiresAt: prepared.metadata.expiresAt } : {}),
+      ...(opts.postLoginUrl ? { postLoginUrl: opts.postLoginUrl } : {}),
+      ...(opts.postLoginSelector ? { postLoginSelector: opts.postLoginSelector } : {}),
+    } : {}),
   });
   const triaged = triage(raw, { failOn5xx: opts.failOn5xx });
-  const run = prepared.kind === 'ready' ? { ...triaged, auth: prepared.metadata } : triaged;
+  const run = raw.auth && raw.auth.outcome !== 'authenticated'
+    ? { ...triaged, auth: raw.auth }
+    : prepared.kind === 'ready' ? { ...triaged, auth: prepared.metadata } : triaged;
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
   const { path: runFile, id: newRunId } = saveRun(run, {
     dir: opts.dir,
@@ -867,7 +877,7 @@ async function rerunStoredPlan(stored: StoredRun | undefined, opts: CommonOpts){
 
   const t0 = Date.now();
   const { run } = await monkey.runFromPlan(storedPlan.plan, {
-    ...(authBind(prepared) ? { auth: authBind(prepared) } : {}),
+    ...(authBind(prepared, opts) ? { auth: authBind(prepared, opts) } : {}),
     run: {
       screenshotsDir,
       headless: opts.headless,
@@ -924,7 +934,13 @@ async function cmdVerify(positional: string | undefined, opts: CommonOpts){
   const report = await verifyBugs(stored.run, {
     screenshotsDir,
     headless: opts.headless,
-    ...(prepared.kind === 'ready' ? { storageState: prepared.storageState, authOrigin: prepared.authOrigin } : {}),
+    ...(prepared.kind === 'ready' ? {
+      storageState: prepared.storageState,
+      authOrigin: prepared.authOrigin,
+      ...(prepared.metadata.expiresAt ? { sessionExpiresAt: prepared.metadata.expiresAt } : {}),
+      ...(opts.postLoginUrl ? { postLoginUrl: opts.postLoginUrl } : {}),
+      ...(opts.postLoginSelector ? { postLoginSelector: opts.postLoginSelector } : {}),
+    } : {}),
     heal: opts.heal,
     llm: opts.heal ? runnerLLM(opts) : undefined,
     repeat: opts.repeat,

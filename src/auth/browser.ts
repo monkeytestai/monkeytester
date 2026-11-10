@@ -11,6 +11,24 @@ import { installSessionFence } from './fence.js';
 import { assertSessionBound } from './origins.js';
 import { attachedSecrets, rememberPageSecrets, secretNeedles } from './redact.js';
 
+/** Page routes do not see Worker sockets or WebRTC. Signed-in pages cannot construct them. */
+export const SIGNED_IN_BLOCK_SCRIPT = `(() => {
+  const names = ['Worker', 'SharedWorker', 'RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel', 'WebTransport'];
+  for (const name of names) {
+    try {
+      Object.defineProperty(globalThis, name, {
+        configurable: false,
+        enumerable: false,
+        get() { throw new Error(name + ' is disabled while signed in'); },
+      });
+    } catch (err) { /* already sealed */ }
+  }
+})();`;
+
+export async function blockUnroutableEgress(context: BrowserContext): Promise<void> {
+  await context.addInitScript({ content: SIGNED_IN_BLOCK_SCRIPT });
+}
+
 export interface FencedContextOptions {
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
@@ -52,6 +70,7 @@ export async function openFencedContext(browser: Browser, opts: FencedContextOpt
     ...extras,
   });
   if (opts.storageState && opts.authOrigin && pin) {
+    await blockUnroutableEgress(context);
     const needles = [...secretNeedles(opts.storageState), ...attachedSecrets(opts.storageState)];
     context.on('page', page => rememberPageSecrets(page, needles, true));
     await installSessionFence(context, opts.authOrigin, pin);

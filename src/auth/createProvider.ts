@@ -34,6 +34,8 @@ export interface LocalSessionInput {
   targetOrigin: string;
   storageState: AuthStorageState;
   expiresAt: string;
+  postLoginUrl?: string;
+  postLoginSelector?: string;
 }
 
 export interface AuthProvider {
@@ -130,7 +132,13 @@ function buildProvider(copied: CopiedInput): AuthProvider {
         if (!storage) return fail('not_authorized', true, 'local_session requires a storageState for the exact target host. Nothing was stored.');
         const copied = storage;
         storage = undefined;
-        return bindAuthProvider({ targetOrigin: target, storageState: copied, expiresAt });
+        return bindAuthProvider({
+          targetOrigin: target,
+          storageState: copied,
+          expiresAt,
+          ...(postLoginUrl ? { postLoginUrl } : {}),
+          ...(postLoginSelector ? { postLoginSelector } : {}),
+        });
       }
       if (mode !== 'hosted_credentials') {
         return fail('not_authorized', true, 'mode must be hosted_credentials or local_session. Nothing was stored.');

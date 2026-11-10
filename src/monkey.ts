@@ -24,7 +24,8 @@ import { verifyBugs, type VerifyOptions, type VerifyReport } from './verify/inde
 import { EventBus, noopBus } from './events.js';
 import { bindAuthProvider, type AuthBindInput } from './auth/bind.js';
 import type { AuthOriginPolicy, AuthPublicMetadata, AuthStorageState } from './auth/contract.js';
-import { authBlockedRun, publicMetadata } from './auth/report.js';
+import { authBlockedRun, outcomeFromAuth, publicMetadata } from './auth/report.js';
+import { attachedSecrets, scrubString } from './auth/secrets.js';
 import type {
   MonkeyLLMConfig,
   SiteMap,
@@ -225,7 +226,7 @@ export class Monkey {
         events,
       }));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = caughtMessage(err, gate.browser.storageState);
       console.warn(`[monkeytester] planner fallback: ${truncate(msg, 300)}`);
       events.emit({
         phase: 'planner', type: 'engine.error',
@@ -284,7 +285,7 @@ export class Monkey {
         data: rawRun.stats,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = caughtMessage(err, gate.browser.storageState);
       events.emit({
         phase: 'runner', type: 'engine.error',
         message: `Runner failed: ${truncate(msg, 160)}`,
@@ -335,9 +336,7 @@ export class Monkey {
     });
 
     const stampedPlan = gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan;
-    const stampedRun = gate.metadata
-      ? { ...withRunWarnings(run, siteMap, stampedPlan), auth: gate.metadata }
-      : withRunWarnings(run, siteMap, testPlan);
+    const stampedRun = preferRunAuth(withRunWarnings(run, siteMap, stampedPlan), gate.metadata);
     return { siteMap, plan: stampedPlan, run: stampedRun };
 
   }
@@ -408,7 +407,7 @@ export class Monkey {
         data: rawRun.stats,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = caughtMessage(err, gate.browser.storageState);
       events.emit({
         phase: 'runner', type: 'engine.error',
         message: `Re-run failed: ${truncate(msg, 160)}`,
@@ -447,7 +446,7 @@ export class Monkey {
     run = await applyPlannerVerdict(run, this.plannerLLM, { notes: testPlan.notes });
     return {
       plan: gate.metadata ? { ...testPlan, auth: gate.metadata } : testPlan,
-      run: gate.metadata ? { ...run, auth: gate.metadata } : run,
+      run: preferRunAuth(run, gate.metadata),
     };
 
   }
@@ -482,7 +481,7 @@ export class Monkey {
     const triaged = this.triagerLLM
       ? await triagePolished(raw, { llm: this.triagerLLM, failOn5xx })
       : triage(raw, { failOn5xx });
-    const run = gate.metadata ? { ...triaged, auth: gate.metadata } : triaged;
+    const run = preferRunAuth(triaged, gate.metadata);
     return { run };
   }
 
@@ -536,7 +535,7 @@ export class Monkey {
         signupInbox: opts.plan?.signupInbox === true || Boolean(this.inbox),
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = caughtMessage(err);
       const fallback = markPlannerFallback(groundedTestPlan(
         siteMap,
         opts.plan?.maxFlows ?? 6,
@@ -609,12 +608,39 @@ function withRunWarnings(run: RunResult, siteMap: SiteMap, plan: TestPlan): RunR
  */
 async function gateCustomerAuth(auth?: AuthBindInput): Promise<
   | { ok: false; metadata: AuthPublicMetadata }
-  | { ok: true; metadata?: AuthPublicMetadata; browser: { storageState?: AuthStorageState; authOrigin?: AuthOriginPolicy } }
+  | { ok: true; metadata?: AuthPublicMetadata; browser: {
+    storageState?: AuthStorageState;
+    authOrigin?: AuthOriginPolicy;
+    sessionExpiresAt?: string;
+    postLoginUrl?: string;
+    postLoginSelector?: string;
+  } }
 > {
   if (!auth) return { ok: true, browser: {} };
   const bound = await bindAuthProvider(auth);
   if (!bound.ok) return { ok: false, metadata: bound.metadata };
-  return { ok: true, metadata: bound.metadata, browser: { storageState: bound.storageState, authOrigin: bound.authOrigin } };
+  return {
+    ok: true,
+    metadata: bound.metadata,
+    browser: {
+      storageState: bound.storageState,
+      authOrigin: bound.authOrigin,
+      ...(bound.metadata.expiresAt ? { sessionExpiresAt: bound.metadata.expiresAt } : {}),
+      ...(auth.postLoginUrl ? { postLoginUrl: auth.postLoginUrl } : {}),
+      ...(auth.postLoginSelector ? { postLoginSelector: auth.postLoginSelector } : {}),
+    },
+  };
+}
+
+function caughtMessage(err: unknown, holder?: object): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return scrubString(raw, holder ? attachedSecrets(holder) : []);
+}
+
+function preferRunAuth(run: RunResult, fallback?: AuthPublicMetadata): RunResult {
+  const auth = run.auth && run.auth.outcome !== 'authenticated' ? run.auth : fallback;
+  if (!auth) return run;
+  return { ...run, auth, ...(outcomeFromAuth(auth) ?? {}) };
 }
 
 function blockedVerify(run: RunResult): VerifyReport {

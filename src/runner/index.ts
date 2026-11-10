@@ -100,7 +100,8 @@ import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, set
 import { openFencedContext } from '../auth/browser.js';
 import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
 import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
-import { authBlockedRun, publicMetadata } from '../auth/report.js';
+import { authBlockedRun, outcomeFromAuth, publicMetadata } from '../auth/report.js';
+import { observeSignedInPage, type SessionWatch } from '../auth/proof.js';
 import { launchFencedBrowser } from '../auth/egress.js';
 import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
 
@@ -171,6 +172,11 @@ export interface RunnerOptions {
   authOrigin?: AuthOriginPolicy;
   /** Set by the runner after the browser is launched with this pin. */
   egressPin?: import('../auth/egress.js').EgressPin;
+  /** Envelope expiry. Re-checked before each flow, not only at bind. */
+  sessionExpiresAt?: string;
+  postLoginUrl?: string;
+  postLoginSelector?: string;
+  sessionWatch?: SessionWatch;
 }
 
 export type RunnerEvent =
@@ -237,6 +243,25 @@ async function runPlanScoped(
     };
   }
 
+  const sessionWatch: SessionWatch = { lost: false, unproved: false };
+  opts = { ...opts, sessionWatch };
+  let envelopeExpired = false;
+  const envelopeClosed = () => {
+    if (!opts.storageState || !opts.sessionExpiresAt) return false;
+    const expiresMs = Date.parse(opts.sessionExpiresAt);
+    return Number.isNaN(expiresMs) || expiresMs <= Date.now();
+  };
+  if (envelopeClosed()) {
+    return authBlockedRun(plan.startUrl, publicMetadata({
+      mode: 'session',
+      outcome: 'expired',
+      policy: opts.authOrigin ?? { targetOrigin: 'https://invalid.invalid', idpOrigins: [] },
+      custody: 'in-memory',
+      ...(opts.sessionExpiresAt ? { expiresAt: opts.sessionExpiresAt } : {}),
+      detail: 'Our test couldn\'t complete the run because the sign-in envelope expired before the browser finished. The session was not kept. This is not a verified run.',
+    }));
+  }
+
   const launch = await launchFencedBrowser({
     headless,
     policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
@@ -256,7 +281,7 @@ async function runPlanScoped(
   try {
 
     const checkFlows = plan.flows.filter(flow => isPageCheckFlowId(flow.id));
-    if (checkFlows.length > 0) {
+    if (checkFlows.length > 0 && !envelopeClosed()) {
       const batch = await executePageChecks(browser, checkFlows, {
           screenshotsDir,
           stepTimeoutMs: stepTimeout,
@@ -304,6 +329,11 @@ async function runPlanScoped(
     }
 
     for (let fi = 0; fi < plan.flows.length; fi++){
+      if (envelopeClosed()) {
+        envelopeExpired = true;
+        break;
+      }
+      if (sessionWatch.lost || sessionWatch.unproved) break;
 
       const flow = plan.flows[fi];
       if (isPageCheckFlowId(flow.id)) continue;
@@ -405,15 +435,7 @@ async function runPlanScoped(
     stats: aggregateStats(flows),
     engine_version: ENGINE_VERSION,
     ...signupFields(signup),
-    ...(opts.storageState && opts.authOrigin ? {
-      auth: publicMetadata({
-        mode: 'session',
-        outcome: 'authenticated',
-        policy: opts.authOrigin,
-        custody: 'in-memory',
-        detail: 'Signed in for this process only. The session was not written on this result.',
-      }),
-    } : {}),
+    ...signedInRunFields(opts, { expired: envelopeExpired, lost: sessionWatch.lost, unproved: sessionWatch.unproved }),
   };
   return result;
 
@@ -526,6 +548,7 @@ async function runFlow(
     navStatus = navResponse?.status();
     await settleSPA(page);
     await waitForSettledLocation(page);
+    await observeSignedInPage(page, opts);
     const landed = safePageUrl(page) || '';
     const redirectKind = classifyDocumentRedirect({
       requestedUrl: flow.startUrl,
@@ -1088,6 +1111,7 @@ async function runFlow(
     videoPathRaw = await page.video()?.path() ?? null;
   } catch { /* page already closed */ }
 
+  await observeSignedInPage(page, opts);
   signal?.removeEventListener('abort', onAbort);
   await context.close().catch(() => {});
 
@@ -1144,6 +1168,28 @@ async function safeShot(
     return undefined;
   }
 
+}
+
+function signedInRunFields(opts: RunnerOptions, watch: { expired: boolean; lost: boolean; unproved: boolean }): Partial<RunResult> {
+  if (!opts.storageState || !opts.authOrigin) return {};
+  const outcome = watch.expired ? 'expired' as const : (watch.lost || watch.unproved) ? 'not_authorized' as const : 'authenticated' as const;
+  const detail = watch.expired
+    ? 'Our test couldn\'t complete the run because the sign-in envelope expired during the run. Later flows were not started. This is not a verified run.'
+    : watch.lost
+      ? 'Our test couldn\'t complete the run because the target showed a password field after the session was loaded. The session was not treated as signed in. This is not a verified run.'
+      : watch.unproved
+        ? 'Our test couldn\'t complete the run because the target did not show the configured post-login URL or selector. This is not a verified run.'
+        : 'Signed in for this process only. The session was not written on this result.';
+  const auth = publicMetadata({
+    mode: 'session',
+    outcome,
+    policy: opts.authOrigin,
+    custody: 'in-memory',
+    ...(opts.sessionExpiresAt ? { expiresAt: opts.sessionExpiresAt } : {}),
+    detail,
+  });
+  const derived = outcomeFromAuth(auth);
+  return { auth, ...(derived ?? {}) };
 }
 
 function blockedStep(index: number, step: TestStep, observation: string): StepResult {

@@ -137,13 +137,17 @@ function patchConsole(): () => void {
   }
   const stdout = process.stdout.write.bind(process.stdout);
   const stderr = process.stderr.write.bind(process.stderr);
+  const scrubChunk = (chunk: string | Uint8Array): string | Uint8Array => {
+    if (typeof chunk === 'string') return scrubString(chunk);
+    const text = Buffer.from(chunk).toString('utf8');
+    const scrubbed = scrubString(text);
+    return scrubbed === text ? chunk : scrubbed;
+  };
   process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((err?: Error | null) => void), callback?: (err?: Error | null) => void) => {
-    const text = typeof chunk === 'string' ? scrubString(chunk) : chunk;
-    return stdout(text, encoding as BufferEncoding, callback);
+    return stdout(scrubChunk(chunk), encoding as BufferEncoding, callback);
   }) as typeof process.stdout.write;
   process.stderr.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((err?: Error | null) => void), callback?: (err?: Error | null) => void) => {
-    const text = typeof chunk === 'string' ? scrubString(chunk) : chunk;
-    return stderr(text, encoding as BufferEncoding, callback);
+    return stderr(scrubChunk(chunk), encoding as BufferEncoding, callback);
   }) as typeof process.stderr.write;
   return () => {
     for (const [name, fn] of saved) console[name] = fn;

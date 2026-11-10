@@ -7,6 +7,7 @@
 import type { AuthStorageState } from './contract.js';
 import type { AuthResult } from './establish.js';
 import { acceptSessionMaterial, assertSessionBound, jarExpired, policyFrom } from './origins.js';
+import { proveStoredSession } from './proof.js';
 import { publicMetadata } from './report.js';
 
 export interface AuthBindInput {
@@ -16,6 +17,10 @@ export interface AuthBindInput {
   /** Caller envelope expiry. The server uses 120 seconds. Past this, the jar is not applied. */
   expiresAt?: string;
   nowMs?: number;
+  /** Path or absolute URL on the target that is visible only after sign-in. */
+  postLoginUrl?: string;
+  /** Selector that is visible only after sign-in. */
+  postLoginSelector?: string;
 }
 
 export async function bindAuthProvider(input: AuthBindInput): Promise<AuthResult> {
@@ -104,6 +109,41 @@ export async function bindAuthProvider(input: AuthBindInput): Promise<AuthResult
         policy,
         custody: 'in-memory',
         detail: `Our test couldn't complete the run. ${bound.detail} This is not a verified run.`,
+      }),
+    };
+  }
+  if (!input.postLoginUrl && !input.postLoginSelector) {
+    return {
+      ok: false,
+      setup: true,
+      metadata: publicMetadata({
+        mode: 'session',
+        outcome: 'not_authorized',
+        policy,
+        custody: 'in-memory',
+        ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+        detail: 'A saved session is not signed in until a post-login URL or selector is shown on the target. Nothing was marked authenticated. This is not a verified run.',
+      }),
+    };
+  }
+  const proved = await proveStoredSession({
+    targetUrl: input.targetOrigin,
+    policy,
+    storageState: input.storageState,
+    postLoginUrl: input.postLoginUrl,
+    postLoginSelector: input.postLoginSelector,
+  });
+  if (!proved) {
+    return {
+      ok: false,
+      setup: false,
+      metadata: publicMetadata({
+        mode: 'session',
+        outcome: 'credentials_rejected',
+        policy,
+        custody: 'in-memory',
+        ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+        detail: 'Our test couldn\'t complete the run because the target did not show the configured post-login URL or selector. The saved session was not applied. This is not a verified run.',
       }),
     };
   }

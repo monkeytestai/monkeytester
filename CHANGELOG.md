@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Existing-account sign-in for the local CLI: headed `monkeytest auth login`, or `--username-env` / `--password-env` / `--password-stdin`. Session files stay in `auth/session.json` (mode 600, directory 700) and are not uploaded. A rerun does not reuse one unless `--use-session` or a new password reference is passed. Expired, MFA, and off-origin results are `could_not_test`, not a pass.
 - `AUTH_PROVIDER_CONTRACT` (`monkeytester.auth.provider.v1`) and `createAuthProvider` for a later server pin. Hosted targets are public https only. The hosted product is not claiming sign-in. No npm release in this change.
 - Signed-in runs use one egress fence (page routes cannot skip it), pin hosted DNS, and scrub known credentials before prompts, events, and saved output. A login is authenticated only when a post-login URL or selector matches. The contract string is unchanged.
+- Signed-in pages cannot construct a dedicated worker, shared worker, WebRTC peer, or WebTransport. Non-proxied UDP is disabled. A saved session needs the same post-login check. A password field later in the run, or an envelope that expires mid-run, is `could_not_test`. Signed-in link probes are not sent.
 
 ### Documentation
 

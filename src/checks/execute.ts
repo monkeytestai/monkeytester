@@ -478,7 +478,7 @@ async function probeLinks(
   pageUrl: string,
   budget: LinkBudget,
 ): Promise<{ url: string; status?: number; failureText?: string }[]> {
-  if (budget.remaining <= 0) return [];
+  if (budget.remaining <= 0 || captureDisabled(page)) return [];
   const hrefs = await page.$$eval('a[href]', anchors => anchors.map(anchor => anchor.getAttribute('href') || '')).catch(() => [] as string[]);
   const links = sameSiteLinks(hrefs, pageUrl, budget.remaining);
   const broken: { url: string; status?: number; failureText?: string }[] = [];

@@ -8,6 +8,7 @@ import type { AuthPublicMetadata } from './contract.js';
 import { establishFormAuth, establishManualAuth, type AuthResult } from './establish.js';
 import { policyFrom } from './origins.js';
 import { assertEnvName, createEnvSecretProvider, createMemorySecretProvider } from './provider.js';
+import { bindAuthProvider } from './bind.js';
 import { publicMetadata } from './report.js';
 import { readAuthSession, writeAuthSession } from './sessionFile.js';
 
@@ -94,14 +95,18 @@ export async function resolveAuthInvocation(input: AuthInvocation): Promise<Auth
       result: { ok: false, setup: Boolean(read.needsPermission) && !input.priorAuthenticated, metadata: read.metadata },
     };
   }
-  return finish(input, {
-    ok: true,
-    setup: false,
-    metadata: read.metadata,
+  if (!input.postLoginUrl && !input.postLoginSelector) {
+    return blocked(input, 'not_authorized', true, 'A saved session is not a verified sign-in without --post-login-url or --post-login-selector. Nothing was loaded. This is not a verified run.');
+  }
+  return finish(input, await bindAuthProvider({
+    targetOrigin: input.targetUrl,
+    idpOrigins: input.idpOrigins,
     storageState: read.storageState,
-    authOrigin: policy.policy,
-    toJSON: () => ({ ok: true as const, setup: false as const, metadata: read.metadata, storageState: { redacted: true as const } }),
-  });
+    ...(read.metadata.expiresAt ? { expiresAt: read.metadata.expiresAt } : {}),
+    postLoginUrl: input.postLoginUrl,
+    postLoginSelector: input.postLoginSelector,
+    nowMs: input.nowMs,
+  }));
 }
 
 function finish(input: AuthInvocation, result: AuthResult): AuthResolution {

@@ -10,7 +10,9 @@ import type { BrowserContext, Page } from 'playwright';
 import type {
   AuthOriginPolicy, AuthPublicMetadata, AuthSecretProvider, AuthStorageState, RuntimeAuthProvider,
 } from './contract.js';
+import { blockUnroutableEgress } from './browser.js';
 import { launchFencedBrowser } from './egress.js';
+import { loginProved } from './proof.js';
 import { installLoginFence, type FenceState } from './fence.js';
 import { acceptSessionMaterial, assertSessionBound, originAllowed, policyFrom } from './origins.js';
 import { assertPublicSafe, redactError, storageContainsSecret } from './redact.js';
@@ -93,6 +95,7 @@ export async function establishFormAuth(input: {
         return failure('form', 'not_authorized', policy, false, 'Our test couldn\'t complete the run because sign-in was cancelled. The session was not kept. This is not a verified run.');
       }
       context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+      await blockUnroutableEgress(context);
       await installLoginFence(context, policy, fence, pin);
       const page = await context.newPage();
       const timeout = input.timeoutMs ?? 20_000;
@@ -186,6 +189,7 @@ export async function establishManualAuth(input: {
     const fence: FenceState = { originRejected: false };
     try {
       context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+      await blockUnroutableEgress(context);
       await installLoginFence(context, policy, fence, pin);
       const page = await context.newPage();
       const timeout = input.timeoutMs ?? 20_000;
@@ -297,34 +301,6 @@ async function fillLogin(page: Page, username: string, password: string, timeout
     await pass.press('Enter');
   }
   await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
-}
-
-async function loginProved(
-  page: Page,
-  policy: AuthOriginPolicy,
-  postLoginUrl?: string,
-  postLoginSelector?: string,
-): Promise<boolean> {
-  if (!(await onPolicy(page, policy))) return false;
-  if (postLoginUrl) {
-    let pageUrl: URL;
-    let want: URL;
-    try {
-      pageUrl = new URL(page.url());
-      want = new URL(postLoginUrl, policy.targetOrigin);
-    } catch {
-      return false;
-    }
-    if (want.origin !== pageUrl.origin || !originAllowed(pageUrl, policy)) return false;
-    const wanted = want.pathname.replace(/\/$/, '') || '/';
-    const got = pageUrl.pathname.replace(/\/$/, '') || '/';
-    if (got !== wanted && !got.startsWith(`${wanted}/`)) return false;
-  }
-  if (postLoginSelector) {
-    const count = await page.locator(postLoginSelector).count().catch(() => 0);
-    if (count < 1) return false;
-  }
-  return Boolean(postLoginUrl || postLoginSelector);
 }
 
 async function formPostsToPolicy(page: Page, policy: AuthOriginPolicy): Promise<boolean> {
