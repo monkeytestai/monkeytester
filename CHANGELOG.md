@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2-beta.4] — 2026-11-13
+
+### Added
+- Hosted egress proxy: `egressProxy` option / `MTAI_EGRESS_PROXY` env. The same proxy is passed to `chromium.launch` and every `newContext`, so `route.fetch` and `context.request` are proxied. Hosted mode without a proxy fails closed (`egress_proxy_required`).
+- Optional `signal` (AbortSignal) on run, explore, replay and verify options; abort closes the browser and the run ends `could_not_test` with reason `cancelled`.
+
+### Security
+- Hosted mode bypasses only `<-loopback>`, so loopback traffic also goes through (and is denied by) the proxy. Proxy credentials are kept out of errors and logs.
+
 ## [0.7.2-beta.3] — 2026-11-10
 
 ### Added
