@@ -75,16 +75,27 @@ export async function observeSignedInPage(page: Page, opts: {
 }
 
 /** Open the target once and require the post-login check. No page text is returned. */
+const PROOF_MISSED = 'Our test couldn\'t complete the run because the target did not show the configured post-login URL or selector. The saved session was not applied. This is not a verified run.';
+
 export async function proveStoredSession(input: {
   targetUrl: string;
   policy: AuthOriginPolicy;
   storageState: AuthStorageState;
   postLoginUrl?: string;
   postLoginSelector?: string;
-}): Promise<boolean> {
-  if (sessionAlreadyProved(input.storageState)) return true;
-  const launched = await launchFencedBrowser({ headless: true, policy: input.policy });
-  if (!launched.ok || !launched.pin) return false;
+  egressProxy?: string;
+}): Promise<{ ok: true } | { ok: false; outcome: 'target_rejected' | 'egress_proxy_required' | 'credentials_rejected'; detail: string }> {
+  if (sessionAlreadyProved(input.storageState)) return { ok: true };
+  const launched = await launchFencedBrowser({
+    headless: true,
+    policy: input.policy,
+    ...(input.egressProxy !== undefined ? { egressProxy: input.egressProxy } : {}),
+  });
+  if (!launched.ok) return { ok: false, outcome: launched.outcome, detail: launched.detail };
+  if (!launched.pin) {
+    await launched.browser.close().catch(() => {});
+    return { ok: false, outcome: 'target_rejected', detail: 'Sign-in could not pin the target. Nothing was opened.' };
+  }
   let context: BrowserContext | undefined;
   try {
     context = await openFencedContext(launched.browser, {
@@ -97,13 +108,13 @@ export async function proveStoredSession(input: {
     let openUrl = input.targetUrl;
     if (input.postLoginUrl) {
       try { openUrl = new URL(input.postLoginUrl, input.policy.targetOrigin).href; }
-      catch { return false; }
+      catch { return { ok: false, outcome: 'credentials_rejected', detail: PROOF_MISSED }; }
     }
     await page.goto(openUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => {});
-    if (await passwordFieldVisible(page)) return false;
+    if (await passwordFieldVisible(page)) return { ok: false, outcome: 'credentials_rejected', detail: PROOF_MISSED };
     const proved = await loginProved(page, input.policy, input.postLoginUrl, input.postLoginSelector);
     if (proved) markSessionProved(input.storageState);
-    return proved;
+    return proved ? { ok: true } : { ok: false, outcome: 'credentials_rejected', detail: PROOF_MISSED };
   } finally {
     await context?.close().catch(() => {});
     await launched.browser.close().catch(() => {});

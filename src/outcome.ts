@@ -157,6 +157,7 @@ const REASON_PRIORITY: OutcomeReason[] = [
   'auth_not_authorized',
   'auth_target_rejected',
   'auth_storage_unsafe',
+  'auth_egress_proxy_required',
   'site_unreachable',
   'invalid_url',
   'blocked_by_bot_protection',

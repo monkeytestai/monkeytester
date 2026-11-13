@@ -126,6 +126,8 @@ export interface ReplayOptions {
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
   egressPin?: EgressPin;
+  /** Wins over `MTAI_EGRESS_PROXY`. Required for a public signed-in target. */
+  egressProxy?: string;
   sessionExpiresAt?: string;
   postLoginUrl?: string;
   postLoginSelector?: string;
@@ -194,11 +196,12 @@ async function replayTracesScoped(
     const launch = await launchFencedBrowser({
       headless: opts.headless ?? true,
       policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
+      ...(opts.egressProxy !== undefined ? { egressProxy: opts.egressProxy } : {}),
     });
     if (!launch.ok) {
       return authBlockedRun(traces[0]?.startUrl || '', publicMetadata({
         mode: 'session',
-        outcome: 'target_rejected',
+        outcome: launch.outcome,
         policy: opts.authOrigin ?? { targetOrigin: 'https://invalid.invalid', idpOrigins: [] },
         custody: 'in-memory',
         detail: launch.detail,

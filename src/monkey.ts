@@ -615,6 +615,7 @@ async function gateCustomerAuth(auth?: AuthBindInput): Promise<
     sessionExpiresAt?: string;
     postLoginUrl?: string;
     postLoginSelector?: string;
+    egressProxy?: string;
   } }
 > {
   if (!auth) return { ok: true, browser: {} };
@@ -629,6 +630,7 @@ async function gateCustomerAuth(auth?: AuthBindInput): Promise<
       ...(bound.metadata.expiresAt ? { sessionExpiresAt: bound.metadata.expiresAt } : {}),
       ...(auth.postLoginUrl ? { postLoginUrl: auth.postLoginUrl } : {}),
       ...(auth.postLoginSelector ? { postLoginSelector: auth.postLoginSelector } : {}),
+      ...(auth.egressProxy !== undefined ? { egressProxy: auth.egressProxy } : {}),
     },
   };
 }

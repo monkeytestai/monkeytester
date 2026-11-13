@@ -177,6 +177,11 @@ export interface RunnerOptions {
   authOrigin?: AuthOriginPolicy;
   /** Set by the runner after the browser is launched with this pin. */
   egressPin?: import('../auth/egress.js').EgressPin;
+  /**
+   * Proxy for `route.fetch` and `context.request`. Wins over `MTAI_EGRESS_PROXY`.
+   * Required when the signed-in target is a public host. Loopback does not need it.
+   */
+  egressProxy?: string;
   /** Envelope expiry. Re-checked before each flow, not only at bind. */
   sessionExpiresAt?: string;
   postLoginUrl?: string;
@@ -270,11 +275,12 @@ async function runPlanScoped(
   const launch = await launchFencedBrowser({
     headless,
     policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
+    ...(opts.egressProxy !== undefined ? { egressProxy: opts.egressProxy } : {}),
   });
   if (!launch.ok) {
     return authBlockedRun(plan.startUrl, publicMetadata({
       mode: 'session',
-      outcome: 'target_rejected',
+      outcome: launch.outcome,
       policy: opts.authOrigin ?? { targetOrigin: 'https://invalid.invalid', idpOrigins: [] },
       custody: 'in-memory',
       detail: launch.detail,

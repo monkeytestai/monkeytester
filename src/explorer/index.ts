@@ -105,6 +105,8 @@ export interface ExploreOptions {
    */
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
+  /** Wins over `MTAI_EGRESS_PROXY`. Required for a public signed-in target. */
+  egressProxy?: string;
 }
 
 export async function explore(
@@ -154,6 +156,7 @@ async function exploreScoped(
   const launch = await launchFencedBrowser({
     headless,
     policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
+    ...(opts.egressProxy !== undefined ? { egressProxy: opts.egressProxy } : {}),
   });
   if (!launch.ok) {
     const detail = launch.detail;
@@ -168,7 +171,7 @@ async function exploreScoped(
       ...(opts.authOrigin ? {
         auth: publicMetadata({
           mode: 'session',
-          outcome: 'target_rejected',
+          outcome: launch.outcome,
           policy: opts.authOrigin,
           custody: 'in-memory',
           detail,

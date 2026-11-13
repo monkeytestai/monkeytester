@@ -582,7 +582,8 @@ export type OutcomeReason =
   | 'auth_rejected'
   | 'auth_not_authorized'
   | 'auth_target_rejected'
-  | 'auth_storage_unsafe';
+  | 'auth_storage_unsafe'
+  | 'auth_egress_proxy_required';
 
 /**
  * Phase 3 signup result. Reserved in 0.7.0-beta.1 and left unset.

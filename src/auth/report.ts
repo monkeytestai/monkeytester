@@ -35,6 +35,10 @@ const DETAILS: Record<Exclude<AuthOutcome, 'authenticated'>, { reason: OutcomeRe
     reason: 'auth_storage_unsafe',
     detail: 'Our test couldn\'t complete the run because the sign-in response put the password into browser storage. That session was discarded and was not saved. This is not a verified run.',
   },
+  egress_proxy_required: {
+    reason: 'auth_egress_proxy_required',
+    detail: 'Our test couldn\'t complete the run because hosted sign-in has no egress proxy. Nothing was opened. Set egressProxy or MTAI_EGRESS_PROXY. This is not a verified run.',
+  },
 };
 
 export function authStatus(outcome: AuthOutcome): AuthStatus {
@@ -47,6 +51,7 @@ export function authStatus(outcome: AuthOutcome): AuthStatus {
     case 'not_authorized': return 'auth_required';
     case 'credentials_rejected': return 'credentials_rejected';
     case 'storage_unsafe': return 'storage_unsafe';
+    case 'egress_proxy_required': return 'egress_proxy_required';
   }
 }
 
