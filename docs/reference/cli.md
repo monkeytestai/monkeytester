@@ -29,6 +29,8 @@ The binary ships in `@monkeytestai/monkeytester`. From a clone it is `node dist/
 | `diff <a> <b>` | Fingerprint diff. `latest` and `prev` are shortcuts. |
 | `report [runId]` | Prints a stored run. Defaults to `latest`. |
 | `open [runId]` | Unreleased in this tree. Prints the run file and local screenshot / WebM paths. Not in the published npm dist-tags. Does not fetch the site. |
+| `auth login <url>` | Headed local sign-in. Saves `auth/session.json`. Not uploaded. |
+| `auth logout --delete` | Deletes that file. Does not sign the website out. |
 | `help [command]` | Top-level or per-command help. |
 | `version` | Prints `monkeytester@<version>`. |
 

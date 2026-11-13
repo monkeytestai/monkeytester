@@ -27,6 +27,7 @@ import { buildSignupFlows } from '../signup/plan.js';
 import { humanStepLabel } from '../trace/stepLabel.js';
 import { plansCompleteSignup } from '../signup/detect.js';
 import { plansDisallowedSensitiveSubmit } from '../runner/sensitive.js';
+import { MODEL_CREDENTIAL_RULE, signedInPlanRules } from '../auth/contract.js';
 import { BASIC_PRESET, type PlanFocus } from '../depth.js';
 
 export interface PlannerOptions {
@@ -34,6 +35,8 @@ export interface PlannerOptions {
   maxFlows?: number;
   /** Include flows that require auth (the runner will surface them as "needs creds"). Default true. */
   includeAuthFlows?: boolean;
+  /** A customer session is already signed in. The prompt must not include secrets. */
+  signedIn?: boolean;
   /**
    * `forms-search-cta` is the Quick pass (`--depth basic`): keep a public
    * form, a search box, and primary buttons, and do not spend the budget on
@@ -138,6 +141,7 @@ Hard rules:
   - For each form journey, include a success check and an error or edge check (empty submit, invalid value, or a boundary) when the budget allows. Both use only crawled fields and the crawled submit control. Neither check is a completed account sign-up, password reset, OTP or magic-link send, newsletter subscribe, checkout, account deletion, or a contact, enquiry, feedback, support, quote, or get-in-touch message. Empty or invalid validation on those forms is allowed. Do not plan the final submit. The engine never sends a contact message.
   - severityIfFails = critical only if a real user cannot complete a core job (apply, pay, submit, checkout). Visual polish is minor.
   - Do NOT emit kind "auth_required". The engine adds sign-in checks itself. If every crawled page is an auth wall, return "flows": [].
+  - ${MODEL_CREDENTIAL_RULE}
 
 Each flow has the shape:
   {
@@ -198,7 +202,7 @@ Per-call constraints:
       : 'No inbox is configured. Do not plan a completed sign-up or account creation. The engine adds validation checks only (empty, invalid email, password mismatch) and will not create an account.'}
   - If a crawled page lists a public form under "forms:", the engine reserves one flow that starts on that page and submits that form when the flow budget is at least 1, even if every other flow is a shopping journey. Prefer a POST contact, help, support, or feedback form over a search box. Use only the scraped fields and submit label. Do not invent a form URL or a field the crawl did not list. A flow that merely says "submit" on that page does not replace the reserved one.
   - Scraped "controls:" are real buttons and links. The engine also keeps grounded flows for an enabled button, a link whose target was not crawled, and a disabled button when the budget allows. Do not invent a control that is not listed.
-${opts.focus === 'forms-search-cta' ? `  - This is a Quick pass. Bias the journeys to public forms, search, and primary calls to action. Do not spend a slot on a disabled control.\n` : ''}
+${opts.focus === 'forms-search-cta' ? `  - This is a Quick pass. Bias the journeys to public forms, search, and primary calls to action. Do not spend a slot on a disabled control.\n` : ''}${opts.signedIn ? `  - ${signedInPlanRules(true)}\n` : ''}
 Reply with JSON:
 {
   "flows": [ ... ],

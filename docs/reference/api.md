@@ -46,7 +46,7 @@ console.log(summariseDiff(diff));
 
 | Export | Role |
 | --- | --- |
-| `explore`, `plan`, `groundedTestPlan`, `runPlan` | The phases, if you drive them yourself |
+| `explore`, `plan`, `groundedTestPlan`, `runPlan` | The phases, if you drive them yourself. A raw `storageState` is fenced and is not proved again. `Monkey` and the CLI prove a saved session first. |
 | `triage`, `triagePolished` | Rule-based triage, and optional copy polish |
 | `createLLM`, `autoLLMConfig`, `detectProviderFromEnv` | Provider setup |
 | `CHEAP_FAST_MODEL`, `SMART_MODEL` | Default model ids |
@@ -54,6 +54,7 @@ console.log(summariseDiff(diff));
 | `createHttpInbox`, `loadInboxProvider` | Your inbox |
 | `EventBus`, `noopBus` | Live events. See [Events](/reference/events). |
 | `ENGINE_VERSION` | The string stored on `run.engine_version` |
+| `AUTH_PROVIDER_CONTRACT`, `createAuthProvider` | In-memory existing-account provider. See [Auth provider contract](/reference/auth-contract). |
 | `alignVerdict`, `deriveRunOutcome` | Outcome sentences. A model verdict is kept only when it agrees with the bug count. |
 
 `triage(run)` does not turn `failOn5xx` on by itself. `executeAndTriage` does, because it goes through `Monkey`.

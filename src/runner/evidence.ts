@@ -11,6 +11,7 @@
 import type { ConsoleMessage, Page, Request, Response } from 'playwright';
 import { isDifferentRegistrableDomain, scriptUrlFromError } from '../checks/party.js';
 import type { ConsoleErrorEvidence, NetworkFailureEvidence, Suggestion } from '../types.js';
+import { captureDisabled } from '../auth/redact.js';
 import type { ActionOutcome } from './actions.js';
 
 const ACTION_RESOURCE_TYPES = new Set(['document', 'xhr', 'fetch']);
@@ -33,6 +34,17 @@ export interface StepOracle {
   observation: string;
 }
 
+function stripEvidenceUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.search = '';
+    url.hash = '';
+    return url.href;
+  } catch {
+    return 'omitted while signed in';
+  }
+}
+
 export function attachStepEvidence(page: Page): StepEvidence {
   const state: StepEvidence = {
     stepIndex: 0,
@@ -43,17 +55,18 @@ export function attachStepEvidence(page: Page): StepEvidence {
 
   page.on('console', (msg: ConsoleMessage) => {
     if (msg.type() !== 'error' && msg.type() !== 'warning') return;
+    const quiet = captureDisabled(page);
     push(state.consoleByStep, state.stepIndex, {
-      message: msg.text().slice(0, 500),
+      message: quiet ? 'omitted while signed in' : msg.text().slice(0, 500),
       level: msg.type() === 'error' ? 'error' : 'warning',
-      url: msg.location()?.url,
-      lineNumber: msg.location()?.lineNumber,
+      ...(quiet ? {} : { url: msg.location()?.url, lineNumber: msg.location()?.lineNumber }),
     });
   });
 
   page.on('pageerror', (err: Error) => {
-    const message = (err?.message || String(err)).slice(0, 500);
-    const sourceUrl = scriptUrlFromError(err);
+    const quiet = captureDisabled(page);
+    const message = quiet ? 'omitted while signed in' : (err?.message || String(err)).slice(0, 500);
+    const sourceUrl = quiet ? undefined : scriptUrlFromError(err);
     push(state.pageErrorsByStep, state.stepIndex, sourceUrl ? { message, sourceUrl } : { message });
     push(state.consoleByStep, state.stepIndex, {
       message,
@@ -65,9 +78,9 @@ export function attachStepEvidence(page: Page): StepEvidence {
   page.on('requestfailed', (req: Request) => {
     if (req.url().startsWith('ws:') || req.url().startsWith('wss:')) return;
     push(state.networkByStep, state.stepIndex, {
-      url: req.url(),
+      url: captureDisabled(page) ? stripEvidenceUrl(req.url()) : req.url(),
       method: req.method(),
-      failureText: req.failure()?.errorText,
+      failureText: captureDisabled(page) ? 'omitted while signed in' : req.failure()?.errorText,
       resourceType: req.resourceType(),
     });
   });
@@ -78,7 +91,7 @@ export function attachStepEvidence(page: Page): StepEvidence {
     const documentMiss = status === 404 && resourceType === 'document';
     if (status < 500 && !documentMiss) return;
     push(state.networkByStep, state.stepIndex, {
-      url: res.url(),
+      url: captureDisabled(page) ? stripEvidenceUrl(res.url()) : res.url(),
       method: res.request().method(),
       status,
       resourceType,
