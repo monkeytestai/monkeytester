@@ -6,7 +6,7 @@
 
 import type { Browser, BrowserContext } from 'playwright';
 import type { AuthOriginPolicy, AuthStorageState } from './contract.js';
-import { browserHasPin, prepareEgress, type EgressPin } from './egress.js';
+import { browserHasPin, EgressProxyRequiredError, prepareEgress, proxyForBrowser, type EgressPin, type EgressProxy } from './egress.js';
 import { installSessionFence } from './fence.js';
 import { assertSessionBound } from './origins.js';
 import { attachedSecrets, rememberPageSecrets, secretNeedles } from './redact.js';
@@ -33,6 +33,10 @@ export interface FencedContextOptions {
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
   egressPin?: EgressPin;
+  /** Overrides the proxy remembered from `launchFencedBrowser`. */
+  proxy?: EgressProxy;
+  /** Test-only. Production callers leave certificate checks on. */
+  ignoreHTTPSErrors?: boolean;
   userAgent?: string;
   viewport?: { width: number; height: number };
   recordVideo?: { dir: string; size: { width: number; height: number } };
@@ -62,11 +66,15 @@ export async function openFencedContext(browser: Browser, opts: FencedContextOpt
     }
     pin = prepared.pin;
   }
+  const proxy = opts.proxy ?? proxyForBrowser(browser);
+  if (pin?.mode === 'hosted-public' && !proxy) throw new EgressProxyRequiredError();
   const context = await browser.newContext({
     ...(opts.userAgent ? { userAgent: opts.userAgent } : {}),
     ...(opts.viewport ? { viewport: opts.viewport } : {}),
     ...(!opts.storageState && opts.recordVideo ? { recordVideo: opts.recordVideo } : {}),
     ...(opts.storageState ? { serviceWorkers: 'block' as const } : {}),
+    ...(opts.ignoreHTTPSErrors ? { ignoreHTTPSErrors: true } : {}),
+    ...(proxy ? { proxy } : {}),
     ...extras,
   });
   if (opts.storageState && opts.authOrigin && pin) {

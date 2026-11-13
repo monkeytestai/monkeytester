@@ -27,6 +27,8 @@ export interface HostedCredentialsInput {
   postLoginUrl?: string;
   /** Selector that is visible only after sign-in. */
   postLoginSelector?: string;
+  /** Wins over `MTAI_EGRESS_PROXY`. Required for a public hosted target. */
+  egressProxy?: string;
 }
 
 export interface LocalSessionInput {
@@ -36,6 +38,8 @@ export interface LocalSessionInput {
   expiresAt: string;
   postLoginUrl?: string;
   postLoginSelector?: string;
+  /** Wins over `MTAI_EGRESS_PROXY`. Required for a public hosted target. */
+  egressProxy?: string;
 }
 
 export interface AuthProvider {
@@ -57,6 +61,7 @@ interface CopiedInput {
   username: string;
   password: string;
   storage?: AuthStorageState;
+  egressProxy?: string;
 }
 
 /** Copy the fields this provider needs. The original record is not retained. */
@@ -72,6 +77,7 @@ function copyInput(input: HostedCredentialsInput | LocalSessionInput | Record<st
     username: typeof source.username === 'string' ? source.username : '',
     password: typeof source.password === 'string' ? source.password : '',
     storage: copyStorage(source.storageState),
+    ...(typeof source.egressProxy === 'string' ? { egressProxy: source.egressProxy } : {}),
   };
 }
 
@@ -89,9 +95,11 @@ function buildProvider(copied: CopiedInput): AuthProvider {
   let username = copied.username;
   let password = copied.password;
   let storage = copied.storage;
+  const egressProxy = copied.egressProxy;
   copied.username = '';
   copied.password = '';
   copied.storage = undefined;
+  copied.egressProxy = undefined;
   let used = false;
   let released = false;
   const abort = new AbortController();
@@ -138,6 +146,7 @@ function buildProvider(copied: CopiedInput): AuthProvider {
           expiresAt,
           ...(postLoginUrl ? { postLoginUrl } : {}),
           ...(postLoginSelector ? { postLoginSelector } : {}),
+          ...(egressProxy !== undefined ? { egressProxy } : {}),
         });
       }
       if (mode !== 'hosted_credentials') {
@@ -159,6 +168,7 @@ function buildProvider(copied: CopiedInput): AuthProvider {
         custody: 'in-memory',
         ...(postLoginUrl ? { postLoginUrl } : {}),
         ...(postLoginSelector ? { postLoginSelector } : {}),
+        ...(egressProxy !== undefined ? { egressProxy } : {}),
       });
       if (abort.signal.aborted || released) {
         return fail('not_authorized', false, 'Our test couldn\'t complete the run because sign-in was cancelled. The session was not kept. This is not a verified run.');

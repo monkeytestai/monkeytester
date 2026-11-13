@@ -55,6 +55,9 @@ describe('AUTH_PROVIDER_CONTRACT', () => {
     expect(AUTH_PROVIDER_ABI.allowSensitive).toBe('not-granted');
     expect(AUTH_PROVIDER_ABI.providerLoopback).toBe('rejected');
     expect(AUTH_PROVIDER_ABI.hostedDns).toBe('preflight-plus-per-request-recheck');
+    expect(AUTH_PROVIDER_ABI.hostedEgress).toBe('deny-nonpublic-recheck');
+    expect(AUTH_PROVIDER_ABI.hostedProxy).toBe('explicit-required');
+    expect(AUTH_PROVIDER_CONTRACT).toBe('monkeytester.auth.provider.v1');
     expect(AUTH_PROVIDER_ABI.runtimeSession).toBe('repeatable-until-close');
     expect(AUTH_PROVIDER_ABI.open).toBe('once');
     expect(JSON.stringify(AUTH_PROVIDER_ABI)).not.toContain('loopback-allowed');

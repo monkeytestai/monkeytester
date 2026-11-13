@@ -151,15 +151,14 @@ function patchPage(page: Page, policy: AuthOriginPolicy, pin: EgressPin, onRejec
 
   const originalSocket = page.routeWebSocket.bind(page);
   page.routeWebSocket = ((url, handler) => {
-    return originalSocket(url, ws => {
-      void (async () => {
-        if (!(await socketAllowed(ws.url(), policy, pin))) {
-          onReject?.();
-          ws.close();
-          return;
-        }
-        handler(ws);
-      })();
+    return originalSocket(url, async ws => {
+      if (!(await socketAllowed(ws.url(), policy, pin))) {
+        onReject?.();
+        // close() waits on the page, and the page is waiting on this handler.
+        void ws.close();
+        return;
+      }
+      await handler(ws);
     });
   }) as typeof page.routeWebSocket;
 }
@@ -208,15 +207,14 @@ async function installFence(
     await safeFulfill(route, policy, pin, onReject);
   });
 
-  await originalSocket(/.*/, ws => {
-    void (async () => {
-      if (!(await socketAllowed(ws.url(), policy, pin))) {
-        onReject?.();
-        ws.close();
-        return;
-      }
-      ws.connectToServer();
-    })();
+  await originalSocket(/.*/, async ws => {
+    if (!(await socketAllowed(ws.url(), policy, pin))) {
+      onReject?.();
+      // Awaiting close() deadlocks: the page is blocked in this handler.
+      void ws.close();
+      return;
+    }
+    ws.connectToServer();
   });
 }
 

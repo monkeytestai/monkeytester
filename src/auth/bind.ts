@@ -21,6 +21,8 @@ export interface AuthBindInput {
   postLoginUrl?: string;
   /** Selector that is visible only after sign-in. */
   postLoginSelector?: string;
+  /** Wins over `MTAI_EGRESS_PROXY`. Required when the target is a public host. */
+  egressProxy?: string;
 }
 
 export async function bindAuthProvider(input: AuthBindInput): Promise<AuthResult> {
@@ -132,18 +134,20 @@ export async function bindAuthProvider(input: AuthBindInput): Promise<AuthResult
     storageState: input.storageState,
     postLoginUrl: input.postLoginUrl,
     postLoginSelector: input.postLoginSelector,
+    ...(input.egressProxy !== undefined ? { egressProxy: input.egressProxy } : {}),
   });
-  if (!proved) {
+  if (!proved.ok) {
+    const setup = proved.outcome === 'egress_proxy_required' || proved.outcome === 'target_rejected';
     return {
       ok: false,
-      setup: false,
+      setup,
       metadata: publicMetadata({
         mode: 'session',
-        outcome: 'credentials_rejected',
+        outcome: proved.outcome,
         policy,
         custody: 'in-memory',
         ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
-        detail: 'Our test couldn\'t complete the run because the target did not show the configured post-login URL or selector. The saved session was not applied. This is not a verified run.',
+        detail: proved.detail,
       }),
     };
   }

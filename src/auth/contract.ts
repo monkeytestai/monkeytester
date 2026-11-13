@@ -19,7 +19,8 @@ export type AuthOutcome =
   | 'credentials_rejected'
   | 'not_authorized'
   | 'target_rejected'
-  | 'storage_unsafe';
+  | 'storage_unsafe'
+  | 'egress_proxy_required';
 
 /**
  * Coarse status a host can switch on.
@@ -32,7 +33,8 @@ export type AuthStatus =
   | 'expired'
   | 'auth_required'
   | 'credentials_rejected'
-  | 'storage_unsafe';
+  | 'storage_unsafe'
+  | 'egress_proxy_required';
 
 export type AuthCustody = 'customer-local' | 'in-memory';
 
@@ -146,6 +148,11 @@ export const AUTH_PROVIDER_ABI = Object.freeze({
   providerLoopback: 'rejected' as const,
   hostedDns: 'preflight-plus-per-request-recheck' as const,
   hostedEgress: 'deny-nonpublic-recheck' as const,
+  /**
+   * A public hosted target requires `egressProxy` or `MTAI_EGRESS_PROXY`.
+   * Loopback CLI targets do not. Playwright's fetch ignores HTTPS_PROXY.
+   */
+  hostedProxy: 'explicit-required' as const,
   /** `RuntimeAuthProvider.open` may repeat until `close`. That is not `createAuthProvider`. */
   runtimeSession: 'repeatable-until-close' as const,
   hostedProduct: false as const,

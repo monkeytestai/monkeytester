@@ -150,6 +150,7 @@ function demoteTrace(step: TraceStep, failed: boolean): TraceStep {
 }
 
 const REASON_PRIORITY: OutcomeReason[] = [
+  'cancelled',
   'auth_expired',
   'auth_mfa_required',
   'auth_origin_rejected',
@@ -157,6 +158,7 @@ const REASON_PRIORITY: OutcomeReason[] = [
   'auth_not_authorized',
   'auth_target_rejected',
   'auth_storage_unsafe',
+  'auth_egress_proxy_required',
   'site_unreachable',
   'invalid_url',
   'blocked_by_bot_protection',
@@ -450,6 +452,8 @@ function runDetail(outcome: RunOutcome, reason: OutcomeReason | undefined, bugCo
       return 'Our test couldn\'t complete a journey because it had no outcome to verify. Steps running is not a pass.';
     case 'assertion_unverifiable':
       return 'Our test couldn\'t complete a journey because the expected outcome could not be checked on the page.';
+    case 'cancelled':
+      return 'The run was cancelled. The browser was closed and no further pages were opened. This is not a verified run.';
     case 'budget_exhausted':
       return 'Page checks were not run because the run finished its time budget. This is not a failure to confirm the page.';
     case 'contact_submit_blocked':
@@ -461,8 +465,21 @@ function runDetail(outcome: RunOutcome, reason: OutcomeReason | undefined, bugCo
   }
 }
 
+export const CANCELLED_DETAIL = 'The run was cancelled. The browser was closed and no further pages were opened. This is not a verified run.';
+
+/** A cancelled run stays `could_not_test`. Triage must not turn it into a pass. */
+export function withCancelledOutcome(run: RunResult): RunResult {
+  return {
+    ...run,
+    outcome: 'could_not_test',
+    outcome_reason: 'cancelled',
+    outcome_detail: CANCELLED_DETAIL,
+  };
+}
+
 function pickCouldNotTest(reasons: OutcomeReason[], ctx: OutcomeContext): OutcomeReason {
   const notes = ctx.notes || '';
+  if (reasons.includes('cancelled')) return 'cancelled';
   const authReason = reasons.find(reason => reason.startsWith('auth_'));
   if (authReason) return authReason;
   if (reasons.includes('invalid_url') || INVALID_URL.test(notes)) return 'invalid_url';
@@ -523,6 +540,9 @@ function applyLoginOnly(derived: DerivedOutcome, ctx: OutcomeContext, bugCount: 
 
 /** Bug count is the filtered list on `run.bugs`. */
 export function deriveRunOutcome(run: RunResult, ctx: OutcomeContext = {}): DerivedOutcome {
+  if (run.outcome_reason === 'cancelled') {
+    return { outcome: 'could_not_test', outcome_reason: 'cancelled', outcome_detail: run.outcome_detail || CANCELLED_DETAIL };
+  }
   const fromAuth = outcomeFromAuth(run.auth);
   if (fromAuth) return fromAuth;
   const bugCount = run.bugs.length;

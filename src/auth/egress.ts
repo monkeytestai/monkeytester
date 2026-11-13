@@ -16,6 +16,10 @@ import {
   isLoopbackHost,
   originAllowed,
 } from './origins.js';
+import { bypassForPin, HOSTED_PROXY_REQUIRED, resolveEgressProxy, type EgressProxy } from './proxy.js';
+
+export type { EgressProxy } from './proxy.js';
+export { describeEgressProxy, resolveEgressProxy } from './proxy.js';
 
 export interface EgressPin {
   mode: 'local-loopback' | 'hosted-public';
@@ -24,7 +28,20 @@ export interface EgressPin {
 }
 
 const pinnedBrowsers = new WeakSet<Browser>();
+const browserProxies = new WeakMap<Browser, EgressProxy>();
 let testLookup: ((hostname: string) => Promise<string[]>) | undefined;
+
+export class EgressProxyRequiredError extends Error {
+  readonly outcome = 'egress_proxy_required' as const;
+  constructor(message = HOSTED_PROXY_REQUIRED) {
+    super(message);
+    this.name = 'EgressProxyRequiredError';
+  }
+}
+
+export function proxyForBrowser(browser: Browser): EgressProxy | undefined {
+  return browserProxies.get(browser);
+}
 
 /** Tests inject a resolver. Production uses `dns.lookup` for every address. */
 export function setEgressLookupForTests(fn?: (hostname: string) => Promise<string[]>): void {
@@ -106,24 +123,48 @@ export function browserHasPin(browser: Browser): boolean {
 export async function launchFencedBrowser(opts: {
   headless?: boolean;
   policy?: AuthOriginPolicy;
+  /**
+   * Wins over `MTAI_EGRESS_PROXY`, including `''` (no proxy).
+   * Passed to Chromium and every context this launch opens.
+   */
+  egressProxy?: string;
 }): Promise<
-  | { ok: true; browser: Browser; pin?: EgressPin }
-  | { ok: false; detail: string }
+  | { ok: true; browser: Browser; pin?: EgressPin; proxy?: EgressProxy }
+  | { ok: false; detail: string; outcome: 'target_rejected' | 'egress_proxy_required' }
 > {
+  const resolved = resolveEgressProxy(opts.egressProxy);
+  if (!resolved.ok) return { ok: false, outcome: 'egress_proxy_required', detail: resolved.detail };
+  const proxyFor = (mode: 'hosted-public' | 'local-loopback'): EgressProxy | undefined => (
+    resolved.proxy ? { ...resolved.proxy, bypass: bypassForPin(mode) } : undefined
+  );
   if (!opts.policy) {
-    const browser = await chromium.launch({ headless: opts.headless !== false });
-    return { ok: true, browser };
+    const proxy = proxyFor('local-loopback');
+    const browser = await chromium.launch({
+      headless: opts.headless !== false,
+      ...(proxy ? { proxy } : {}),
+    });
+    if (proxy) browserProxies.set(browser, proxy);
+    return { ok: true, browser, ...(proxy ? { proxy } : {}) };
   }
   const prepared = await prepareEgress(opts.policy);
-  if (!prepared.ok) return prepared;
+  if (!prepared.ok) return { ok: false, outcome: 'target_rejected', detail: prepared.detail };
+  const proxy = proxyFor(prepared.pin.mode);
+  if (prepared.pin.mode === 'hosted-public' && !proxy) {
+    return { ok: false, outcome: 'egress_proxy_required', detail: HOSTED_PROXY_REQUIRED };
+  }
+  const launchProxy = proxy ? { proxy } : {};
   const browser = await chromium.launch({
     headless: opts.headless !== false,
+    ...launchProxy,
     args: [
-      ...prepared.launchArgs,
+      // A host-resolver rule dials the pinned address directly and skips the
+      // proxy. With a proxy, the hostname is sent to the proxy instead.
+      ...(resolved.proxy ? [] : prepared.launchArgs),
       '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
       '--webrtc-ip-handling-policy=disable_non_proxied_udp',
     ],
   });
   pinnedBrowsers.add(browser);
-  return { ok: true, browser, pin: prepared.pin };
+  if (proxy) browserProxies.set(browser, proxy);
+  return { ok: true, browser, pin: prepared.pin, ...(proxy ? { proxy } : {}) };
 }

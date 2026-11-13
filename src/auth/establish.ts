@@ -51,6 +51,8 @@ export async function establishFormAuth(input: {
   postLoginUrl?: string;
   /** Selector that exists only after a real sign-in. */
   postLoginSelector?: string;
+  /** Wins over `MTAI_EGRESS_PROXY`. Required for a public hosted target. */
+  egressProxy?: string;
 }): Promise<AuthResult> {
   const policyResult = policyFrom(input.targetUrl, input.idpOrigins ?? []);
   if (!policyResult.ok) {
@@ -73,9 +75,13 @@ export async function establishFormAuth(input: {
     return failure('form', 'not_authorized', policy, true, 'Sign-in is not treated as success without a post-login URL or selector on the target. Nothing was typed. This is not a verified run.');
   }
   return withSensitiveSinks(secrets, () => withLoginCaptureOff(async () => {
-    const launched = await launchFencedBrowser({ headless: input.headless !== false, policy });
+    const launched = await launchFencedBrowser({
+      headless: input.headless !== false,
+      policy,
+      ...(input.egressProxy !== undefined ? { egressProxy: input.egressProxy } : {}),
+    });
     if (!launched.ok) {
-      return failure('form', 'target_rejected', policy, true, launched.detail);
+      return failure('form', launched.outcome, policy, true, launched.detail);
     }
     const browser = launched.browser;
     const pin = launched.pin;
@@ -94,7 +100,11 @@ export async function establishFormAuth(input: {
       if (input.signal?.aborted) {
         return failure('form', 'not_authorized', policy, false, 'Our test couldn\'t complete the run because sign-in was cancelled. The session was not kept. This is not a verified run.');
       }
-      context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+      context = await browser.newContext({
+        viewport: { width: 1280, height: 800 },
+        serviceWorkers: 'block',
+        ...(launched.proxy ? { proxy: launched.proxy } : {}),
+      });
       await blockUnroutableEgress(context);
       await installLoginFence(context, policy, fence, pin);
       const page = await context.newPage();
@@ -164,6 +174,8 @@ export async function establishManualAuth(input: {
   timeoutMs?: number;
   postLoginUrl?: string;
   postLoginSelector?: string;
+  /** Wins over `MTAI_EGRESS_PROXY`. Required for a public hosted target. */
+  egressProxy?: string;
 }): Promise<AuthResult> {
   const policyResult = policyFrom(input.targetUrl, input.idpOrigins ?? []);
   if (!policyResult.ok) {
@@ -177,8 +189,12 @@ export async function establishManualAuth(input: {
     return failure('manual', 'not_authorized', policy, true, 'Sign-in is not treated as success without a post-login URL or selector on the target. Nothing was typed. This is not a verified run.');
   }
   return withLoginCaptureOff(async () => {
-    const launched = await launchFencedBrowser({ headless: input.headless === true, policy });
-    if (!launched.ok) return failure('manual', 'target_rejected', policy, true, launched.detail);
+    const launched = await launchFencedBrowser({
+      headless: input.headless === true,
+      policy,
+      ...(input.egressProxy !== undefined ? { egressProxy: input.egressProxy } : {}),
+    });
+    if (!launched.ok) return failure('manual', launched.outcome, policy, true, launched.detail);
     const browser = launched.browser;
     const pin = launched.pin;
     if (!pin) {
@@ -188,7 +204,11 @@ export async function establishManualAuth(input: {
     let context: BrowserContext | undefined;
     const fence: FenceState = { originRejected: false };
     try {
-      context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+      context = await browser.newContext({
+        viewport: { width: 1280, height: 800 },
+        serviceWorkers: 'block',
+        ...(launched.proxy ? { proxy: launched.proxy } : {}),
+      });
       await blockUnroutableEgress(context);
       await installLoginFence(context, policy, fence, pin);
       const page = await context.newPage();

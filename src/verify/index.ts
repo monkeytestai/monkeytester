@@ -113,6 +113,7 @@ export async function verifyBugs(run: RunResult, opts: VerifyOptions): Promise<V
     const launch = await launchFencedBrowser({
       headless: opts.headless ?? true,
       policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
+      ...(opts.egressProxy !== undefined ? { egressProxy: opts.egressProxy } : {}),
     });
     if (!launch.ok) {
       return {
@@ -123,7 +124,7 @@ export async function verifyBugs(run: RunResult, opts: VerifyOptions): Promise<V
         exitCode: 1,
         auth: publicMetadata({
           mode: 'session',
-          outcome: 'target_rejected',
+          outcome: launch.outcome,
           policy: opts.authOrigin ?? { targetOrigin: 'https://invalid.invalid', idpOrigins: [] },
           custody: 'in-memory',
           detail: launch.detail,
@@ -134,12 +135,16 @@ export async function verifyBugs(run: RunResult, opts: VerifyOptions): Promise<V
     egressPin = launch.pin ?? egressPin;
   }
   const ownsBrowser = needsBrowser && !opts.browser;
+  const stop = () => { void browser?.close().catch(() => {}); };
+  opts.signal?.addEventListener('abort', stop, { once: true });
 
   try {
     for (const bug of bugs){
+      if (opts.signal?.aborted) break;
       results.push(await verifyOne(run, bug, { ...opts, screenshotsDir, browser, egressPin }, repeat));
     }
   } finally {
+    opts.signal?.removeEventListener('abort', stop);
     if (ownsBrowser) await browser?.close().catch(() => {});
   }
 

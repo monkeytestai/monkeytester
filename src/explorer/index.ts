@@ -36,6 +36,7 @@ import { launchFencedBrowser } from '../auth/egress.js';
 import { originAllowed } from '../auth/origins.js';
 import { captureDisabled, redactValue, secretNeedles } from '../auth/redact.js';
 import { publicMetadata } from '../auth/report.js';
+import { CANCELLED_DETAIL } from '../outcome.js';
 import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
 import { basename } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -105,6 +106,10 @@ export interface ExploreOptions {
    */
   storageState?: AuthStorageState;
   authOrigin?: AuthOriginPolicy;
+  /** Wins over `MTAI_EGRESS_PROXY`. Required for a public signed-in target. */
+  egressProxy?: string;
+  /** Abort closes the browser and stops the crawl. The map is marked `cancelled`. */
+  signal?: AbortSignal;
 }
 
 export async function explore(
@@ -154,6 +159,7 @@ async function exploreScoped(
   const launch = await launchFencedBrowser({
     headless,
     policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
+    ...(opts.egressProxy !== undefined ? { egressProxy: opts.egressProxy } : {}),
   });
   if (!launch.ok) {
     const detail = launch.detail;
@@ -168,7 +174,7 @@ async function exploreScoped(
       ...(opts.authOrigin ? {
         auth: publicMetadata({
           mode: 'session',
-          outcome: 'target_rejected',
+          outcome: launch.outcome,
           policy: opts.authOrigin,
           custody: 'in-memory',
           detail,
@@ -177,6 +183,12 @@ async function exploreScoped(
     };
   }
   const browser: Browser = launch.browser;
+  if (opts.signal?.aborted) {
+    await browser.close().catch(() => {});
+    return cancelledMap(startUrl);
+  }
+  const stop = () => { void browser.close().catch(() => {}); };
+  opts.signal?.addEventListener('abort', stop, { once: true });
 
   try {
 
@@ -193,7 +205,13 @@ async function exploreScoped(
 
     // sitemap.xml and robots.txt are optional. A miss is not a failed page.
     // Seeds stay inside the page cap; auth URLs they name share AUTH_LINK_BUDGET.
-    const listed = await listedSiteUrls(context.request, startUrl, maxPages, opts.authOrigin);
+    const listed = await listedSiteUrls(context.request, startUrl, maxPages, opts.authOrigin).catch(err => {
+      if (opts.signal?.aborted) return [];
+      throw err;
+    });
+    if (opts.signal?.aborted) {
+      return redactValue(cancelledMap(startUrl), secretNeedles(opts.storageState));
+    }
     const room = Math.max(0, maxPages - queue.length);
     authUrlsQueued = enqueueLinks(
       queue,
@@ -203,7 +221,7 @@ async function exploreScoped(
       AUTH_LINK_BUDGET,
     );
 
-    while (queue.length > 0 && pages.length < maxPages){
+    while (queue.length > 0 && pages.length < maxPages && !opts.signal?.aborted){
 
       const index = pickNextCrawlUrl(queue, {
         pagesVisited: pages.length,
@@ -368,6 +386,7 @@ async function exploreScoped(
         }
 
       } catch (err) {
+        if (opts.signal?.aborted) break;
         const reason = err instanceof Error ? err.message : String(err);
         failures.push({ url: requestedUrl, reason });
         events.emit({
@@ -379,6 +398,16 @@ async function exploreScoped(
         await page.close().catch(() => {});
       }
 
+    }
+
+    if (opts.signal?.aborted) {
+      return redactValue({
+        ...cancelledMap(startUrl),
+        pages,
+        pagesExplored: pages.length,
+        pendingUrls: queue.map(item => item.url),
+        failedUrls: failures,
+      }, secretNeedles(opts.storageState));
     }
 
     const overall = await summariseSiteBestEffort(llm, startUrl, pages, (message, detail) => {
@@ -418,9 +447,22 @@ async function exploreScoped(
     }, secretNeedles(opts.storageState));
 
   } finally {
+    opts.signal?.removeEventListener('abort', stop);
     await browser.close().catch(() => {});
   }
 
+}
+
+function cancelledMap(startUrl: string): SiteMap {
+  return {
+    startUrl,
+    siteType: 'unknown',
+    summary: CANCELLED_DETAIL,
+    pages: [],
+    pendingUrls: [],
+    failedUrls: [],
+    cancelled: true,
+  };
 }
 
 /**

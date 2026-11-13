@@ -17,7 +17,7 @@ import { runPlan, type RunnerOptions } from './runner/index.js';
 import { replayTraces, type ReplayOptions } from './runner/replay.js';
 import { triage, triagePolished } from './triager/index.js';
 import { applyPlannerVerdict } from './planner/verdict.js';
-import { attachRunOutcome, countPublicScreens } from './outcome.js';
+import { attachRunOutcome, CANCELLED_DETAIL, countPublicScreens, withCancelledOutcome } from './outcome.js';
 import { BASIC_PRESET } from './depth.js';
 import { plannerBudgetMs } from './budget.js';
 import { verifyBugs, type VerifyOptions, type VerifyReport } from './verify/index.js';
@@ -92,6 +92,8 @@ export interface ExploreAndPlanOptions {
   events?: EventBus;
   /** In-memory session bound before explore and plan. Not read from a previous run. */
   auth?: AuthBindInput;
+  /** Abort closes the browser and stops explore. The run is `cancelled`. */
+  signal?: AbortSignal;
 }
 
 export interface ExecuteOptions extends ExploreAndPlanOptions {
@@ -114,6 +116,8 @@ export interface ExecuteFromPlanOptions {
   events?: EventBus;
   /** Fresh session for this rerun. A previous plan does not carry a jar. */
   auth?: AuthBindInput;
+  /** Abort closes the browser and stops the rerun. The run is `cancelled`. */
+  signal?: AbortSignal;
 }
 
 export class Monkey {
@@ -160,6 +164,9 @@ export class Monkey {
   ): Promise<{ siteMap: SiteMap; plan: TestPlan }> {
 
     const events = opts.events ?? noopBus();
+    if (opts.signal?.aborted) {
+      return { siteMap: cancelledSiteMap(startUrl), plan: cancelledPlan(startUrl) };
+    }
     const gate = await gateCustomerAuth(opts.auth);
     if (!gate.ok) {
       return {
@@ -168,7 +175,15 @@ export class Monkey {
       };
     }
 
-    const siteMap = await explore(startUrl, this.explorerLLM, { ...opts.explore, events, ...gate.browser });
+    const siteMap = await explore(startUrl, this.explorerLLM, {
+      ...opts.explore,
+      events,
+      signal: opts.signal ?? opts.explore?.signal,
+      ...gate.browser,
+    });
+    if (opts.signal?.aborted || siteMap.cancelled) {
+      return { siteMap, plan: cancelledPlan(startUrl) };
+    }
     const testPlan = await plan(siteMap, this.plannerLLM, {
       ...opts.plan,
       maxPages: opts.plan?.maxPages ?? opts.explore?.maxPages,
@@ -195,6 +210,9 @@ export class Monkey {
     const events = opts.events ?? noopBus();
     const budgetMs = opts.run.totalBudgetMs;
     const deadlineAt = opts.run.deadlineAt ?? (budgetMs ? Date.now() + budgetMs : undefined);
+    if (opts.signal?.aborted) {
+      return { siteMap: cancelledSiteMap(startUrl), plan: cancelledPlan(startUrl), run: withCancelledOutcome(emptyRun(startUrl)) };
+    }
     const gate = await gateCustomerAuth(opts.auth);
     if (!gate.ok) {
       const blockedPlan: TestPlan = {
@@ -206,9 +224,14 @@ export class Monkey {
     const siteMap = await explore(startUrl, this.explorerLLM, {
       ...opts.explore,
       events,
+      signal: opts.signal ?? opts.explore?.signal,
       pageTimeoutMs: opts.explore?.pageTimeoutMs ?? (budgetMs ? BASIC_PRESET.pageTimeoutMs : undefined),
       ...gate.browser,
     });
+    if (opts.signal?.aborted || siteMap.cancelled) {
+      const plan = cancelledPlan(startUrl);
+      return { siteMap, plan, run: withCancelledOutcome(emptyRun(startUrl)) };
+    }
     if (siteMap.auth && siteMap.auth.outcome !== 'authenticated') {
       const blockedPlan: TestPlan = {
         startUrl, siteType: 'unknown', flows: [], notes: siteMap.auth.detail, auth: siteMap.auth,
@@ -275,6 +298,7 @@ export class Monkey {
         ...opts.run,
         events,
         deadlineAt,
+        signal: opts.signal ?? opts.run.signal,
         inbox: opts.run.inbox ?? this.inbox,
         strictOracles: opts.run.strictOracles ?? this.strictOracles,
         failOn5xx: opts.run.failOn5xx ?? this.failOn5xx,
@@ -397,6 +421,7 @@ export class Monkey {
       rawRun = await runPlan(testPlan, this.runnerLLM, {
         ...opts.run,
         events,
+        signal: opts.signal ?? opts.run.signal,
         inbox: opts.run.inbox ?? this.inbox,
         strictOracles: opts.run.strictOracles ?? this.strictOracles,
         failOn5xx: opts.run.failOn5xx ?? this.failOn5xx,
@@ -520,6 +545,7 @@ export class Monkey {
     const pageEvents: MonkeyEvent[] = [];
     const siteMap = await explore(startUrl, this.explorerLLM, {
       ...opts.explore,
+      signal: opts.signal ?? opts.explore?.signal,
       onPage: (page) => {
         pageEvents.push({ type: 'explore.page', page });
       },
@@ -553,6 +579,22 @@ export class Monkey {
 
   }
 
+}
+
+function cancelledSiteMap(startUrl: string): SiteMap {
+  return {
+    startUrl,
+    siteType: 'unknown',
+    summary: CANCELLED_DETAIL,
+    pages: [],
+    pendingUrls: [],
+    failedUrls: [],
+    cancelled: true,
+  };
+}
+
+function cancelledPlan(startUrl: string): TestPlan {
+  return { startUrl, siteType: 'unknown', flows: [], notes: CANCELLED_DETAIL };
 }
 
 function emptyRun(startUrl: string): RunResult {
@@ -615,6 +657,7 @@ async function gateCustomerAuth(auth?: AuthBindInput): Promise<
     sessionExpiresAt?: string;
     postLoginUrl?: string;
     postLoginSelector?: string;
+    egressProxy?: string;
   } }
 > {
   if (!auth) return { ok: true, browser: {} };
@@ -629,6 +672,7 @@ async function gateCustomerAuth(auth?: AuthBindInput): Promise<
       ...(bound.metadata.expiresAt ? { sessionExpiresAt: bound.metadata.expiresAt } : {}),
       ...(auth.postLoginUrl ? { postLoginUrl: auth.postLoginUrl } : {}),
       ...(auth.postLoginSelector ? { postLoginSelector: auth.postLoginSelector } : {}),
+      ...(auth.egressProxy !== undefined ? { egressProxy: auth.egressProxy } : {}),
     },
   };
 }
