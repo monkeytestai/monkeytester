@@ -6,16 +6,29 @@
  */
 
 /**
- * Chromium's `<-loopback>` token is what the hosted review verified.
- * On Playwright 1.59 a context proxy still sends 127.0.0.1 through the
- * proxy when that token is the whole bypass list, so the loopback names
- * are listed too. Private and unique-local addresses are not bypassed.
+ * Hosted browsers use only this token.
+ * On Playwright 1.59.1 (this package's lockfile) and 1.64 (the hosted
+ * review), `<-loopback>` does not exempt 127.0.0.1, localhost, or ::1, so
+ * those requests reach the proxy. Naming the hosts sends them direct.
  */
-export const EGRESS_PROXY_BYPASS = '<-loopback>,localhost,127.0.0.1,::1,[::1]';
+export const HOSTED_EGRESS_PROXY_BYPASS = '<-loopback>' as const;
+
+/**
+ * Owned local targets, when a proxy is configured. The named hosts stay off
+ * the proxy so a loopback fixture still loads. Private and unique-local
+ * addresses are not in this list.
+ */
+export const LOCAL_EGRESS_PROXY_BYPASS = '<-loopback>,localhost,127.0.0.1,::1,[::1]' as const;
+
+export type EgressProxyBypass = typeof HOSTED_EGRESS_PROXY_BYPASS | typeof LOCAL_EGRESS_PROXY_BYPASS;
+
+export function bypassForPin(mode: 'hosted-public' | 'local-loopback'): EgressProxyBypass {
+  return mode === 'hosted-public' ? HOSTED_EGRESS_PROXY_BYPASS : LOCAL_EGRESS_PROXY_BYPASS;
+}
 
 export interface EgressProxy {
   server: string;
-  bypass: typeof EGRESS_PROXY_BYPASS;
+  bypass: EgressProxyBypass;
   username?: string;
   password?: string;
 }
@@ -59,7 +72,7 @@ export function parseEgressProxy(raw: string):
   const port = url.port ? `:${url.port}` : '';
   const proxy: EgressProxy = {
     server: `${url.protocol}//${host}${port}`,
-    bypass: EGRESS_PROXY_BYPASS,
+    bypass: LOCAL_EGRESS_PROXY_BYPASS,
     ...(username ? { username } : {}),
     ...(password ? { password } : {}),
   };

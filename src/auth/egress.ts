@@ -16,7 +16,7 @@ import {
   isLoopbackHost,
   originAllowed,
 } from './origins.js';
-import { HOSTED_PROXY_REQUIRED, resolveEgressProxy, type EgressProxy } from './proxy.js';
+import { bypassForPin, HOSTED_PROXY_REQUIRED, resolveEgressProxy, type EgressProxy } from './proxy.js';
 
 export type { EgressProxy } from './proxy.js';
 export { describeEgressProxy, resolveEgressProxy } from './proxy.js';
@@ -134,17 +134,25 @@ export async function launchFencedBrowser(opts: {
 > {
   const resolved = resolveEgressProxy(opts.egressProxy);
   if (!resolved.ok) return { ok: false, outcome: 'egress_proxy_required', detail: resolved.detail };
-  const launchProxy = resolved.proxy ? { proxy: resolved.proxy } : {};
+  const proxyFor = (mode: 'hosted-public' | 'local-loopback'): EgressProxy | undefined => (
+    resolved.proxy ? { ...resolved.proxy, bypass: bypassForPin(mode) } : undefined
+  );
   if (!opts.policy) {
-    const browser = await chromium.launch({ headless: opts.headless !== false, ...launchProxy });
-    if (resolved.proxy) browserProxies.set(browser, resolved.proxy);
-    return { ok: true, browser, ...(resolved.proxy ? { proxy: resolved.proxy } : {}) };
+    const proxy = proxyFor('local-loopback');
+    const browser = await chromium.launch({
+      headless: opts.headless !== false,
+      ...(proxy ? { proxy } : {}),
+    });
+    if (proxy) browserProxies.set(browser, proxy);
+    return { ok: true, browser, ...(proxy ? { proxy } : {}) };
   }
   const prepared = await prepareEgress(opts.policy);
   if (!prepared.ok) return { ok: false, outcome: 'target_rejected', detail: prepared.detail };
-  if (prepared.pin.mode === 'hosted-public' && !resolved.proxy) {
+  const proxy = proxyFor(prepared.pin.mode);
+  if (prepared.pin.mode === 'hosted-public' && !proxy) {
     return { ok: false, outcome: 'egress_proxy_required', detail: HOSTED_PROXY_REQUIRED };
   }
+  const launchProxy = proxy ? { proxy } : {};
   const browser = await chromium.launch({
     headless: opts.headless !== false,
     ...launchProxy,
@@ -157,6 +165,6 @@ export async function launchFencedBrowser(opts: {
     ],
   });
   pinnedBrowsers.add(browser);
-  if (resolved.proxy) browserProxies.set(browser, resolved.proxy);
-  return { ok: true, browser, pin: prepared.pin, ...(resolved.proxy ? { proxy: resolved.proxy } : {}) };
+  if (proxy) browserProxies.set(browser, proxy);
+  return { ok: true, browser, pin: prepared.pin, ...(proxy ? { proxy } : {}) };
 }

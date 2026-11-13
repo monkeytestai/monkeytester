@@ -104,6 +104,7 @@ import { authBlockedRun, outcomeFromAuth, publicMetadata } from '../auth/report.
 import { observeSignedInPage, type SessionWatch } from '../auth/proof.js';
 import { launchFencedBrowser } from '../auth/egress.js';
 import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
+import { withCancelledOutcome } from '../outcome.js';
 
 export interface RunnerOptions {
   /**
@@ -182,6 +183,8 @@ export interface RunnerOptions {
    * Required when the signed-in target is a public host. Loopback does not need it.
    */
   egressProxy?: string;
+  /** Abort closes the browser and stops further flows. The run is `cancelled`. */
+  signal?: AbortSignal;
   /** Envelope expiry. Re-checked before each flow, not only at bind. */
   sessionExpiresAt?: string;
   postLoginUrl?: string;
@@ -288,6 +291,12 @@ async function runPlanScoped(
   }
   const browser = launch.browser;
   if (launch.pin) opts = { ...opts, egressPin: launch.pin };
+  const stop = () => { void browser.close().catch(() => {}); };
+  if (opts.signal?.aborted) {
+    await browser.close().catch(() => {});
+    return withCancelledOutcome(emptyCancelledRun(plan.startUrl, startedAt));
+  }
+  opts.signal?.addEventListener('abort', stop, { once: true });
 
   try {
 
@@ -340,6 +349,7 @@ async function runPlanScoped(
     }
 
     for (let fi = 0; fi < plan.flows.length; fi++){
+      if (opts.signal?.aborted) break;
       if (envelopeClosed()) {
         envelopeExpired = true;
         break;
@@ -380,6 +390,8 @@ async function runPlanScoped(
 
       const flowStarted = Date.now();
       const abort = new AbortController();
+      const onUserAbort = () => abort.abort();
+      opts.signal?.addEventListener('abort', onUserAbort, { once: true });
       // Firing the guard aborts the context immediately; cancel() after the
       // race clears the timer so a finished flow cannot reject later.
       const inboxSignup = isSignupFlowId(flow.id) && flow.steps.some(step => step.signupCheck === 'inbox_verify');
@@ -413,6 +425,7 @@ async function runPlanScoped(
           };
         }
       } finally {
+        opts.signal?.removeEventListener('abort', onUserAbort);
         timeout.cancel();
       }
 
@@ -432,7 +445,10 @@ async function runPlanScoped(
 
     }
 
+  } catch (err) {
+    if (!opts.signal?.aborted) throw err;
   } finally {
+    opts.signal?.removeEventListener('abort', stop);
     await browser.close().catch(() => {});
   }
 
@@ -448,8 +464,23 @@ async function runPlanScoped(
     ...signupFields(signup),
     ...signedInRunFields(opts, { expired: envelopeExpired, lost: sessionWatch.lost, unproved: sessionWatch.unproved }),
   };
-  return result;
+  return opts.signal?.aborted ? withCancelledOutcome(result) : result;
 
+}
+
+function emptyCancelledRun(startUrl: string, startedAt: string): RunResult {
+  return {
+    startUrl,
+    startedAt,
+    finishedAt: startedAt,
+    flows: [],
+    bugs: [],
+    stats: {
+      flowsTotal: 0, flowsPassed: 0, flowsFailed: 0, flowsBlocked: 0, flowsInconclusive: 0,
+      stepsTotal: 0, stepsPassed: 0, stepsFailed: 0,
+      bugsCritical: 0, bugsMajor: 0, bugsMinor: 0,
+    },
+  };
 }
 
 /* ── Single-flow execution ────────────────────────────────────────────── */

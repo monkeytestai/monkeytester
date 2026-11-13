@@ -67,6 +67,7 @@ import {
 import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, setStepIntent, type SensitiveKind } from './sensitive.js';
 import { openFencedContext } from '../auth/browser.js';
 import { launchFencedBrowser, type EgressPin } from '../auth/egress.js';
+import { withCancelledOutcome } from '../outcome.js';
 import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
 import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
 import { authBlockedRun, outcomeFromAuth, publicMetadata } from '../auth/report.js';
@@ -128,6 +129,8 @@ export interface ReplayOptions {
   egressPin?: EgressPin;
   /** Wins over `MTAI_EGRESS_PROXY`. Required for a public signed-in target. */
   egressProxy?: string;
+  /** Abort closes the browser and stops further traces. The run is `cancelled`. */
+  signal?: AbortSignal;
   sessionExpiresAt?: string;
   postLoginUrl?: string;
   postLoginSelector?: string;
@@ -210,9 +213,23 @@ async function replayTracesScoped(
     browser = launch.browser;
     if (launch.pin) opts = { ...opts, egressPin: launch.pin };
   }
+  const stop = () => { void browser?.close().catch(() => {}); };
+  if (opts.signal?.aborted) {
+    await browser?.close().catch(() => {});
+    return withCancelledOutcome({
+      startUrl: traces[0]?.startUrl || '',
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      flows: [],
+      bugs: [],
+      stats: aggregate([]),
+    });
+  }
+  opts.signal?.addEventListener('abort', stop, { once: true });
   const signup = emptySignupLedger();
   try {
     for (const trace of traces){
+      if (opts.signal?.aborted) break;
       if (envelopeClosed()) {
         envelopeExpired = true;
         break;
@@ -221,10 +238,11 @@ async function replayTracesScoped(
       flows.push(await runOneTrace(browser, trace, { ...opts, screenshotsDir, signup }));
     }
   } finally {
+    opts.signal?.removeEventListener('abort', stop);
     if (owned) await browser.close().catch(() => {});
   }
 
-  return {
+  const result = {
     startUrl: traces[0]?.startUrl || '',
     startedAt,
     finishedAt: new Date().toISOString(),
@@ -234,6 +252,7 @@ async function replayTracesScoped(
     ...signupFields(signup),
     ...replayAuthFields(opts, { expired: envelopeExpired, lost: sessionWatch.lost, unproved: sessionWatch.unproved }),
   };
+  return opts.signal?.aborted ? withCancelledOutcome(result) : result;
 }
 
 function replayAuthFields(opts: ReplayOptions, watch: { expired: boolean; lost: boolean; unproved: boolean }): Partial<RunResult> {

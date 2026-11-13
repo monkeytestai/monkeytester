@@ -238,6 +238,11 @@ export interface SiteMap {
   pendingUrls: string[];
   /** Pages where the crawler hit auth walls / errors. */
   failedUrls: { url: string; reason: string }[];
+  /**
+   * The crawl stopped because `signal` aborted. The browser was closed.
+   * Omitted when the crawl finished. Additive.
+   */
+  cancelled?: true;
 }
 
 /* ── TestPlan (output of Planner) ─────────────────────────────────────── */
@@ -583,7 +588,12 @@ export type OutcomeReason =
   | 'auth_not_authorized'
   | 'auth_target_rejected'
   | 'auth_storage_unsafe'
-  | 'auth_egress_proxy_required';
+  | 'auth_egress_proxy_required'
+  /**
+   * The caller aborted the run. The browser was closed. Not a verified run.
+   * Additive. `outcome` stays `could_not_test`.
+   */
+  | 'cancelled';
 
 /**
  * Phase 3 signup result. Reserved in 0.7.0-beta.1 and left unset.

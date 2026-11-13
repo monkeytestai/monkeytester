@@ -16,7 +16,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createAuthProvider, runPlan } from '../src/index.js';
 import { launchFencedBrowser, proxyForBrowser, setEgressLookupForTests } from '../src/auth/egress.js';
 import { openFencedContext } from '../src/auth/browser.js';
-import { describeEgressProxy, EGRESS_PROXY_BYPASS, resolveEgressProxy } from '../src/auth/proxy.js';
+import { createRequire } from 'node:module';
+import { describeEgressProxy, HOSTED_EGRESS_PROXY_BYPASS, LOCAL_EGRESS_PROXY_BYPASS, resolveEgressProxy } from '../src/auth/proxy.js';
+
+const playwrightVersion = createRequire(import.meta.url)('playwright/package.json').version as string;
 import type { AuthStorageState } from '../src/auth/contract.js';
 import type { LLM } from '../src/llm/index.js';
 import type { TestPlan } from '../src/types.js';
@@ -68,8 +71,8 @@ describe('egress proxy configuration', () => {
     expect(chosen.ok).toBe(true);
     if (!chosen.ok) return;
     expect(chosen.proxy?.server).toBe('http://127.0.0.1:9');
-    expect(chosen.proxy?.bypass).toBe(EGRESS_PROXY_BYPASS);
-    expect(chosen.proxy?.bypass.startsWith('<-loopback>')).toBe(true);
+    expect(chosen.proxy?.bypass).toBe(LOCAL_EGRESS_PROXY_BYPASS);
+    expect(playwrightVersion).toBe('1.59.1');
     expect(chosen.proxy?.username).toBe(USER);
     expect(chosen.proxy?.password).toBe(SECRET);
     expect(describeEgressProxy(chosen.proxy!)).toBe('http://127.0.0.1:9');
@@ -319,7 +322,7 @@ describe('proxied hosted egress', () => {
       expect(launched.ok).toBe(true);
       if (!launched.ok) return;
       expect(launched.proxy?.server).toBe(`http://127.0.0.1:${proxyPort}`);
-      expect(launched.proxy?.bypass).toBe(EGRESS_PROXY_BYPASS);
+      expect(launched.proxy?.bypass).toBe(HOSTED_EGRESS_PROXY_BYPASS);
       expect(proxyForBrowser(launched.browser)?.server).not.toContain(SECRET);
       const context = await openFencedContext(launched.browser, {
         storageState: jar,
@@ -407,6 +410,80 @@ describe('proxied hosted egress', () => {
       removeAddress();
     }
   }, 30_000);
+
+  it('proxies hosted loopback instead of dialing it', async () => {
+    // Lockfile is Playwright 1.59.1. A 1.64 review saw the same split:
+    // '<-loopback>' proxies loopback; naming the hosts sends them direct.
+    expect(playwrightVersion).toBe('1.59.1');
+    let canaryHits = 0;
+    const accept = (socket: { destroy: () => void }) => {
+      canaryHits += 1;
+      socket.destroy();
+    };
+    const v4 = createNet(accept);
+    const port = await listen(v4, '127.0.0.1');
+    const v6 = createNet(accept);
+    await listen(v6, '::1', port);
+    const seen: string[] = [];
+    const proxy = createHttp((req, res) => {
+      seen.push(`${req.method || 'GET'} ${req.url || ''}`);
+      res.writeHead(403);
+      res.end();
+    });
+    proxy.on('connect', (req, socket) => {
+      seen.push(`CONNECT ${req.url || ''}`);
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      socket.end();
+    });
+    const proxyPort = await listen(proxy, '127.0.0.1');
+    const targets = [
+      `http://127.0.0.1:${port}/hit`,
+      `http://localhost:${port}/hit`,
+      `http://[::1]:${port}/hit`,
+    ];
+    const launched = await launchFencedBrowser({
+      headless: true,
+      policy: { targetOrigin: `https://${PUBLIC_PIN}`, idpOrigins: [] },
+      egressProxy: `http://127.0.0.1:${proxyPort}`,
+    });
+    expect(launched.ok).toBe(true);
+    if (!launched.ok) return;
+    expect(launched.proxy?.bypass).toBe(HOSTED_EGRESS_PROXY_BYPASS);
+    const context = await openFencedContext(launched.browser, { ignoreHTTPSErrors: true });
+    try {
+      const page = await context.newPage();
+      page.setDefaultTimeout(8_000);
+      for (const url of targets) {
+        const before = seen.length;
+        const response = await page.goto(url, { waitUntil: 'commit', timeout: 8_000 });
+        expect(response?.status(), url).toBe(403);
+        expect(seen.length, `goto ${url}`).toBeGreaterThan(before);
+        const apiBefore = seen.length;
+        const api = await context.request.get(url, { timeout: 8_000 });
+        expect(api.status(), `request ${url}`).toBe(403);
+        expect(seen.length, `request ${url}`).toBeGreaterThan(apiBefore);
+        let fetched = 0;
+        await page.route('**/*', async route => {
+          const proxied = await route.fetch();
+          fetched = proxied.status();
+          await route.fulfill({ response: proxied }).catch(() => {});
+        });
+        const fetchBefore = seen.length;
+        await page.goto(url, { waitUntil: 'commit', timeout: 8_000 });
+        expect(fetched, `route.fetch ${url}`).toBe(403);
+        expect(seen.length, `route.fetch ${url}`).toBeGreaterThan(fetchBefore);
+        await page.unroute('**/*');
+      }
+      expect(canaryHits).toBe(0);
+    } finally {
+      void context.close().catch(() => {});
+      void launched.browser.close().catch(() => {});
+      for (const server of [proxy, v4, v6]) {
+        server.closeAllConnections?.();
+        server.close();
+      }
+    }
+  }, 40_000);
 
   it('keeps a loopback target off the proxy', async () => {
     silenceDebug();
