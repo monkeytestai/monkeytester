@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2-beta.5] — 2026-11-17
+
 ### Fixed
 - GitHub Actions jobs that install Playwright or run tests use `ubuntu-24.04`. Playwright 1.59.1 cannot install Chromium on the current `ubuntu-latest` image (Ubuntu 26.04).
 
