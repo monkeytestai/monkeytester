@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 /**
  * Explicit egress proxy for Playwright.
  * `route.fetch` and `context.request` ignore HTTPS_PROXY. They use the
@@ -82,4 +84,41 @@ export function parseEgressProxy(raw: string):
 /** Host and port only. Safe to put in an error or a log line. */
 export function describeEgressProxy(proxy: EgressProxy): string {
   return proxy.server;
+}
+
+/**
+ * Exact warning text. No URL, credential, cookie, or proxy secret belongs in it.
+ * Logged once per `withHostedEgressNotice` scope, otherwise once per launch.
+ */
+export const UNPROXIED_HOSTED_WARNING =
+  'hosted auth running WITHOUT egress proxy (MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY): network egress is not isolated';
+
+export const UNPROXIED_HOSTED_EGRESS = 'unproxied-opt-in' as const;
+
+const unproxiedScope = new AsyncLocalStorage<{ warned: boolean }>();
+
+/** One warning for a pipeline that launches more than one hosted browser. */
+export function withHostedEgressNotice<T>(fn: () => Promise<T>): Promise<T> {
+  return unproxiedScope.run({ warned: false }, fn);
+}
+
+export function warnUnproxiedHostedOnce(): void {
+  const scope = unproxiedScope.getStore();
+  if (scope?.warned) return;
+  if (scope) scope.warned = true;
+  console.warn(`[monkeytester] ${UNPROXIED_HOSTED_WARNING}`);
+}
+
+/**
+ * `explicit` wins, including `false`. Otherwise only the exact env values
+ * `true` and `1` (case-insensitive, trimmed) opt in.
+ */
+export function resolveAllowHostedAuthWithoutProxy(explicit?: boolean): boolean {
+  if (explicit !== undefined) return explicit === true;
+  const raw = (process.env.MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY ?? '').trim().toLowerCase();
+  return raw === 'true' || raw === '1';
+}
+
+export function hostedAuthOptIn(explicit?: boolean): { allowHostedAuthWithoutProxy?: boolean } {
+  return explicit !== undefined ? { allowHostedAuthWithoutProxy: explicit } : {};
 }

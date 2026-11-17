@@ -29,6 +29,8 @@ export interface HostedCredentialsInput {
   postLoginSelector?: string;
   /** Wins over `MTAI_EGRESS_PROXY`. Required for a public hosted target. */
   egressProxy?: string;
+  /** Wins over `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY`, including `false`. Ignored when a proxy is set. */
+  allowHostedAuthWithoutProxy?: boolean;
 }
 
 export interface LocalSessionInput {
@@ -40,6 +42,8 @@ export interface LocalSessionInput {
   postLoginSelector?: string;
   /** Wins over `MTAI_EGRESS_PROXY`. Required for a public hosted target. */
   egressProxy?: string;
+  /** Wins over `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY`, including `false`. Ignored when a proxy is set. */
+  allowHostedAuthWithoutProxy?: boolean;
 }
 
 export interface AuthProvider {
@@ -62,6 +66,7 @@ interface CopiedInput {
   password: string;
   storage?: AuthStorageState;
   egressProxy?: string;
+  allowHostedAuthWithoutProxy?: boolean;
 }
 
 /** Copy the fields this provider needs. The original record is not retained. */
@@ -78,6 +83,9 @@ function copyInput(input: HostedCredentialsInput | LocalSessionInput | Record<st
     password: typeof source.password === 'string' ? source.password : '',
     storage: copyStorage(source.storageState),
     ...(typeof source.egressProxy === 'string' ? { egressProxy: source.egressProxy } : {}),
+    ...(source.allowHostedAuthWithoutProxy === true || source.allowHostedAuthWithoutProxy === false
+      ? { allowHostedAuthWithoutProxy: source.allowHostedAuthWithoutProxy === true }
+      : {}),
   };
 }
 
@@ -96,6 +104,7 @@ function buildProvider(copied: CopiedInput): AuthProvider {
   let password = copied.password;
   let storage = copied.storage;
   const egressProxy = copied.egressProxy;
+  const allowHostedAuthWithoutProxy = copied.allowHostedAuthWithoutProxy;
   copied.username = '';
   copied.password = '';
   copied.storage = undefined;
@@ -147,6 +156,7 @@ function buildProvider(copied: CopiedInput): AuthProvider {
           ...(postLoginUrl ? { postLoginUrl } : {}),
           ...(postLoginSelector ? { postLoginSelector } : {}),
           ...(egressProxy !== undefined ? { egressProxy } : {}),
+          ...(allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy } : {}),
         });
       }
       if (mode !== 'hosted_credentials') {
@@ -169,6 +179,7 @@ function buildProvider(copied: CopiedInput): AuthProvider {
         ...(postLoginUrl ? { postLoginUrl } : {}),
         ...(postLoginSelector ? { postLoginSelector } : {}),
         ...(egressProxy !== undefined ? { egressProxy } : {}),
+        ...(allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy } : {}),
       });
       if (abort.signal.aborted || released) {
         return fail('not_authorized', false, 'Our test couldn\'t complete the run because sign-in was cancelled. The session was not kept. This is not a verified run.');

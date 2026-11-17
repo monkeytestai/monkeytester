@@ -114,6 +114,7 @@ export async function verifyBugs(run: RunResult, opts: VerifyOptions): Promise<V
       headless: opts.headless ?? true,
       policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
       ...(opts.egressProxy !== undefined ? { egressProxy: opts.egressProxy } : {}),
+      ...(opts.allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy: opts.allowHostedAuthWithoutProxy } : {}),
     });
     if (!launch.ok) {
       return {

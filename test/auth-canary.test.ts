@@ -14,6 +14,8 @@ import type { LLM } from '../src/llm/index.js';
 import { saveRun } from '../src/persistence/index.js';
 import { runPlan } from '../src/runner/index.js';
 import { createMemorySecretProvider, establishFormAuth } from '../src/index.js';
+import { UNPROXIED_HOSTED_EGRESS, UNPROXIED_HOSTED_WARNING } from '../src/auth/proxy.js';
+import type { AuthStorageState } from '../src/auth/contract.js';
 import type { TestPlan } from '../src/types.js';
 
 const USER = 'canary-user-9f3a7c2e1b@example.test';
@@ -191,4 +193,105 @@ describe('canary credentials stay out of sinks', () => {
       process.stderr.write = stderr;
     }
   });
+
+  it('scrubs canaries when hosted auth runs without a proxy', async () => {
+    delete process.env.MTAI_EGRESS_PROXY;
+    delete process.env.MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY;
+    const notes: string[] = [];
+    const output: string[] = [];
+    const events: string[] = [];
+    const prompts: string[] = [];
+    const origWarn = console.warn;
+    console.warn = ((message?: unknown, ...rest: unknown[]) => {
+      notes.push([message, ...rest].map(item => String(item)).join(' '));
+      origWarn(message, ...rest);
+    }) as typeof console.warn;
+    const stdout = process.stdout.write.bind(process.stdout);
+    const stderr = process.stderr.write.bind(process.stderr);
+    const push = (chunk: string | Uint8Array) => {
+      output.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+    };
+    process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
+      push(chunk);
+      return stdout(chunk, encoding as BufferEncoding, cb);
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
+      push(chunk);
+      return stderr(chunk, encoding as BufferEncoding, cb);
+    }) as typeof process.stderr.write;
+    const bus = new EventBus();
+    bus.on(event => { events.push(JSON.stringify(event)); });
+    const llm = {
+      providerLabel: 'stub',
+      async generateJSON(opts: { prompt: string; system?: string; cacheable?: string }) {
+        prompts.push(`${opts.system || ''}\n${opts.cacheable || ''}\n${opts.prompt}`);
+        return { tool: 'noop', target: 'page', rationale: 'stay' };
+      },
+    } as LLM;
+    const hosted = 'https://93.184.216.34';
+    const jar: AuthStorageState = {
+      cookies: [{
+        name: 'session', value: COOKIE, domain: '93.184.216.34', path: '/',
+        expires: Math.floor(Date.now() / 1000) + 3600, httpOnly: true, secure: true, sameSite: 'Lax',
+      }],
+      origins: [{
+        origin: hosted,
+        localStorage: [
+          { name: 'user', value: USER },
+          { name: 'pw', value: PASSWORD },
+          { name: 'rotated', value: ROTATED },
+        ],
+      }],
+    };
+    const dir = mkdtempSync(join(tmpdir(), 'mt-canary-unproxied-'));
+    try {
+      const plan: TestPlan = {
+        startUrl: `${origin}/app`,
+        siteType: 'app',
+        flows: [{
+          id: 'visit',
+          name: 'Visit',
+          description: 'open',
+          kind: 'happy_path',
+          startUrl: `${origin}/app`,
+          steps: [{ action: 'Look at the signed-in page' }],
+          expectation: 'The ready marker is visible',
+          severityIfFails: 'minor',
+        }],
+      };
+      const run = await runPlan(plan, llm, {
+        screenshotsDir: join(dir, 'shots'),
+        headless: true,
+        recordVideo: false,
+        storageState: jar,
+        authOrigin: { targetOrigin: hosted, idpOrigins: [] },
+        allowHostedAuthWithoutProxy: true,
+        stepTimeoutMs: 8_000,
+        events: bus,
+      });
+      saveRun(run, { dir, engine: 'canary-unproxied' });
+      const files = readdirSync(dir, { recursive: true }).flatMap(entry => {
+        const path = join(dir, String(entry));
+        return statSync(path).isFile() ? [readFileSync(path, 'utf8')] : [];
+      });
+      const blob = [
+        JSON.stringify(run),
+        notes.join('\n'),
+        prompts.join('\n'),
+        events.join('\n'),
+        output.join('\n'),
+        files.join('\n'),
+      ].join('\n');
+      expect(leakKind(blob)).toBeUndefined();
+      expect(run.hostedEgress).toBe(UNPROXIED_HOSTED_EGRESS);
+      expect(run.warnings).toEqual([UNPROXIED_HOSTED_WARNING]);
+      expect(notes.filter(line => line.includes(UNPROXIED_HOSTED_WARNING))).toEqual([
+        `[monkeytester] ${UNPROXIED_HOSTED_WARNING}`,
+      ]);
+    } finally {
+      console.warn = origWarn;
+      process.stdout.write = stdout;
+      process.stderr.write = stderr;
+    }
+  }, 30_000);
 });

@@ -23,6 +23,8 @@ export interface AuthBindInput {
   postLoginSelector?: string;
   /** Wins over `MTAI_EGRESS_PROXY`. Required when the target is a public host. */
   egressProxy?: string;
+  /** Wins over `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY`, including `false`. Ignored when a proxy is set. */
+  allowHostedAuthWithoutProxy?: boolean;
 }
 
 export async function bindAuthProvider(input: AuthBindInput): Promise<AuthResult> {
@@ -135,6 +137,7 @@ export async function bindAuthProvider(input: AuthBindInput): Promise<AuthResult
     postLoginUrl: input.postLoginUrl,
     postLoginSelector: input.postLoginSelector,
     ...(input.egressProxy !== undefined ? { egressProxy: input.egressProxy } : {}),
+    ...(input.allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy: input.allowHostedAuthWithoutProxy } : {}),
   });
   if (!proved.ok) {
     const setup = proved.outcome === 'egress_proxy_required' || proved.outcome === 'target_rejected';
