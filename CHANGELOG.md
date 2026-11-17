@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- GitHub Actions jobs that install Playwright or run tests use `ubuntu-24.04`. Playwright 1.59.1 cannot install Chromium on the current `ubuntu-latest` image (Ubuntu 26.04).
+
 ### Added
 - Opt out of the hosted egress proxy with `allowHostedAuthWithoutProxy: true` or `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY=true` (also `1`, case-insensitive). The option wins, including `false`. Without the opt-in, hosted mode with no proxy still fails closed. When the opt-in is used and no proxy is set, the browser launches without a proxy, the other hosted checks stay on, and the run warns once: `hosted auth running WITHOUT egress proxy (MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY): network egress is not isolated`. The run report sets `hostedEgress` to `unproxied-opt-in` and repeats that sentence in `warnings`. A configured proxy ignores the opt-in.
 
