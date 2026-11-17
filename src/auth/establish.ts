@@ -53,6 +53,8 @@ export async function establishFormAuth(input: {
   postLoginSelector?: string;
   /** Wins over `MTAI_EGRESS_PROXY`. Required for a public hosted target. */
   egressProxy?: string;
+  /** Wins over `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY`, including `false`. Ignored when a proxy is set. */
+  allowHostedAuthWithoutProxy?: boolean;
 }): Promise<AuthResult> {
   const policyResult = policyFrom(input.targetUrl, input.idpOrigins ?? []);
   if (!policyResult.ok) {
@@ -79,6 +81,7 @@ export async function establishFormAuth(input: {
       headless: input.headless !== false,
       policy,
       ...(input.egressProxy !== undefined ? { egressProxy: input.egressProxy } : {}),
+      ...(input.allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy: input.allowHostedAuthWithoutProxy } : {}),
     });
     if (!launched.ok) {
       return failure('form', launched.outcome, policy, true, launched.detail);
@@ -176,6 +179,8 @@ export async function establishManualAuth(input: {
   postLoginSelector?: string;
   /** Wins over `MTAI_EGRESS_PROXY`. Required for a public hosted target. */
   egressProxy?: string;
+  /** Wins over `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY`, including `false`. Ignored when a proxy is set. */
+  allowHostedAuthWithoutProxy?: boolean;
 }): Promise<AuthResult> {
   const policyResult = policyFrom(input.targetUrl, input.idpOrigins ?? []);
   if (!policyResult.ok) {
@@ -193,6 +198,7 @@ export async function establishManualAuth(input: {
       headless: input.headless === true,
       policy,
       ...(input.egressProxy !== undefined ? { egressProxy: input.egressProxy } : {}),
+      ...(input.allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy: input.allowHostedAuthWithoutProxy } : {}),
     });
     if (!launched.ok) return failure('manual', launched.outcome, policy, true, launched.detail);
     const browser = launched.browser;

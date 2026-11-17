@@ -84,12 +84,14 @@ export async function proveStoredSession(input: {
   postLoginUrl?: string;
   postLoginSelector?: string;
   egressProxy?: string;
+  allowHostedAuthWithoutProxy?: boolean;
 }): Promise<{ ok: true } | { ok: false; outcome: 'target_rejected' | 'egress_proxy_required' | 'credentials_rejected'; detail: string }> {
   if (sessionAlreadyProved(input.storageState)) return { ok: true };
   const launched = await launchFencedBrowser({
     headless: true,
     policy: input.policy,
     ...(input.egressProxy !== undefined ? { egressProxy: input.egressProxy } : {}),
+    ...(input.allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy: input.allowHostedAuthWithoutProxy } : {}),
   });
   if (!launched.ok) return { ok: false, outcome: launched.outcome, detail: launched.detail };
   if (!launched.pin) {

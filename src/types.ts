@@ -243,6 +243,11 @@ export interface SiteMap {
    * Omitted when the crawl finished. Additive.
    */
   cancelled?: true;
+  /**
+   * Set when this crawl launched hosted auth with the unproxied opt-in.
+   * Omitted otherwise. Additive.
+   */
+  hostedEgress?: 'unproxied-opt-in';
 }
 
 /* ── TestPlan (output of Planner) ─────────────────────────────────────── */
@@ -755,6 +760,12 @@ export interface RunResult {
    * Includes explorer summary failures. Additive in 0.7.0-beta.4.
    */
   warnings?: string[];
+  /**
+   * Set when hosted auth ran with `allowHostedAuthWithoutProxy` or
+   * `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY` and no proxy was configured.
+   * Omitted when a proxy was used or the run was not hosted. Additive.
+   */
+  hostedEgress?: 'unproxied-opt-in';
   /** Public sign-in metadata. Absent on anonymous runs. Never a password or cookie jar. */
   auth?: AuthPublicMetadata;
 }

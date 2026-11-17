@@ -153,6 +153,12 @@ export const AUTH_PROVIDER_ABI = Object.freeze({
    * Loopback CLI targets do not. Playwright's fetch ignores HTTPS_PROXY.
    */
   hostedProxy: 'explicit-required' as const,
+  /**
+   * Callers may opt out with `allowHostedAuthWithoutProxy` or
+   * `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY`. `hostedProxy` stays
+   * `explicit-required` so existing readers keep that value.
+   */
+  hostedProxyOptOut: 'explicit' as const,
   /** `RuntimeAuthProvider.open` may repeat until `close`. That is not `createAuthProvider`. */
   runtimeSession: 'repeatable-until-close' as const,
   hostedProduct: false as const,

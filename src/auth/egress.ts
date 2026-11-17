@@ -16,7 +16,15 @@ import {
   isLoopbackHost,
   originAllowed,
 } from './origins.js';
-import { bypassForPin, HOSTED_PROXY_REQUIRED, resolveEgressProxy, type EgressProxy } from './proxy.js';
+import {
+  bypassForPin,
+  HOSTED_PROXY_REQUIRED,
+  resolveAllowHostedAuthWithoutProxy,
+  resolveEgressProxy,
+  UNPROXIED_HOSTED_EGRESS,
+  warnUnproxiedHostedOnce,
+  type EgressProxy,
+} from './proxy.js';
 
 export type { EgressProxy } from './proxy.js';
 export { describeEgressProxy, resolveEgressProxy } from './proxy.js';
@@ -28,6 +36,7 @@ export interface EgressPin {
 }
 
 const pinnedBrowsers = new WeakSet<Browser>();
+const unproxiedHostedBrowsers = new WeakSet<Browser>();
 const browserProxies = new WeakMap<Browser, EgressProxy>();
 let testLookup: ((hostname: string) => Promise<string[]>) | undefined;
 
@@ -41,6 +50,11 @@ export class EgressProxyRequiredError extends Error {
 
 export function proxyForBrowser(browser: Browser): EgressProxy | undefined {
   return browserProxies.get(browser);
+}
+
+/** Hosted launch that the caller opted out of proxying. Contexts may open with no proxy. */
+export function browserAllowsUnproxiedHosted(browser: Browser): boolean {
+  return unproxiedHostedBrowsers.has(browser);
 }
 
 /** Tests inject a resolver. Production uses `dns.lookup` for every address. */
@@ -128,8 +142,13 @@ export async function launchFencedBrowser(opts: {
    * Passed to Chromium and every context this launch opens.
    */
   egressProxy?: string;
+  /**
+   * Wins over `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY`, including `false`.
+   * Ignored when a proxy is configured.
+   */
+  allowHostedAuthWithoutProxy?: boolean;
 }): Promise<
-  | { ok: true; browser: Browser; pin?: EgressPin; proxy?: EgressProxy }
+  | { ok: true; browser: Browser; pin?: EgressPin; proxy?: EgressProxy; hostedEgress?: typeof UNPROXIED_HOSTED_EGRESS }
   | { ok: false; detail: string; outcome: 'target_rejected' | 'egress_proxy_required' }
 > {
   const resolved = resolveEgressProxy(opts.egressProxy);
@@ -149,9 +168,12 @@ export async function launchFencedBrowser(opts: {
   const prepared = await prepareEgress(opts.policy);
   if (!prepared.ok) return { ok: false, outcome: 'target_rejected', detail: prepared.detail };
   const proxy = proxyFor(prepared.pin.mode);
-  if (prepared.pin.mode === 'hosted-public' && !proxy) {
+  const unproxied = prepared.pin.mode === 'hosted-public' && !proxy
+    && resolveAllowHostedAuthWithoutProxy(opts.allowHostedAuthWithoutProxy);
+  if (prepared.pin.mode === 'hosted-public' && !proxy && !unproxied) {
     return { ok: false, outcome: 'egress_proxy_required', detail: HOSTED_PROXY_REQUIRED };
   }
+  if (unproxied) warnUnproxiedHostedOnce();
   const launchProxy = proxy ? { proxy } : {};
   const browser = await chromium.launch({
     headless: opts.headless !== false,
@@ -166,5 +188,12 @@ export async function launchFencedBrowser(opts: {
   });
   pinnedBrowsers.add(browser);
   if (proxy) browserProxies.set(browser, proxy);
-  return { ok: true, browser, pin: prepared.pin, ...(proxy ? { proxy } : {}) };
+  if (unproxied) unproxiedHostedBrowsers.add(browser);
+  return {
+    ok: true,
+    browser,
+    pin: prepared.pin,
+    ...(proxy ? { proxy } : {}),
+    ...(unproxied ? { hostedEgress: UNPROXIED_HOSTED_EGRESS } : {}),
+  };
 }

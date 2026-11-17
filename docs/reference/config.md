@@ -90,5 +90,7 @@ Depth presets are `resolveDepthPreset('basic' | 'standard' | 'deep' | 'shallow')
 | `PLAYWRIGHT_BROWSERS_PATH` | Chromium location |
 | `MONKEYTEST_INBOX_TOKEN` | Bearer token for `--inbox-http` |
 | `MONKEYTEST_DEBUG` | Stack traces |
+| `MTAI_EGRESS_PROXY` | Proxy URL for hosted sign-in. `egressProxy` on the call wins. |
+| `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY` | `true` or `1` (any case) lets hosted sign-in run with no proxy. `allowHostedAuthWithoutProxy` on the call wins, including `false`. Other values are ignored. |
 
 Sign-up configuration is [Sign-up testing](/guides/signup). `new Monkey({ inbox })` is the library form of `--inbox`.

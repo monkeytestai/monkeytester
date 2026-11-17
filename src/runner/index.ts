@@ -105,6 +105,7 @@ import { observeSignedInPage, type SessionWatch } from '../auth/proof.js';
 import { launchFencedBrowser } from '../auth/egress.js';
 import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
 import { withCancelledOutcome } from '../outcome.js';
+import { UNPROXIED_HOSTED_EGRESS, UNPROXIED_HOSTED_WARNING } from '../auth/proxy.js';
 
 export interface RunnerOptions {
   /**
@@ -183,6 +184,8 @@ export interface RunnerOptions {
    * Required when the signed-in target is a public host. Loopback does not need it.
    */
   egressProxy?: string;
+  /** Wins over `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY`, including `false`. Ignored when a proxy is set. */
+  allowHostedAuthWithoutProxy?: boolean;
   /** Abort closes the browser and stops further flows. The run is `cancelled`. */
   signal?: AbortSignal;
   /** Envelope expiry. Re-checked before each flow, not only at bind. */
@@ -279,6 +282,7 @@ async function runPlanScoped(
     headless,
     policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
     ...(opts.egressProxy !== undefined ? { egressProxy: opts.egressProxy } : {}),
+    ...(opts.allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy: opts.allowHostedAuthWithoutProxy } : {}),
   });
   if (!launch.ok) {
     return authBlockedRun(plan.startUrl, publicMetadata({
@@ -289,6 +293,7 @@ async function runPlanScoped(
       detail: launch.detail,
     }));
   }
+  const unproxiedHosted = launch.hostedEgress === 'unproxied-opt-in';
   const browser = launch.browser;
   if (launch.pin) opts = { ...opts, egressPin: launch.pin };
   const stop = () => { void browser.close().catch(() => {}); };
@@ -464,7 +469,13 @@ async function runPlanScoped(
     ...signupFields(signup),
     ...signedInRunFields(opts, { expired: envelopeExpired, lost: sessionWatch.lost, unproved: sessionWatch.unproved }),
   };
-  return opts.signal?.aborted ? withCancelledOutcome(result) : result;
+  const finished = opts.signal?.aborted ? withCancelledOutcome(result) : result;
+  if (!unproxiedHosted) return finished;
+  return {
+    ...finished,
+    hostedEgress: UNPROXIED_HOSTED_EGRESS,
+    warnings: [...new Set([...(finished.warnings ?? []), UNPROXIED_HOSTED_WARNING])],
+  };
 
 }
 

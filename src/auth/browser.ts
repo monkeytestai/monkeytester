@@ -6,7 +6,7 @@
 
 import type { Browser, BrowserContext } from 'playwright';
 import type { AuthOriginPolicy, AuthStorageState } from './contract.js';
-import { browserHasPin, EgressProxyRequiredError, prepareEgress, proxyForBrowser, type EgressPin, type EgressProxy } from './egress.js';
+import { browserAllowsUnproxiedHosted, browserHasPin, EgressProxyRequiredError, prepareEgress, proxyForBrowser, type EgressPin, type EgressProxy } from './egress.js';
 import { installSessionFence } from './fence.js';
 import { assertSessionBound } from './origins.js';
 import { attachedSecrets, rememberPageSecrets, secretNeedles } from './redact.js';
@@ -67,7 +67,9 @@ export async function openFencedContext(browser: Browser, opts: FencedContextOpt
     pin = prepared.pin;
   }
   const proxy = opts.proxy ?? proxyForBrowser(browser);
-  if (pin?.mode === 'hosted-public' && !proxy) throw new EgressProxyRequiredError();
+  if (pin?.mode === 'hosted-public' && !proxy && !browserAllowsUnproxiedHosted(browser)) {
+    throw new EgressProxyRequiredError();
+  }
   const context = await browser.newContext({
     ...(opts.userAgent ? { userAgent: opts.userAgent } : {}),
     ...(opts.viewport ? { viewport: opts.viewport } : {}),

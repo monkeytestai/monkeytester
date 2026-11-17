@@ -2,6 +2,10 @@
 
 The full history is [CHANGELOG.md](https://github.com/monkeytestai/monkeytester/blob/main/CHANGELOG.md) in the repository. This page is the recent entries. npm channels, this tree, and the hosted service are different: [Versions](/getting-started/versions). This release publishes npm `next` as 0.7.2-beta.3. `latest` stays 0.7.1. A registry check on 8 Nov 2026 at 10:16 IST reported `latest` 0.7.1 and `next` 0.7.2-beta.2. That observation is not a pin and not the hosted product.
 
+## Unreleased
+
+- Hosted sign-in can opt out of the egress proxy with `allowHostedAuthWithoutProxy` or `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY=true`. The default is still fail closed. The opt-in warns once and sets `hostedEgress` to `unproxied-opt-in`.
+
 ## 0.7.2-beta.3
 
 - Local existing-account sign-in (`auth login`, or env-var names for a form). The session file stays on the machine. `AUTH_PROVIDER_CONTRACT` is `monkeytester.auth.provider.v1` for a later server pin. The hosted product does not sign in yet. npm `latest` stays 0.7.1.

@@ -37,6 +37,7 @@ import { originAllowed } from '../auth/origins.js';
 import { captureDisabled, redactValue, secretNeedles } from '../auth/redact.js';
 import { publicMetadata } from '../auth/report.js';
 import { CANCELLED_DETAIL } from '../outcome.js';
+import { UNPROXIED_HOSTED_EGRESS, UNPROXIED_HOSTED_WARNING } from '../auth/proxy.js';
 import { adoptAttached, scrubModel, withSensitiveSinks } from '../auth/secrets.js';
 import { basename } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -108,6 +109,8 @@ export interface ExploreOptions {
   authOrigin?: AuthOriginPolicy;
   /** Wins over `MTAI_EGRESS_PROXY`. Required for a public signed-in target. */
   egressProxy?: string;
+  /** Wins over `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY`, including `false`. Ignored when a proxy is set. */
+  allowHostedAuthWithoutProxy?: boolean;
   /** Abort closes the browser and stops the crawl. The map is marked `cancelled`. */
   signal?: AbortSignal;
 }
@@ -160,6 +163,7 @@ async function exploreScoped(
     headless,
     policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
     ...(opts.egressProxy !== undefined ? { egressProxy: opts.egressProxy } : {}),
+    ...(opts.allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy: opts.allowHostedAuthWithoutProxy } : {}),
   });
   if (!launch.ok) {
     const detail = launch.detail;
@@ -183,9 +187,18 @@ async function exploreScoped(
     };
   }
   const browser: Browser = launch.browser;
+  const unproxiedHosted = launch.hostedEgress === UNPROXIED_HOSTED_EGRESS;
+  const stamp = <T extends { warnings?: string[]; hostedEgress?: 'unproxied-opt-in' }>(value: T): T => {
+    if (!unproxiedHosted) return value;
+    return {
+      ...value,
+      hostedEgress: 'unproxied-opt-in',
+      warnings: [...new Set([...(value.warnings ?? []), UNPROXIED_HOSTED_WARNING])],
+    };
+  };
   if (opts.signal?.aborted) {
     await browser.close().catch(() => {});
-    return cancelledMap(startUrl);
+    return stamp(cancelledMap(startUrl));
   }
   const stop = () => { void browser.close().catch(() => {}); };
   opts.signal?.addEventListener('abort', stop, { once: true });
@@ -210,7 +223,7 @@ async function exploreScoped(
       throw err;
     });
     if (opts.signal?.aborted) {
-      return redactValue(cancelledMap(startUrl), secretNeedles(opts.storageState));
+      return stamp(redactValue(cancelledMap(startUrl), secretNeedles(opts.storageState)));
     }
     const room = Math.max(0, maxPages - queue.length);
     authUrlsQueued = enqueueLinks(
@@ -401,13 +414,13 @@ async function exploreScoped(
     }
 
     if (opts.signal?.aborted) {
-      return redactValue({
+      return stamp(redactValue({
         ...cancelledMap(startUrl),
         pages,
         pagesExplored: pages.length,
         pendingUrls: queue.map(item => item.url),
         failedUrls: failures,
-      }, secretNeedles(opts.storageState));
+      }, secretNeedles(opts.storageState)));
     }
 
     const overall = await summariseSiteBestEffort(llm, startUrl, pages, (message, detail) => {
@@ -432,7 +445,7 @@ async function exploreScoped(
       },
     });
 
-    return redactValue({
+    return stamp(redactValue({
       startUrl,
       siteType: overall.siteType,
       summary: overall.summary,
@@ -444,7 +457,7 @@ async function exploreScoped(
       pendingUrls: queue.map(item => item.url),
       failedUrls: failures,
       ...(warnings.length ? { warnings } : {}),
-    }, secretNeedles(opts.storageState));
+    }, secretNeedles(opts.storageState)));
 
   } finally {
     opts.signal?.removeEventListener('abort', stop);

@@ -17,7 +17,15 @@ import { createAuthProvider, runPlan } from '../src/index.js';
 import { launchFencedBrowser, proxyForBrowser, setEgressLookupForTests } from '../src/auth/egress.js';
 import { openFencedContext } from '../src/auth/browser.js';
 import { createRequire } from 'node:module';
-import { describeEgressProxy, HOSTED_EGRESS_PROXY_BYPASS, LOCAL_EGRESS_PROXY_BYPASS, resolveEgressProxy } from '../src/auth/proxy.js';
+import {
+  describeEgressProxy,
+  HOSTED_EGRESS_PROXY_BYPASS,
+  LOCAL_EGRESS_PROXY_BYPASS,
+  resolveAllowHostedAuthWithoutProxy,
+  resolveEgressProxy,
+  UNPROXIED_HOSTED_EGRESS,
+  UNPROXIED_HOSTED_WARNING,
+} from '../src/auth/proxy.js';
 
 const playwrightVersion = createRequire(import.meta.url)('playwright/package.json').version as string;
 import type { AuthStorageState } from '../src/auth/contract.js';
@@ -32,12 +40,15 @@ const PUBLIC_PIN = '93.184.216.34';
 const HOSTS_MARK = 'mtai-egress-proxy-test';
 
 const savedEnv = process.env.MTAI_EGRESS_PROXY;
+const savedAllow = process.env.MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY;
 const savedDebug = process.env.DEBUG;
 const savedPw = process.env.PWDEBUG;
 
 afterEach(() => {
   if (savedEnv === undefined) delete process.env.MTAI_EGRESS_PROXY;
   else process.env.MTAI_EGRESS_PROXY = savedEnv;
+  if (savedAllow === undefined) delete process.env.MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY;
+  else process.env.MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY = savedAllow;
   if (savedDebug === undefined) delete process.env.DEBUG;
   else process.env.DEBUG = savedDebug;
   if (savedPw === undefined) delete process.env.PWDEBUG;
@@ -530,6 +541,123 @@ describe('proxied hosted egress', () => {
       process.stderr.write = stderr;
       await new Promise<void>(resolve => proxy.close(() => resolve()));
       await new Promise<void>(resolve => app.close(() => resolve()));
+    }
+  }, 30_000);
+});
+
+describe('hosted auth without a proxy', () => {
+  const hosted = { targetOrigin: `https://${PUBLIC_PIN}`, idpOrigins: [] as string[] };
+
+  it('treats only true and 1 as the env opt-in, and the option wins', () => {
+    delete process.env.MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY;
+    expect(resolveAllowHostedAuthWithoutProxy(undefined)).toBe(false);
+    for (const value of ['yes', 'false', 'TRUEE', '2', '']) {
+      process.env.MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY = value;
+      expect(resolveAllowHostedAuthWithoutProxy(undefined)).toBe(false);
+    }
+    for (const value of ['true', 'TRUE', 'True', '1']) {
+      process.env.MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY = value;
+      expect(resolveAllowHostedAuthWithoutProxy(undefined)).toBe(true);
+    }
+    process.env.MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY = 'true';
+    expect(resolveAllowHostedAuthWithoutProxy(false)).toBe(false);
+    expect(resolveAllowHostedAuthWithoutProxy(true)).toBe(true);
+  });
+
+  it('still fails closed when the opt-in is off', async () => {
+    delete process.env.MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY;
+    const launch = await launchFencedBrowser({ policy: hosted, egressProxy: '' });
+    expect(launch.ok).toBe(false);
+    if (launch.ok) return;
+    expect(launch.outcome).toBe('egress_proxy_required');
+  });
+
+  it('launches hosted mode with no proxy and warns once when the opt-in is on', async () => {
+    const notes: string[] = [];
+    const orig = console.warn;
+    console.warn = ((message?: unknown, ...rest: unknown[]) => {
+      notes.push([message, ...rest].map(item => String(item)).join(' '));
+      orig(message, ...rest);
+    }) as typeof console.warn;
+    const app = createHttp((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><p>Direct</p>');
+    });
+    const appPort = await listen(app, '127.0.0.1');
+    try {
+      const launched = await launchFencedBrowser({
+        policy: hosted,
+        egressProxy: '',
+        allowHostedAuthWithoutProxy: true,
+      });
+      expect(launched.ok).toBe(true);
+      if (!launched.ok) return;
+      expect(launched.proxy).toBeUndefined();
+      expect(launched.hostedEgress).toBe(UNPROXIED_HOSTED_EGRESS);
+      const hits = notes.filter(line => line.includes(UNPROXIED_HOSTED_WARNING));
+      expect(hits).toEqual([`[monkeytester] ${UNPROXIED_HOSTED_WARNING}`]);
+      const context = await openFencedContext(launched.browser, {});
+      try {
+        const page = await context.newPage();
+        const response = await page.goto(`http://127.0.0.1:${appPort}/`, { waitUntil: 'domcontentloaded', timeout: 10_000 });
+        expect(response?.status()).toBe(200);
+      } finally {
+        await context.close().catch(() => {});
+        await launched.browser.close().catch(() => {});
+      }
+    } finally {
+      console.warn = orig;
+      await new Promise<void>(resolve => app.close(() => resolve()));
+    }
+  }, 30_000);
+
+  it('keeps using a configured proxy when the opt-in is also set', async () => {
+    const notes: string[] = [];
+    const orig = console.warn;
+    console.warn = ((message?: unknown, ...rest: unknown[]) => {
+      notes.push([message, ...rest].map(item => String(item)).join(' '));
+    }) as typeof console.warn;
+    let canaryHits = 0;
+    const canary = createNet(socket => {
+      canaryHits += 1;
+      socket.destroy();
+    });
+    const port = await listen(canary, '127.0.0.1');
+    const seen: string[] = [];
+    const proxy = createHttp((req, res) => {
+      seen.push(req.url || '');
+      res.writeHead(403);
+      res.end();
+    });
+    const proxyPort = await listen(proxy, '127.0.0.1');
+    try {
+      const launched = await launchFencedBrowser({
+        policy: hosted,
+        egressProxy: `http://127.0.0.1:${proxyPort}`,
+        allowHostedAuthWithoutProxy: true,
+      });
+      expect(launched.ok).toBe(true);
+      if (!launched.ok) return;
+      expect(launched.proxy?.server).toBe(`http://127.0.0.1:${proxyPort}`);
+      expect(launched.hostedEgress).toBeUndefined();
+      expect(notes.some(line => line.includes(UNPROXIED_HOSTED_WARNING))).toBe(false);
+      const context = await openFencedContext(launched.browser, {});
+      try {
+        const page = await context.newPage();
+        const response = await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'commit', timeout: 8_000 });
+        expect(response?.status()).toBe(403);
+        expect(seen.length).toBeGreaterThan(0);
+        expect(canaryHits).toBe(0);
+      } finally {
+        void context.close().catch(() => {});
+        void launched.browser.close().catch(() => {});
+      }
+    } finally {
+      console.warn = orig;
+      proxy.closeAllConnections?.();
+      canary.closeAllConnections?.();
+      proxy.close();
+      canary.close();
     }
   }, 30_000);
 });

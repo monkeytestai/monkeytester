@@ -18,6 +18,7 @@ import { replayTraces, type ReplayOptions } from './runner/replay.js';
 import { triage, triagePolished } from './triager/index.js';
 import { applyPlannerVerdict } from './planner/verdict.js';
 import { attachRunOutcome, CANCELLED_DETAIL, countPublicScreens, withCancelledOutcome } from './outcome.js';
+import { withHostedEgressNotice } from './auth/proxy.js';
 import { BASIC_PRESET } from './depth.js';
 import { plannerBudgetMs } from './budget.js';
 import { verifyBugs, type VerifyOptions, type VerifyReport } from './verify/index.js';
@@ -203,6 +204,13 @@ export class Monkey {
    * can render the failure clearly instead of showing an empty page.
    */
   async executeAndTriage(
+    startUrl: string,
+    opts: ExecuteOptions
+  ): Promise<{ siteMap: SiteMap; plan: TestPlan; run: RunResult }> {
+    return withHostedEgressNotice(() => this.executeAndTriageScoped(startUrl, opts));
+  }
+
+  private async executeAndTriageScoped(
     startUrl: string,
     opts: ExecuteOptions
   ): Promise<{ siteMap: SiteMap; plan: TestPlan; run: RunResult }> {
@@ -630,16 +638,18 @@ function markPlannerFallback(plan: TestPlan, reason: string): TestPlan {
 }
 
 function withRunWarnings(run: RunResult, siteMap: SiteMap, plan: TestPlan): RunResult {
-  const warnings = [...(siteMap.warnings ?? [])];
+  const warnings = [...new Set([...(siteMap.warnings ?? []), ...(run.warnings ?? [])])];
   if (plan.plannerFallback) {
     const line = plan.plannerFallbackReason
       ? `Planner used the grounded fallback. ${plan.plannerFallbackReason}`
       : 'Planner used the grounded fallback.';
     warnings.push(line);
   }
+  const hostedEgress = run.hostedEgress ?? siteMap.hostedEgress;
   return {
     ...run,
     pagesExplored: siteMap.pagesExplored ?? siteMap.pages.length,
+    ...(hostedEgress ? { hostedEgress } : {}),
     ...(warnings.length ? { warnings } : {}),
   };
 }
@@ -658,6 +668,7 @@ async function gateCustomerAuth(auth?: AuthBindInput): Promise<
     postLoginUrl?: string;
     postLoginSelector?: string;
     egressProxy?: string;
+    allowHostedAuthWithoutProxy?: boolean;
   } }
 > {
   if (!auth) return { ok: true, browser: {} };
@@ -673,6 +684,7 @@ async function gateCustomerAuth(auth?: AuthBindInput): Promise<
       ...(auth.postLoginUrl ? { postLoginUrl: auth.postLoginUrl } : {}),
       ...(auth.postLoginSelector ? { postLoginSelector: auth.postLoginSelector } : {}),
       ...(auth.egressProxy !== undefined ? { egressProxy: auth.egressProxy } : {}),
+      ...(auth.allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy: auth.allowHostedAuthWithoutProxy } : {}),
     },
   };
 }

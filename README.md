@@ -141,7 +141,7 @@ Found 1 confirmed bug. Open the top one and confirm it on the site before treati
 
 On a login-only crawl (`public_screens` is `0`) the same case says deeper journeys need an account, and `outcome_reason` is `login_required`.
 
-An existing account can be signed in on the machine that runs the CLI (`monkeytest auth login`, or `--username-env` / `--password-env`). The session file stays local. The hosted product does not take those credentials. See the auth guide.
+An existing account can be signed in on the machine that runs the CLI (`monkeytest auth login`, or `--username-env` / `--password-env`). The session file stays local. The hosted product does not take those credentials. Hosted sign-in needs `MTAI_EGRESS_PROXY` unless `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY` is `true` or `1`. See the auth guide.
 
 ## How is this different?
 

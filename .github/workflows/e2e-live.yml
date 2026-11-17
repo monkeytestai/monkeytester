@@ -24,7 +24,7 @@ jobs:
   live:
     # Defense in depth if a pull_request trigger is added later.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false

@@ -88,6 +88,8 @@ npx monkeytest open
 | `OPENAI_COMPATIBLE_API_KEY` | Optional key for that endpoint |
 | `MONKEYTEST_INBOX_TOKEN` | Bearer token for `--inbox-http` |
 | `MONKEYTEST_DEBUG` | Stack traces on failure |
+| `MTAI_EGRESS_PROXY` | Proxy URL for hosted sign-in. A call's `egressProxy` wins. |
+| `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY` | `true` or `1` (any case) runs hosted sign-in with no proxy. A call's `allowHostedAuthWithoutProxy` wins. |
 
 ## Exit codes
 

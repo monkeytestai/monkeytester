@@ -68,6 +68,7 @@ import { installDialogPolicy, installSubmissionGuards, isContactSubmitBlock, set
 import { openFencedContext } from '../auth/browser.js';
 import { launchFencedBrowser, type EgressPin } from '../auth/egress.js';
 import { withCancelledOutcome } from '../outcome.js';
+import { UNPROXIED_HOSTED_EGRESS, UNPROXIED_HOSTED_WARNING } from '../auth/proxy.js';
 import type { AuthOriginPolicy, AuthStorageState } from '../auth/contract.js';
 import { captureDisabled, redactValue, rememberPageSecrets, secretNeedles } from '../auth/redact.js';
 import { authBlockedRun, outcomeFromAuth, publicMetadata } from '../auth/report.js';
@@ -129,6 +130,8 @@ export interface ReplayOptions {
   egressPin?: EgressPin;
   /** Wins over `MTAI_EGRESS_PROXY`. Required for a public signed-in target. */
   egressProxy?: string;
+  /** Wins over `MTAI_ALLOW_HOSTED_AUTH_WITHOUT_PROXY`, including `false`. Ignored when a proxy is set. */
+  allowHostedAuthWithoutProxy?: boolean;
   /** Abort closes the browser and stops further traces. The run is `cancelled`. */
   signal?: AbortSignal;
   sessionExpiresAt?: string;
@@ -195,11 +198,13 @@ async function replayTracesScoped(
 
   const owned = !opts.browser;
   let browser = opts.browser;
+  let unproxiedHosted = false;
   if (!browser) {
     const launch = await launchFencedBrowser({
       headless: opts.headless ?? true,
       policy: opts.storageState && opts.authOrigin ? opts.authOrigin : undefined,
       ...(opts.egressProxy !== undefined ? { egressProxy: opts.egressProxy } : {}),
+      ...(opts.allowHostedAuthWithoutProxy !== undefined ? { allowHostedAuthWithoutProxy: opts.allowHostedAuthWithoutProxy } : {}),
     });
     if (!launch.ok) {
       return authBlockedRun(traces[0]?.startUrl || '', publicMetadata({
@@ -212,6 +217,7 @@ async function replayTracesScoped(
     }
     browser = launch.browser;
     if (launch.pin) opts = { ...opts, egressPin: launch.pin };
+    if (launch.hostedEgress === UNPROXIED_HOSTED_EGRESS) unproxiedHosted = true;
   }
   const stop = () => { void browser?.close().catch(() => {}); };
   if (opts.signal?.aborted) {
@@ -252,7 +258,13 @@ async function replayTracesScoped(
     ...signupFields(signup),
     ...replayAuthFields(opts, { expired: envelopeExpired, lost: sessionWatch.lost, unproved: sessionWatch.unproved }),
   };
-  return opts.signal?.aborted ? withCancelledOutcome(result) : result;
+  const finished = opts.signal?.aborted ? withCancelledOutcome(result) : result;
+  if (!unproxiedHosted) return finished;
+  return {
+    ...finished,
+    hostedEgress: UNPROXIED_HOSTED_EGRESS,
+    warnings: [...new Set([...(finished.warnings ?? []), UNPROXIED_HOSTED_WARNING])],
+  };
 }
 
 function replayAuthFields(opts: ReplayOptions, watch: { expired: boolean; lost: boolean; unproved: boolean }): Partial<RunResult> {
